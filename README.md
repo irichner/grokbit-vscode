@@ -12,9 +12,7 @@ You install the `grok` CLI once and sign in — with a **SuperGrok or X Premium+
 
 **Install free from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=grokbit.grokbit) or [Open VSX Registry](https://open-vsx.org/extension/grokbit/grokbit)**
 
-![Grok Build in the VS Code sidebar](docs/screenshots/v1.4.20.png)
-
-![Generated image rendered inline from /imagine](docs/screenshots/imagine.png)
+![Grokbit in VS Code — reviewing a proposed edit's inline diff before approving](docs/screenshots/permission_diff.png)
 
 ---
 
@@ -129,8 +127,6 @@ The **microphone button** in the composer dictates speech, transcribed by [xAI's
 The two-word send phrase is deliberate (it won't fire on a message that merely ends in "send") and is configurable via `grok.voiceSendPhrase`. Streaming is the default; set `grok.voiceStreaming: false` for one-shot batch mode.
 
 > **Cost:** Speech-to-Text is a *separate*, pay-as-you-go xAI product — **$0.10/hr** batch, **$0.20/hr** streaming, billed by audio duration. In practice ~500 words ≈ ½–1¢; a heavy 10,000-word day ≈ 10¢. It needs its own [console.x.ai](https://console.x.ai) key (`grok.voiceApiKey` / `GROK_VOICE_API_KEY` / `XAI_API_KEY`) — a SuperGrok subscription grants no API credit. Why it bypasses the CLI, and how the cost was measured end-to-end: [research/voice-input.md](research/voice-input.md).
-
-![Voice control with live transcription in the composer](docs/screenshots/voice_mode.png)
 
 </details>
 
