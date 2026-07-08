@@ -34,6 +34,53 @@ describe("AcpClient.request timer lifecycle", () => {
   });
 });
 
+// A stale `grok.defaultModel` (the retired `grok-build`, renamed to `grok-4.5`
+// in grok ≥0.2.9x) must not take the session start down: the eager set_model on
+// newSession would otherwise reject with -32602 "unknown model id", surfacing as
+// "Failed to start Grok: Invalid params". The guard skips set_model when the id
+// isn't in this build's model list.
+describe("AcpClient.newSession set_model guard", () => {
+  const NEW_RESULT = (id: number) => ({
+    jsonrpc: "2.0",
+    id,
+    result: {
+      sessionId: "s1",
+      models: {
+        currentModelId: "grok-4.5",
+        availableModels: [
+          { modelId: "grok-4.5", name: "Grok 4.5" },
+          { modelId: "grok-composer-2.5-fast", name: "Composer 2.5" },
+        ],
+      },
+    },
+  });
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  const sentSetModel = (written: string[]) =>
+    written.some((w) => w.includes('"session/set_model"'));
+
+  it("does NOT send set_model for a configured model absent from the list", async () => {
+    const { client, written } = clientWithFakeProc();
+    const p = client.newSession("grok-build"); // stale legacy id, no longer offered
+    (client as any).onLine(JSON.stringify(NEW_RESULT(1)));
+    await tick();
+    await p; // resolves cleanly, no rejection
+    expect(sentSetModel(written)).toBe(false);
+    expect(client.currentModelId).toBe("grok-4.5"); // kept the CLI default
+  });
+
+  it("still sends set_model for a known model that differs from the current one", async () => {
+    const { client, written } = clientWithFakeProc();
+    const p = client.newSession("grok-composer-2.5-fast"); // offered, != current
+    (client as any).onLine(JSON.stringify(NEW_RESULT(1)));
+    await tick();
+    expect(sentSetModel(written)).toBe(true);
+    (client as any).onLine(
+      JSON.stringify({ jsonrpc: "2.0", id: 2, result: { _meta: { model: { Ok: "grok-composer-2.5-fast" } } } }),
+    );
+    await p;
+  });
+});
+
 // #3/#4 (thanks @shugav for the crash report): the startup crash was the bogus
 // `max` value, not reasoningEffort itself — grok accepts none|minimal|low|medium|
 // high|xhigh, and the flag must precede the `stdio` subcommand.

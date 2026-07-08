@@ -240,7 +240,7 @@ export class AcpClient extends EventEmitter {
     this.currentModelId = resolveModelId(res.models?.currentModelId, this.availableModels);
     this.emit("session", res);
 
-    if (modelId && modelId !== this.currentModelId) {
+    if (modelId && this.modelIsSelectable(modelId) && modelId !== this.currentModelId) {
       await this.setModel(modelId);
     }
     return { sessionId: res.sessionId };
@@ -265,10 +265,25 @@ export class AcpClient extends EventEmitter {
       resolveModelId(res?.models?.currentModelId, this.availableModels) ?? this.currentModelId;
     this.emit("session", { sessionId, ...(res ?? {}) });
     this.emit("sessionLoaded", { sessionId });
-    if (modelId && modelId !== this.currentModelId) {
+    if (modelId && this.modelIsSelectable(modelId) && modelId !== this.currentModelId) {
       await this.setModel(modelId);
     }
     return { sessionId };
+  }
+
+  /**
+   * Is `modelId` offered by this CLI build? Guards the eager `set_model` on
+   * new/resumed sessions against a stale `grok.defaultModel`: grok renamed its
+   * models (the retired `grok-build` is now `grok-4.5`), and asking to switch to
+   * a model this build doesn't know makes `set_model` reject with -32602
+   * "unknown model id", which took the whole session start down ("Failed to
+   * start Grok: Invalid params"). Unknown → keep the CLI default silently. Only
+   * a *populated* list that excludes the id is a real rejection; an empty list
+   * (a build that didn't return one, seen on some `session/load`s) means "can't
+   * tell", so attempt the switch as before.
+   */
+  private modelIsSelectable(modelId: string): boolean {
+    return this.availableModels.length === 0 || this.availableModels.some((m) => m.modelId === modelId);
   }
 
   async setModel(modelId: string): Promise<void> {

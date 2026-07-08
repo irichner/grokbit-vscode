@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.1 — 2026-07-08
+
+### Fixed
+
+- **A session no longer fails to start with "Failed to start Grok: Invalid params" when a stale model is configured.** Grok CLI 0.2.9x renamed its models (the old `grok-build` is now `grok-4.5`), so a leftover `grok.defaultModel: "grok-build"` made the eager `set_model` reject with `-32602 "unknown model id"` and take the whole session start down. The extension now only applies a configured default model when the running CLI actually offers it — an unknown/stale id is ignored, keeping the CLI default. ([src/acp.ts](src/acp.ts))
+
 ## 2.0.0 — 2026-07-07
 
 ### Changed
