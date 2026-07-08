@@ -2,6 +2,18 @@
   --pad: 8px;
   --gap: 6px;
   --radius: 6px;
+  /* Cyberpunk accent pair — used sparingly: focus rings, live activity, and
+     identity moments (logo, send, plan gate). Everything else stays on VS Code
+     theme variables so light/dark themes keep working. The -soft variants are
+     the only glow strength allowed; anything brighter reads as a toy. */
+  --neon-cyan: #00d4ff;
+  --neon-magenta: #ff4fd8;
+  --neon-cyan-soft: color-mix(in srgb, var(--neon-cyan) 30%, transparent);
+  --neon-magenta-soft: color-mix(in srgb, var(--neon-magenta) 30%, transparent);
+  /* Blended-with-foreground inks: keep contrast in light themes where raw neon
+     on white would wash out. */
+  --neon-cyan-ink: color-mix(in srgb, var(--neon-cyan) 55%, var(--vscode-foreground));
+  --neon-magenta-ink: color-mix(in srgb, var(--neon-magenta) 55%, var(--vscode-foreground));
 }
 
 * { box-sizing: border-box; }
@@ -53,8 +65,9 @@ code {
   color: inherit;
   cursor: pointer;
 }
-.file-ref-link > code {
-  color: var(--vscode-textLink-foreground, var(--vscode-foreground));
+.file-ref-link > code,
+.msg.agent .body .file-ref-link > code {
+  color: color-mix(in srgb, var(--neon-cyan) 45%, var(--vscode-textLink-foreground, var(--vscode-foreground)));
 }
 .file-ref-link:hover > code {
   text-decoration: underline;
@@ -68,7 +81,14 @@ code {
   align-items: center;
   justify-content: flex-end;
   padding: 2px 4px;
+  /* Faint cyan→magenta hairline instead of the flat widget border — the one
+     always-visible cyberpunk cue, kept near-transparent. */
   border-bottom: 1px solid var(--vscode-editorWidget-border);
+  border-image: linear-gradient(90deg,
+    var(--vscode-editorWidget-border),
+    color-mix(in srgb, var(--neon-cyan) 22%, var(--vscode-editorWidget-border)),
+    color-mix(in srgb, var(--neon-magenta) 22%, var(--vscode-editorWidget-border)),
+    var(--vscode-editorWidget-border)) 1;
   flex-shrink: 0;
   position: relative;
 }
@@ -105,7 +125,7 @@ code {
 .toolbar-popover-item:hover .mode-item-label { color: var(--vscode-list-hoverForeground, var(--vscode-foreground)); }
 .toolbar-popover-item.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground)); }
 .toolbar-popover-item.active .mode-item-desc { color: var(--vscode-list-activeSelectionForeground, var(--vscode-descriptionForeground)); opacity: 0.75; }
-.popover-check { color: var(--vscode-button-background); flex-shrink: 0; }
+.popover-check { color: var(--neon-cyan-ink); flex-shrink: 0; }
 .mode-popover-item { white-space: normal; align-items: flex-start; }
 
 /* On/off switcher used by toggle items in the gear popover (e.g. Show thinking
@@ -121,7 +141,7 @@ code {
   flex-shrink: 0;
   transition: background 0.14s;
 }
-.popover-switch.on { background: var(--vscode-charts-blue, #3794ff); }
+.popover-switch.on { background: color-mix(in srgb, var(--neon-cyan) 75%, var(--vscode-foreground)); }
 .popover-switch-knob {
   position: absolute;
   top: 2px;
@@ -157,11 +177,21 @@ code {
 .welcome-mark {
   width: 56px; height: 56px; opacity: 0.9;
   display: inline-block;
-  background-color: var(--vscode-foreground);
+  /* The mask shapes whatever paints it, so the gradient tints the black hole
+     itself; the drop-shadow follows the masked alpha for a soft neon halo. */
+  background: linear-gradient(135deg, var(--neon-cyan-ink), var(--neon-magenta-ink));
   -webkit-mask: var(--welcome-mark) center / contain no-repeat;
   mask: var(--welcome-mark) center / contain no-repeat;
+  filter: drop-shadow(0 0 12px var(--neon-cyan-soft));
 }
-.welcome h2 { margin: 0; font-weight: 600; }
+.welcome h2 {
+  margin: 0;
+  font-weight: 600;
+  background: linear-gradient(90deg, var(--neon-cyan-ink), var(--neon-magenta-ink));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
 .welcome-byline { margin: 0; font-size: 11px; }
 .muted-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .muted-link:hover { opacity: 0.8; }
@@ -303,6 +333,8 @@ code {
   padding: 8px 10px;
   border-radius: var(--radius);
   background: var(--vscode-editorWidget-background, var(--vscode-input-background));
+  /* Barely-there cyan edge marks "yours" without a full accent fill. */
+  border: 1px solid color-mix(in srgb, var(--neon-cyan) 16%, var(--vscode-editorWidget-border, transparent));
   white-space: pre-wrap;
   word-wrap: break-word;
   position: relative;
@@ -415,7 +447,10 @@ body.thinking-hidden .msg.thinking { display: none; }
 .grokking-icon { width: 15px; height: 15px; flex: 0 0 auto; opacity: 0.85; }
 .thinking-indicator-icon svg,
 .grokking-icon svg { display: block; width: 100%; height: 100%; }
-/* The orbit icon slowly spins to reinforce "working". */
+/* The orbit icon slowly spins to reinforce "working"; a faint cyan halo marks
+   it as live activity (the same accent as the blinking dots). */
+.thinking-indicator-icon,
+.grokking-icon { filter: drop-shadow(0 0 4px var(--neon-cyan-soft)); }
 .grokking-icon svg {
   transform-origin: center;
   animation: grokking-orbit 3.5s linear infinite;
@@ -432,6 +467,7 @@ body.thinking-hidden .msg.thinking { display: none; }
   display: inline-flex;
   gap: 1px;
   margin-left: 1px;
+  color: var(--neon-cyan-ink);
 }
 .blink-dots span {
   opacity: 0.2;
@@ -579,6 +615,7 @@ body.thinking-hidden .msg.thinking { display: none; }
   display: inline-flex;
   gap: 1px;
   margin-left: 1px;
+  color: var(--neon-cyan-ink);
 }
 .tool-group.in-progress .tool-dots span {
   opacity: 0.2;
@@ -742,6 +779,17 @@ body.thinking-hidden .msg.thinking { display: none; }
 .msg.agent .body h1 { font-size: 1.4em; }
 .msg.agent .body h2 { font-size: 1.25em; }
 .msg.agent .body h3 { font-size: 1.1em; }
+/* Section headings carry the same neon hairline as the top bar, fading back to
+   the plain border so it reads as an underline accent, not a divider. */
+.msg.agent .body h1,
+.msg.agent .body h2 {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--vscode-editorWidget-border);
+  border-image: linear-gradient(90deg,
+    color-mix(in srgb, var(--neon-cyan) 35%, var(--vscode-editorWidget-border)),
+    color-mix(in srgb, var(--neon-magenta) 25%, var(--vscode-editorWidget-border)) 40%,
+    var(--vscode-editorWidget-border) 85%) 1;
+}
 .msg.agent .body > h1:first-child,
 .msg.agent .body > h2:first-child,
 .msg.agent .body > h3:first-child { margin-top: 0; }
@@ -753,6 +801,7 @@ body.thinking-hidden .msg.thinking { display: none; }
 .msg.agent .body ul { list-style-type: disc; }
 .msg.agent .body ol { list-style-type: decimal; }
 .msg.agent .body li { margin: 3px 0; }
+.msg.agent .body li::marker { color: var(--neon-cyan-ink); }
 .msg.agent .body li > ul { margin: 3px 0; list-style-type: circle; }
 .msg.agent .body li > ul ul { list-style-type: square; }
 .code-block {
@@ -762,6 +811,8 @@ body.thinking-hidden .msg.thinking { display: none; }
 .msg.agent .body .code-block pre { margin: 0; }
 .msg.agent .body pre {
   background: var(--vscode-textCodeBlock-background);
+  /* Same barely-there cyan edge as the user bubble — marks a "terminal" surface. */
+  border: 1px solid color-mix(in srgb, var(--neon-cyan) 14%, var(--vscode-editorWidget-border, transparent));
   border-radius: 4px;
   padding: 8px 10px;
   overflow-x: auto;
@@ -827,6 +878,14 @@ body.thinking-hidden .msg.thinking { display: none; }
 .diff-line.diff-meta { color: var(--vscode-descriptionForeground); }
 .msg.agent .body strong { font-weight: 600; }
 .msg.agent .body em { font-style: italic; }
+/* Links and inline code lean cyan — blended with the theme's own colors so
+   contrast holds in light themes. Block code (pre > code) keeps plain fg. */
+.msg.agent .body a {
+  color: color-mix(in srgb, var(--neon-cyan) 45%, var(--vscode-textLink-foreground, #3794ff));
+}
+.msg.agent .body :not(pre) > code {
+  color: color-mix(in srgb, var(--neon-cyan) 30%, var(--vscode-foreground));
+}
 .msg.agent .body .md-table-wrap {
   overflow-x: auto;
   margin: 8px 0;
@@ -838,7 +897,8 @@ body.thinking-hidden .msg.thinking { display: none; }
 }
 .msg.agent .body th,
 .msg.agent .body td {
-  border: 1px solid var(--vscode-editorWidget-border);
+  /* Grid lines get a whisper of cyan; the header row below carries the real accent. */
+  border: 1px solid color-mix(in srgb, var(--neon-cyan) 10%, var(--vscode-editorWidget-border));
   padding: 5px 8px;
   text-align: left;
   vertical-align: top;
@@ -850,8 +910,9 @@ body.thinking-hidden .msg.thinking { display: none; }
   overflow-wrap: normal;
 }
 .msg.agent .body th {
-  background: var(--vscode-textBlockQuote-background, var(--vscode-editorWidget-background));
+  background: color-mix(in srgb, var(--neon-cyan) 6%, var(--vscode-textBlockQuote-background, var(--vscode-editorWidget-background)));
   font-weight: 600;
+  border-bottom: 2px solid color-mix(in srgb, var(--neon-cyan) 30%, var(--vscode-editorWidget-border));
 }
 
 /* ---- composer ---- */
@@ -899,7 +960,10 @@ body.thinking-hidden .msg.thinking { display: none; }
   transform: translate(-50%, 0);
   pointer-events: auto;
 }
-.scroll-bottom-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
+.scroll-bottom-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+  border-color: color-mix(in srgb, var(--neon-cyan) 35%, var(--vscode-editorWidget-border));
+}
 .scroll-bottom-btn svg { display: block; }
 .scroll-bottom-label { white-space: nowrap; }
 
@@ -938,7 +1002,10 @@ body.thinking-hidden .msg.thinking { display: none; }
   cursor: pointer;
   white-space: nowrap;
 }
-.changed-file-chip:hover { background: var(--vscode-toolbar-hoverBackground); }
+.changed-file-chip:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+  border-color: color-mix(in srgb, var(--neon-cyan) 35%, var(--vscode-editorWidget-border));
+}
 .changed-file-name { overflow: hidden; text-overflow: ellipsis; }
 .changed-file-add { color: var(--vscode-charts-green, #4ec9b0); }
 .changed-file-del { color: var(--vscode-charts-red, #f48771); }
@@ -955,7 +1022,9 @@ body.thinking-hidden .msg.thinking { display: none; }
   border-radius: var(--radius);
 }
 .composer-input-wrap:focus-within {
-  border-color: var(--vscode-focusBorder);
+  border-color: color-mix(in srgb, var(--neon-cyan) 55%, var(--vscode-focusBorder, transparent));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--neon-cyan) 18%, transparent),
+              0 0 14px color-mix(in srgb, var(--neon-cyan) 10%, transparent);
 }
 /* Shared text-box metrics — MUST match between the textarea and the backdrop so
    the highlight aligns exactly. */
@@ -996,8 +1065,8 @@ textarea#input {
 /* The recognized command, shown as a subtle accent pill behind the live text. */
 .input-highlight .cmd-token {
   border-radius: 3px;
-  background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 26%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 50%, transparent);
+  background: color-mix(in srgb, var(--neon-cyan) 22%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--neon-cyan) 45%, transparent);
 }
 
 /* ---- mic / voice-input button (top-right corner of the textbox) ---- */
@@ -1037,25 +1106,26 @@ textarea#input {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--vscode-charts-blue, #3794ff);
+  background: var(--neon-cyan-ink);
   border: 1px solid var(--vscode-editor-background, #1e1e1e);
 }
-/* Listening: blue, with an expanding "wave" ring pulsing outward. */
+/* Listening: neon cyan, with an expanding "wave" ring pulsing outward. Dark
+   ink on the neon fill — white on cyan has no contrast. */
 .mic-btn.listening {
   opacity: 1;
-  color: #fff;
-  background: var(--vscode-charts-blue, #3794ff);
+  color: #0b1220;
+  background: var(--neon-cyan);
   animation: mic-pulse 1.5s ease-out infinite;
 }
 @keyframes mic-pulse {
-  0%   { box-shadow: 0 0 0 0 var(--vscode-charts-blue, rgba(55, 148, 255, 0.5)); }
-  70%  { box-shadow: 0 0 0 9px rgba(55, 148, 255, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(55, 148, 255, 0); }
+  0%   { box-shadow: 0 0 0 0 var(--neon-cyan-soft); }
+  70%  { box-shadow: 0 0 0 9px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
 }
 .mic-btn.transcribing,
 .mic-btn.connecting {
   opacity: 1;
-  color: var(--vscode-charts-blue, #3794ff);
+  color: var(--neon-cyan-ink);
 }
 .mic-btn.transcribing svg,
 .mic-btn.connecting svg { animation: send-spinner-rotate 0.9s linear infinite; }
@@ -1126,8 +1196,8 @@ textarea#input {
   white-space: nowrap;
 }
 .toolbar-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
-.toolbar-btn.plan-active { color: var(--vscode-charts-blue, #569cd6); }
-.toolbar-btn.yolo-active { color: var(--vscode-charts-orange, #d7ba7d); }
+.toolbar-btn.plan-active { color: var(--neon-cyan-ink); }
+.toolbar-btn.yolo-active { color: var(--neon-magenta-ink); }
 .btn-label {
   flex-shrink: 1;
   min-width: 0;
@@ -1198,8 +1268,8 @@ textarea#input {
   background: transparent;
 }
 .effort-dot.active::before {
-  background: var(--vscode-button-background);
-  border-color: var(--vscode-button-background);
+  background: var(--neon-cyan-ink);
+  border-color: var(--neon-cyan-ink);
 }
 .effort-dot:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
 .effort-dot.active { opacity: 1; }
@@ -1246,6 +1316,18 @@ textarea#input {
   color: var(--vscode-foreground);
 }
 .popover-ver { color: var(--vscode-descriptionForeground); }
+/* Keycap chip in the Keyboard shortcuts panel. */
+.popover-kbd {
+  flex-shrink: 0;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-textBlockQuote-background);
+  border: 1px solid var(--vscode-editorWidget-border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
 .popover-update-avail { color: var(--vscode-textLink-foreground); }
 .popover-warn { color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground)); }
 /* The "Update Grok Build" action; disabled when checking / already up to date. */
@@ -1375,20 +1457,29 @@ textarea#input {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  /* The one deliberately-neon element: a small cyan→magenta gradient signature.
+     Dark ink for the glyph — it reads on the neon at any theme. */
+  background: linear-gradient(135deg, var(--neon-cyan), var(--neon-magenta));
+  color: #0b1220;
   border: none;
   border-radius: 5px;
   cursor: pointer;
 }
-.send:hover { background: var(--vscode-button-hoverBackground); }
+.send:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 0 10px var(--neon-cyan-soft);
+}
 .send:disabled { opacity: 0.4; cursor: default; }
 /* Stop mode: same button position, different look. Subtle so it doesn't shout. */
 .send.stop {
   background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
   color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
 }
-.send.stop:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground)); }
+.send.stop:hover {
+  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground));
+  filter: none;
+  box-shadow: none;
+}
 /* Initialization spinner: locked busy state (e.g. session-start priming).
    Button is disabled; the spinner SVG inside rotates. */
 .send.initializing {
@@ -1466,7 +1557,7 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   flex-direction: column;
   gap: 8px;
 }
-.card.plan { border-left-color: var(--vscode-charts-blue, #569cd6); }
+.card.plan { border-left-color: var(--neon-cyan-ink); }
 
 /* Full-width plan-mode banner — pinned above the scrolling chat while plan mode
    is active. The tinted mode button is easy to miss; this makes the write/command
@@ -1480,7 +1571,8 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   font-size: 12px;
   color: var(--vscode-foreground);
   background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-  border-bottom: 2px solid var(--vscode-charts-blue, #569cd6);
+  border-bottom: 2px solid var(--neon-cyan-ink);
+  border-image: linear-gradient(90deg, var(--neon-cyan-ink), var(--neon-magenta-ink)) 1;
 }
 .plan-banner[hidden] { display: none; }
 .plan-banner-dot {
@@ -1488,7 +1580,8 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: var(--vscode-charts-blue, #569cd6);
+  background: var(--neon-cyan-ink);
+  box-shadow: 0 0 6px var(--neon-cyan-soft);
 }
 
 .card .card-title {
@@ -1607,7 +1700,7 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
 }
 .card button.question-option:hover { background: var(--vscode-list-hoverBackground); }
 .card button.question-option.selected {
-  border-color: var(--vscode-focusBorder);
+  border-color: color-mix(in srgb, var(--neon-cyan) 55%, var(--vscode-focusBorder, transparent));
   background: var(--vscode-list-activeSelectionBackground);
   color: var(--vscode-list-activeSelectionForeground);
 }
@@ -1703,7 +1796,7 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   color: var(--vscode-descriptionForeground);
   padding: 5px 10px;
   margin: 4px 0;
-  border-left: 2px solid var(--vscode-charts-blue, #569cd6);
+  border-left: 2px solid var(--neon-cyan-ink);
   background: var(--vscode-textBlockQuote-background, rgba(86, 156, 214, 0.08));
 }
 .plan-notice svg { flex-shrink: 0; opacity: 0.8; }
@@ -1771,7 +1864,7 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   padding: 4px 6px;
 }
 .card textarea.plan-feedback:focus {
-  outline: 1px solid var(--vscode-focusBorder);
+  outline: 1px solid color-mix(in srgb, var(--neon-cyan) 55%, var(--vscode-focusBorder, transparent));
   outline-offset: -1px;
 }
 .card textarea.plan-feedback:disabled { opacity: 0.5; }
@@ -1811,7 +1904,7 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--vscode-descriptionForeground);
+  background: var(--neon-cyan-ink);
   animation: plan-processing-pulse 1.2s ease-in-out infinite;
 }
 .plan-processing-dots span:nth-child(2) { animation-delay: 0.2s; }
@@ -1842,7 +1935,7 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   border-radius: 4px;
   outline: none;
 }
-.history-search:focus { border-color: var(--vscode-focusBorder); }
+.history-search:focus { border-color: color-mix(in srgb, var(--neon-cyan) 55%, var(--vscode-focusBorder, transparent)); }
 .history-list {
   flex: 1;
   overflow-y: auto;
@@ -1893,7 +1986,10 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   cursor: pointer;
 }
 .history-row:hover { background: var(--vscode-list-hoverBackground); }
-.history-row.active { background: var(--vscode-list-activeSelectionBackground); }
+.history-row.active {
+  background: var(--vscode-list-activeSelectionBackground);
+  box-shadow: inset 2px 0 0 var(--neon-cyan-ink);
+}
 .history-row-dot {
   flex: 0 0 auto;
   width: 8px;
@@ -1904,7 +2000,10 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   background: var(--vscode-descriptionForeground);
 }
 .history-row-dot.dot-none { background: var(--vscode-descriptionForeground); }
-.history-row-dot.dot-working { background: var(--vscode-charts-blue); }
+.history-row-dot.dot-working {
+  background: var(--neon-cyan-ink);
+  box-shadow: 0 0 5px var(--neon-cyan-soft);
+}
 .history-row-dot.dot-needs-you { background: var(--vscode-charts-yellow); }
 .history-row-dot.dot-unread { background: var(--vscode-charts-green); }
 .history-row-dot.dot-error { background: var(--vscode-errorForeground); }
@@ -2074,4 +2173,21 @@ mjx-container[display="true"] {
 .launcher-list {
   flex: 1;
   max-height: none; /* fill the view; the popover cap doesn't apply here */
+}
+
+/* The black hole logo lives inside the New session button (left of the label).
+   currentColor ink so it follows the button's own foreground in any theme. */
+.launcher-new-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+.launcher-logo {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  background-color: currentColor;
+  -webkit-mask: var(--logo) center / contain no-repeat;
+  mask: var(--logo) center / contain no-repeat;
 }

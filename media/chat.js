@@ -1215,6 +1215,23 @@
     });
   }
 
+  // Keyboard-shortcuts reference. The commands + keybindings exist (package.json),
+  // but nothing in the chat advertised them. The send/newline rows track the
+  // useCtrlEnter setting so they always describe THIS user's keys.
+  function renderShortcutsPanel() {
+    state.gearView = "shortcuts";
+    gearPopover.innerHTML = "";
+    addGearItem('<span class="popover-back">← Keyboard shortcuts</span>', renderGearMain);
+    const rows = state.useCtrlEnter
+      ? [[`${MOD}+Enter`, "Send message"], ["Enter", "New line"]]
+      : [["Enter", "Send message"], ["Shift+Enter", "New line"]];
+    rows.push([`${MOD}+;`, "Open Grokbit"]);
+    rows.push(["Alt+G", "Insert @-mention from an editor"]);
+    for (const [keys, desc] of rows) {
+      addGearInfo(`<span>${escapeHtml(desc)}</span><span class="popover-kbd">${escapeHtml(keys)}</span>`);
+    }
+  }
+
   function renderModelPicker() {
     state.gearView = "model";
     gearPopover.innerHTML = "";
@@ -3651,6 +3668,7 @@
         if (typeof msg.showThinking === "boolean") state.showThinking = msg.showThinking;
         applyThinkingVisibility();
         updateModelLabel(); // effort is now known
+        updateComposerPlaceholder(); // send-key hint follows useCtrlEnter
         break;
       case "showThinking":
         // Live toggle (grok.showThinking). Initial value also arrives via

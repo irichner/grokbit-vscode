@@ -1625,8 +1625,7 @@ See design doc for the full state machine diagram.`;
     session.userMessageCount = 0;
     session.inUserMessage = false;
     session.activeSessionId = undefined;
-    session.titleGenerated = false;
-    session.firstUserMessageForTitle = undefined;
+    session.latestUserMessageForTitle = undefined;
     session.priming = true;
     // Transient (not buffered): replay derives the mode from session state instead.
     this.postTo(session, { type: "modeChanged", modeId: rememberedYolo ? "yolo" : "agent" });
@@ -1987,7 +1986,6 @@ See design doc for the full state machine diagram.`;
         // so resumed primer-only sessions lingered forever — and each resume
         // re-primed them, bumping their mtime back to the top of history.
         const resumedRealHistory = session.userMessageCount > 0;
-        session.titleGenerated = resumedRealHistory;
         session.hasHistory = resumedRealHistory;
         if (!resumedRealHistory) this.updateTabTitle(session); // not the primer-derived disk name
 
@@ -2402,6 +2400,24 @@ See design doc for the full state machine diagram.`;
       }
     }
 
+    // For live sessions, overlay the latest user prompt into the history entry
+    // (when there is no explicit customName rename). This makes both the tab
+    // title and the launcher/history list update with each new prompt sent.
+    for (const e of pageEntries) {
+      const live = Array.from(this.pool).find((s) => s.activeSessionId === e.id);
+      if (live && live.latestUserMessageForTitle?.trim() && !e.customName) {
+        const ts = live.lastActiveAt || Date.now();
+        e.displayName = fallbackName(live.latestUserMessageForTitle, ts);
+        e.rawSummary = live.latestUserMessageForTitle;
+        if (ts > e.updatedAt) e.updatedAt = ts;
+      }
+    }
+
+    // Re-sort after live overlays (a fresh prompt bumps recency for its row).
+    if (!query) {
+      pageEntries.sort((a, b) => b.updatedAt - a.updatedAt);
+    }
+
     // Dashboard dot per grok-session-id (live status + persisted unread badge) for the rows we send,
     // plus any live pool member not yet written to disk (a brand-new session has no summary.json).
     const dots: Record<string, Dot> = {};
@@ -2446,8 +2462,7 @@ See design doc for the full state machine diagram.`;
   /** Synthesize a list entry for a live session grok hasn't written a `summary.json` for yet (a
    *  brand-new one). The disk-scan index can't see it, so without this the active row would vanish
    *  from history when the popover is opened the instant a session goes live. Uses the best name we
-   *  have in memory: a generated/renamed `customName`, else the first user message, else a
-   *  placeholder — all of which the next refresh replaces with grok's own summary once it lands. */
+   *  have in memory: a renamed `customName`, else the latest user prompt, else a placeholder. */
   private liveSessionEntry(
     session: Session,
     id: string,
@@ -2456,14 +2471,14 @@ See design doc for the full state machine diagram.`;
   ): SessionListEntry {
     const now = Date.now();
     const customName = overrides[id]?.customName?.trim() || undefined;
-    const firstMsg = (session.firstUserMessageForTitle || "").trim();
-    const displayName = customName || (firstMsg ? fallbackName(firstMsg, now) : "New session");
+    const latestMsg = (session.latestUserMessageForTitle || "").trim();
+    const displayName = customName || (latestMsg ? fallbackName(latestMsg, now) : "New session");
     const ts = session.lastActiveAt || now;
     return {
       id,
       cwd,
       displayName,
-      rawSummary: firstMsg,
+      rawSummary: latestMsg,
       customName,
       updatedAt: ts,
       createdAt: ts,
@@ -3099,16 +3114,22 @@ See design doc for the full state machine diagram.`;
 
     const isFirstSend = !session.hasHistory;
     session.hasHistory = true;
+
+    const sentChips = chips.filter((c) => !c.hidden);
+    session.userMessageCount += 1;
+
+    // Always track the latest user prompt so the tab title and history rows
+    // update immediately for every prompt (not just the first).
+    session.latestUserMessageForTitle = text;
+    this.updateTabTitle(session);
+    this.touch(session);
+    this.broadcastSessionsList();
+
     if (isFirstSend) {
-      session.firstUserMessageForTitle = text;
-      // The tab retitles the moment the first prompt is sent, not at turn end.
-      this.updateTabTitle(session);
       // One `session_start` per session, on the first real user message — never
       // the primer (that takes a separate prompt path that doesn't set hasHistory).
       this.reportSessionStart(session);
     }
-    const sentChips = chips.filter((c) => !c.hidden);
-    session.userMessageCount += 1;
     session.inUserMessage = false; // live send isn't part of the streamed-chunk count path
     this.emit(session, { type: "userMessage", text, chips: sentChips });
     this.emit(session, { type: "agentStart" });
@@ -3132,7 +3153,9 @@ See design doc for the full state machine diagram.`;
         this.emit(session, { type: "agentEnd", meta });
         this.setStatus(session, "done");
       }
-      this.maybeGenerateTitle(session);
+      // Title/history already updated at send time from the user prompt.
+      // (maybeGenerateTitle logic retired; we no longer auto-write customName
+      //  from prompts — explicit renames and grok's on-disk summary own names.)
     } catch (err) {
       if (gen !== session.gen) return; // prompt rejected because we disposed the old client — don't leak the error into the new session
       const e = err as any;
@@ -3145,29 +3168,6 @@ See design doc for the full state machine diagram.`;
       try { await this.runAfterTurn(session); }
       finally { session.suppressPlanReject = false; } // safety net for plan-reject suppression
     }
-  }
-
-  private maybeGenerateTitle(session: Session): void {
-    if (session.titleGenerated) return;
-    const sid = session.client?.sessionId ?? session.activeSessionId;
-    const first = session.firstUserMessageForTitle;
-    if (!sid || !first) return;
-    session.titleGenerated = true;
-    const overrides = this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {});
-    if (overrides[sid]?.customName) return;
-    const cleaned = first.replace(/\s+/g, " ").trim();
-    if (!cleaned) return;
-    const title = cleaned.length > 50 ? cleaned.slice(0, 47) + "…" : cleaned;
-    const next: SessionMetaOverrides = {
-      ...overrides,
-      [sid]: { ...(overrides[sid] ?? {}), customName: title },
-    };
-    void this.context.globalState.update(SESSION_META_KEY, next);
-    // The generated name changes displayName without touching summary.json's
-    // mtime — invalidate the cache entry and retitle the tab now.
-    this.sessionCache.delete(sid);
-    this.updateTabTitle(session);
-    this.broadcastSessionsList();
   }
 
   /** Per-panel config, posted on each `ready` (the rebuilt webview starts from
@@ -3260,10 +3260,10 @@ See design doc for the full state machine diagram.`;
   // ---------- session pool ----------
 
   /**
-   * Keep a session's editor-tab title current. Precedence mirrors the launcher
-   * naming: `customName` override (covers the auto-generated first-prompt title
-   * AND any user rename) → the in-memory first user message → the cold-load
-   * displayName from disk → "Grokbit New". Formatting is the pure `tabTitleFor`.
+   * Keep a session's editor-tab title current. Precedence:
+   * `customName` (user rename) → in-memory latest user prompt → disk displayName → "Grokbit New".
+   * The in-memory prompt is updated on every send, so the tab title follows each new prompt.
+   * Formatting via the pure `tabTitleFor`.
    */
   private updateTabTitle(session: Session): void {
     if (!session.panel) return;
@@ -3277,7 +3277,7 @@ See design doc for the full state machine diagram.`;
       const custom = overrides[id]?.customName?.trim();
       if (custom) return custom;
     }
-    if (session.firstUserMessageForTitle?.trim()) return session.firstUserMessageForTitle;
+    if (session.latestUserMessageForTitle?.trim()) return session.latestUserMessageForTitle;
     // Live but still empty (primer-only): the disk displayName is grok's
     // primer-derived summary — treat it as unnamed instead, mirroring the
     // launcher's "New session" override for live !hasHistory rows.
@@ -3661,6 +3661,8 @@ See design doc for the full state machine diagram.`;
     const nonce = getNonce();
     const mediaUri = (file: string) =>
       webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", file));
+    const resourceUri = (file: string) =>
+      webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "resources", file));
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -3673,7 +3675,7 @@ See design doc for the full state machine diagram.`;
 <body class="launcher-body">
   <div class="launcher">
     <div class="launcher-head">
-      <button id="launcher-new" class="onb-action" type="button">New session</button>
+      <button id="launcher-new" class="onb-action launcher-new-btn" type="button"><span class="launcher-logo" style="--logo:url('${resourceUri("blackhole-icon.svg")}')"></span>New session</button>
     </div>
     <div id="launcher-onboarding" class="launcher-onboarding" hidden></div>
     <div class="history-search-wrap"><input id="launcher-search" class="history-search" type="text" placeholder="Search sessions…" /></div>

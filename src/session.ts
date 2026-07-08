@@ -117,8 +117,10 @@ export class Session {
   /** grok's id for this session (set on session/new or session/load). */
   activeSessionId?: string;
 
-  titleGenerated = false;
-  firstUserMessageForTitle?: string;
+  /** Most recent user prompt text. Used to derive the live tab title and
+   *  history row name (when there is no explicit user `customName` rename).
+   *  Updated on every send so titles and history reflect each new prompt. */
+  latestUserMessageForTitle?: string;
 
   /**
    * Per-session generation counter — bumped only when THIS session's client is
