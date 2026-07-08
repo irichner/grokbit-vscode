@@ -1,6 +1,6 @@
 # Attribution
 
-**Grokbit** is based on [phuryn/grok-build-vscode](https://github.com/phuryn/grok-build-vscode) by **Paweł Huryn**, MIT License (original source). Primary development now lives at [irichner/grokbit-vscode](https://github.com/irichner/grokbit-vscode). The LICENSE file ships unchanged, and the credit below is surfaced in the README, welcome screen, and About panel.
+**Grokbit** is based on [phuryn/grok-build-vscode](https://github.com/phuryn/grok-build-vscode) by **Paweł Huryn**, MIT License (original source). Primary development now lives at [irichner/grokbit-vscode](https://github.com/irichner/grokbit-vscode). The original copyright notice is retained verbatim in the LICENSE file (with a copyright line added for this fork's work), and the credit below is surfaced in the README, welcome screen, and About panel.
 
 This project is licensed under the **MIT License** — see [LICENSE](../LICENSE). MIT is permissive: you're free to **use, copy, modify, merge, publish, distribute, sublicense, and sell** it, including in closed-source or commercial products, for free.
 
