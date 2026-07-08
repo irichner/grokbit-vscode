@@ -29,7 +29,7 @@ if (-not $VsixPath) {
     Push-Location $repoRoot
     try {
         if (-not (Test-Path "node_modules")) { npm install }
-        npm run package   # clears stale grok-vscode-phuryn-*.vsix first, then builds
+        npm run package   # clears stale *.vsix first, then builds
         $vsix = Get-ChildItem -Path $repoRoot -Filter "*.vsix" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     } finally { Pop-Location }
     if (-not $vsix) { throw "Build did not produce a .vsix." }
@@ -37,6 +37,9 @@ if (-not $VsixPath) {
 }
 
 $code = Find-CodeCli
+# The pre-rename listing registers the same grok.* commands/views, so the two
+# cannot coexist — drop it if present (best-effort; absent on fresh machines).
+try { & $code --uninstall-extension PawelHuryn.grok-vscode-phuryn 2>$null } catch {}
 Write-Host "Installing $VsixPath via $code"
 & $code --install-extension $VsixPath --force
 Write-Host ""

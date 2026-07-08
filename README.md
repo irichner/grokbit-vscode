@@ -10,7 +10,7 @@ Use Grok Build inside VS Code — **each session in its own editor tab**, drop y
 
 You install the `grok` CLI once and sign in — with a **SuperGrok or X Premium+ subscription**, or an **xAI API key** — and the extension is the GUI on top.
 
-**Install free from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=PawelHuryn.grok-vscode-phuryn) or [Open VSX Registry](https://open-vsx.org/extension/PawelHuryn/grok-vscode-phuryn)**
+**Install free from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=grokbit.grokbit) or [Open VSX Registry](https://open-vsx.org/extension/grokbit/grokbit)**
 
 ![Grok Build in the VS Code sidebar](docs/screenshots/v1.4.20.png)
 
@@ -57,10 +57,10 @@ grok /login
 
 **2. Install the extension.**
 
-From the Marketplace — search **Grok Build** by *PawelHuryn*, or:
+From the Marketplace — search **Grokbit**, or:
 
 ```bash
-code --install-extension PawelHuryn.grok-vscode-phuryn
+code --install-extension grokbit.grokbit
 ```
 
 Or build from source:
@@ -78,7 +78,7 @@ Reload VS Code (**Ctrl+Shift+P → Developer: Reload Window**) and click the Gro
 >
 > ![Right-click the Grok icon → Move To → Secondary Side Bar](docs/screenshots/side.png)
 
-**Uninstall:** `./scripts/uninstall.sh` (Windows: `pwsh scripts\uninstall.ps1`) or `code --uninstall-extension PawelHuryn.grok-vscode-phuryn`.
+**Uninstall:** `./scripts/uninstall.sh` (Windows: `pwsh scripts\uninstall.ps1`) or `code --uninstall-extension grokbit.grokbit`.
 
 ---
 
@@ -310,7 +310,7 @@ Full diagram, message flow, module map, and design notes: **[docs/architecture.m
 ```bash
 npm install
 npm test         # grok-free unit/DOM/integration suite — exactly what CI runs
-npm run package  # → grok-vscode-phuryn-<version>.vsix
+npm run package  # → grokbit-<version>.vsix
 ```
 
 `npm test` is grok-free, so **local ≡ CI** — it never spawns the real binary. A separate, on-demand `npm run test:live` drives the actual `grok` end-to-end (handshake, restore, plan-mode, image/video gen) and is run **before a release**, not on every commit. Full test taxonomy and what's deferred to a future `@vscode/test-electron` suite: **[TESTS.md](TESTS.md)**. Architecture and module map: **[docs/architecture.md](docs/architecture.md)**.

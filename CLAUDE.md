@@ -1,6 +1,6 @@
 # CLAUDE.md — Grokbit (fork of grok-build-vscode)
 
-**Grokbit** — VS Code extension for **xAI's Grok Build CLI**, driven by `grok agent stdio` over the [Agent Client Protocol (ACP)](https://agentclientprotocol.com). Thin client — all session state, MCP servers, subagents, memory, and plan-mode bookkeeping live in the CLI. **Each session renders in its own native editor tab** (`WebviewPanel`, view type `grok.session`); the activity-bar view is a session **launcher** (list + New), not the chat. Fork of `phuryn/grok-build-vscode` (MIT — attribution kept in README/welcome/About). Primary source is now https://github.com/irichner/grokbit-vscode. `package.json` identity fields (`name`, `publisher`) remain for Marketplace continuity. Rebrand covers display name, activity-bar/Settings/command titles, welcome + About copy; `grok.*` command IDs, setting keys, the `grok.chat` view id, and the AI-persona strings are unchanged.
+**Grokbit** — VS Code extension for **xAI's Grok Build CLI**, driven by `grok agent stdio` over the [Agent Client Protocol (ACP)](https://agentclientprotocol.com). Thin client — all session state, MCP servers, subagents, memory, and plan-mode bookkeeping live in the CLI. **Each session renders in its own native editor tab** (`WebviewPanel`, view type `grok.session`); the activity-bar view is a session **launcher** (list + New), not the chat. Fork of `phuryn/grok-build-vscode` (MIT — attribution kept in README/welcome/About). Primary source is now https://github.com/irichner/grokbit-vscode. Published as **`grokbit.grokbit`** (publisher `grokbit`) — a fresh Marketplace listing, distinct from the original `PawelHuryn.grok-vscode-phuryn`; the install scripts remove the old listing on install since the two register the same `grok.*` commands/views and can't coexist. Rebrand covers `package.json` identity (`name`/`publisher`/`author`), display name, activity-bar/Settings/command titles, welcome + About copy; `grok.*` command IDs, setting keys, the `grok.chat` view id, and the AI-persona strings are unchanged.
 
 ## Status
 
@@ -42,7 +42,7 @@ This file is the project map: it describes the **current** architecture, not a p
 | `media/webview-helpers.js` | Pure webview helpers (file-ref detection, relative-time format, mic-button state machine, trailing send-phrase highlight, subagent classifier `isSubagentToolCall`/`subagentLabel`, failed-tool reason `toolFailureText`, line diff `computeLineDiff` (feeds the in-chat inline diff — prefix/suffix trim + capped LCS), attachment-envelope parser `parseAttachmentContext`); shared between webview and tests |
 | `media/launcher.js` | Activity-bar launcher — session list + dots + New + rename/delete + search/load-more + signed-out/missing-CLI states; reuses chat.css row styles |
 | `scripts/install.{ps1,sh}` | Auto-detect VS Code CLI, build .vsix, install |
-| `scripts/uninstall.{ps1,sh}` | Uninstall `PawelHuryn.grok-vscode-phuryn` |
+| `scripts/uninstall.{ps1,sh}` | Uninstall `grokbit.grokbit` (and the pre-rename `PawelHuryn.grok-vscode-phuryn` if present) |
 
 Pure modules (`acp-dispatch`, `chips`, `prompt-builder`, `slash-filter`, `cli-locator`, `sessions`, `plan-gate`, `plan-restore`, `grok-primer`, `file-ref`, `plan-review`, `mode-prefs`, `voice`, `session-pool`, `status-bar`, `panel-router`, `webview-helpers`) were split out specifically so protocol behavior can be unit-tested without spawning processes. (`session.ts` is a plain state bag — no runtime `vscode`/spawn/network either (its `vscode` import is type-only), but it's data, not logic.)
 
@@ -90,7 +90,7 @@ All four are pure webview renders with no host side effect, so panel replay is h
 npm install
 npm test         # 696 tests, ~2s, vitest — all grok-free (incl. happy-dom DOM tests + fake-CLI ACP integration tests)
 npm run test:perf # opt-in session-history perf simulation (NOT in npm test/CI; see § History pagination)
-npm run package  # → grok-vscode-phuryn-<version>.vsix (clears older *.vsix first)
+npm run package  # → grokbit-<version>.vsix (clears older *.vsix first)
 ```
 
 ### Test taxonomy — three layers
@@ -191,8 +191,8 @@ What the script encodes, step by step:
 2. `npm test` (696-test floor, all green) + `tsc -p . --noEmit` clean, **and `npm run test:live` against real grok — mandatory, run without asking** (the `release.*` scripts don't run it, so run it by hand before invoking them).
 3. Commit + push to `main` (direct-to-main, no feature branches).
 4. **Annotated git tag** `vX.Y.Z` at the release commit → `git tag -a vX.Y.Z -m "Release vX.Y.Z"` → `git push origin vX.Y.Z`.
-5. **GitHub Release** for that tag → `gh release create vX.Y.Z --title "Release vX.Y.Z" --notes-file <notes> <vsix>` (notes = the new changelog section(s); include any earlier version that was bumped but never released). **Always attach the built `grok-vscode-phuryn-X.Y.Z.vsix` as a release asset** so the exact installable build is downloadable from the release.
-6. **Marketplace publish is separate and explicit** — only `npm run publish` (vsce) when the user asks. The `PawelHuryn` publisher is registered + authenticated locally; publishing ≠ tagging.
+5. **GitHub Release** for that tag → `gh release create vX.Y.Z --title "Release vX.Y.Z" --notes-file <notes> <vsix>` (notes = the new changelog section(s); include any earlier version that was bumped but never released). **Always attach the built `grokbit-X.Y.Z.vsix` as a release asset** so the exact installable build is downloadable from the release.
+6. **Marketplace publish is separate and explicit** — only `npm run publish` (vsce) when the user asks. The `grokbit` publisher must be registered + authenticated locally (`npx @vscode/vsce login grokbit`); publishing ≠ tagging.
 
 Don't skip the tag/release (or the vsix asset) on a release push. (A pure mid-dev version bump that isn't a release — e.g. the unreleased v1.3.0 voice iteration — is the only exception.)
 
@@ -205,6 +205,6 @@ Don't skip the tag/release (or the vsix asset) on a release push. (A pure mid-de
 - Don't introduce abstractions speculatively
 - Don't add comments that explain what well-named code already says
 - 696 tests is the floor — every PR should keep that green. All tests are grok-free (no binary spawn); grok-dependent probes live in `research/*.cjs` and are run manually, never by `npm test` or CI
-- **Rebuilding clears older `.vsix` first** — `npm run package` (and the install/release scripts) delete stale `grok-vscode-phuryn-*.vsix` before building, so only the current version is on disk. After any doc or code change, rebuild + reinstall so the installed extension's bundled docs are current. **Package last:** the vsix bundles `CLAUDE.md`/`README.md`/`docs/` as files, so finish *all* doc + code edits **before** the final `npm run package` + reinstall — otherwise the installed build ships a stale-docs snapshot. If you rebuild mid-task and then touch docs again, rebuild again so the order is always edit-everything → package → reinstall.
+- **Rebuilding clears older `.vsix` first** — `npm run package` (and the install/release scripts) delete stale `grokbit-*.vsix` before building, so only the current version is on disk. After any doc or code change, rebuild + reinstall so the installed extension's bundled docs are current. **Package last:** the vsix bundles `CLAUDE.md`/`README.md`/`docs/` as files, so finish *all* doc + code edits **before** the final `npm run package` + reinstall — otherwise the installed build ships a stale-docs snapshot. If you rebuild mid-task and then touch docs again, rebuild again so the order is always edit-everything → package → reinstall.
 - **Version bumps are user-initiated.** Iterate at the current version (rebuild the same vsix and reinstall locally) until the user says to bump and publish. Don't bump `package.json` on your own.
-- **Sign GitHub comments.** Every GitHub issue/PR comment posted on the user's behalf ends with a signature on its own final line (italic). Pick by whether Paweł actually reviewed the text before it was posted: if he reviewed it, use `_Written with an agent, reviewed by Paweł_`; if the agent posted it without his review, use `_Written by Pawel's agent_`. Only claim review when it actually happened.
+- **Sign GitHub comments.** Every GitHub issue/PR comment posted on the user's behalf ends with a signature on its own final line (italic). Pick by whether Israel actually reviewed the text before it was posted: if he reviewed it, use `_Written with an agent, reviewed by Israel_`; if the agent posted it without his review, use `_Written by Israel's agent_`. Only claim review when it actually happened.

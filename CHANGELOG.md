@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 — 2026-07-07
 
 ### Changed
 
-- **Rebranded to "Grokbit."** Extension display name, activity-bar title, Settings section, command-palette titles, and welcome/About copy now say Grokbit. Based on [phuryn/grok-build-vscode](https://github.com/phuryn/grok-build-vscode) by Paweł Huryn (MIT) — the attribution credit is kept in the README, welcome screen, and About panel. Command IDs, setting keys, and the `grok` CLI integration are unchanged.
+- **Rebranded to "Grokbit"** with a new Marketplace identity: published as **`grokbit.grokbit`** (publisher `grokbit`) — a fresh listing, replacing `PawelHuryn.grok-vscode-phuryn`. Extension display name, activity-bar title, Settings section, command-palette titles, and welcome/About copy now say Grokbit. The install scripts remove the old listing if present (the two register the same commands/views and can't coexist). Based on [phuryn/grok-build-vscode](https://github.com/phuryn/grok-build-vscode) by Paweł Huryn (MIT) — the attribution credit is kept in the README, welcome screen, and About panel. Command IDs, setting keys, and the `grok` CLI integration are unchanged.
 - **Each session now opens in its own native editor tab** instead of a single swapped-in-place sidebar view. Tabs are titled with a short summary of the first prompt ("Grokbit New" until one is sent), stream independently (a hidden tab's turn replays losslessly on reveal), restore across window reloads (background tabs spawn lazily on first reveal), and the activity-bar view becomes a session launcher with status dots.
 
 ### Fixed

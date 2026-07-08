@@ -34,6 +34,9 @@ fi
 [ -f "$vsix" ] || { echo "vsix not found: $vsix" >&2; exit 1; }
 
 code=$(find_code_cli)
+# The pre-rename listing registers the same grok.* commands/views, so the two
+# cannot coexist — drop it if present (best-effort; absent on fresh machines).
+"$code" --uninstall-extension PawelHuryn.grok-vscode-phuryn >/dev/null 2>&1 || true
 echo "Installing $vsix via $code"
 # --force so a same-version reinstall actually overwrites the installed files
 "$code" --install-extension "$vsix" --force

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command release for grok-build-vscode — the macOS/Linux/WSL twin of
+# One-command release for grokbit-vscode — the macOS/Linux/WSL twin of
 # scripts/release.ps1. Encodes the standing "release push to main" procedure
 # from CLAUDE.md so it isn't orchestrated by hand each time.
 #
@@ -34,7 +34,7 @@ step() { printf '\033[36m==> %s\033[0m\n' "$1"; }
 
 version="$(node -p "require('./package.json').version")"
 tag="v$version"
-vsix="grok-vscode-phuryn-$version.vsix"
+vsix="grokbit-$version.vsix"
 [ -n "$MSG" ] || MSG="Release $tag"
 printf '\033[32mReleasing %s\033[0m\n' "$tag"
 
