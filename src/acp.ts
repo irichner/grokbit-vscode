@@ -130,6 +130,11 @@ export class AcpClient extends EventEmitter {
   private nextId = 1;
   private pending = new Map<number, Pending>();
 
+  /** OS pid of the spawned `grok agent stdio` process (for the spawn log). */
+  get pid(): number | undefined {
+    return this.proc?.pid;
+  }
+
   sessionId?: string;
   currentModelId?: string;
   currentModeId?: string;

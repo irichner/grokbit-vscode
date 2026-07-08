@@ -606,7 +606,7 @@ body.thinking-hidden .msg.thinking { display: none; }
   font-size: var(--vscode-font-size);
   color: var(--vscode-descriptionForeground);
 }
-/* The line-count + "open diff" sit inline after the label on one row (they used
+/* The line-count + "view diff" sit inline after the label on one row (they used
    to each take a full-width line via flex-basis:100%). A failure message
    (.tool-error) still keeps its own line. */
 .tool-item-subtitle {
@@ -624,6 +624,63 @@ body.thinking-hidden .msg.thinking { display: none; }
   text-align: left;
 }
 .tool-item .preview-link:hover { color: var(--vscode-textLink-foreground); }
+/* Inline diff — rendered in the chat itself (permission card + edit tool rows).
+   Diffs never open a separate editor tab: that tab covered the chat webview and
+   the reveal-replay reopened it in a focus-stealing loop. Colors ride VS Code's
+   own diff-editor theme variables so it matches the user's theme. */
+.inline-diff {
+  border: 1px solid var(--vscode-editorWidget-border);
+  border-radius: 4px;
+  background: var(--vscode-editor-background);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  max-height: 260px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.tool-item .inline-diff {
+  flex-basis: 100%; /* own line under the label/subtitle row */
+  margin: 2px 0 4px;
+}
+.card .inline-diff { margin-top: 6px; }
+.diff-line {
+  position: relative;
+  padding: 0 8px 0 18px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--vscode-editor-foreground);
+}
+.diff-line::before {
+  position: absolute;
+  left: 6px;
+  opacity: 0.7;
+}
+.diff-line.same { color: var(--vscode-descriptionForeground); }
+.diff-line.add {
+  background: var(--vscode-diffEditor-insertedLineBackground, var(--vscode-diffEditor-insertedTextBackground, rgba(46, 160, 67, 0.18)));
+}
+.diff-line.add::before { content: "+"; }
+.diff-line.del {
+  background: var(--vscode-diffEditor-removedLineBackground, var(--vscode-diffEditor-removedTextBackground, rgba(248, 81, 73, 0.18)));
+}
+.diff-line.del::before { content: "−"; }
+.diff-gap {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  border-top: 1px dashed var(--vscode-editorWidget-border);
+  border-bottom: 1px dashed var(--vscode-editorWidget-border);
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 1px 0;
+  text-align: center;
+}
+.diff-gap:hover { color: var(--vscode-textLink-foreground); }
+.diff-gap.diff-truncated { cursor: default; }
+.diff-gap.diff-truncated:hover { color: var(--vscode-descriptionForeground); }
 /* Failed tool call — the row goes error-colored and shows grok's reason. */
 .tool-flat.tool-failed,
 .tool-item.tool-failed { color: var(--vscode-errorForeground); }
@@ -638,6 +695,24 @@ body.thinking-hidden .msg.thinking { display: none; }
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* Command scrollback (the "show output" expander on execute rows). Scrollable
+   monospace panel — mirrors the inline-diff container so it matches the theme. */
+.tool-output {
+  flex-basis: 100%; /* own line under the label/toggle row */
+  margin: 2px 0 4px;
+  border: 1px solid var(--vscode-editorWidget-border);
+  border-radius: 4px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  max-height: 260px;
+  overflow: auto;
+  padding: 6px 8px;
+  white-space: pre;
+}
+.tool-item .tool-output-copy { margin-left: 2px; }
 .tool-kind {
   font-size: 10px;
   color: var(--vscode-descriptionForeground);
@@ -1019,6 +1094,19 @@ textarea#input {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Composer model + effort chip — surfaces the values that otherwise live two
+   clicks deep in the gear menu; click opens the gear's model + effort controls.
+   `[hidden]` needs an explicit display:none because .toolbar-btn forces
+   inline-flex, which would otherwise override the hidden attribute. */
+.model-label-btn {
+  color: var(--vscode-descriptionForeground);
+  max-width: 160px;
+  min-width: 0;
+  flex-shrink: 1;
+}
+.model-label-btn:hover { color: var(--vscode-foreground); }
+.model-label-btn[hidden] { display: none; }
 
 /* ---- gear popover: model + effort row ---- */
 
@@ -1896,3 +1984,30 @@ mjx-container[display="true"] {
   color: var(--vscode-foreground);
 }
 .expr-btn.copied { color: var(--vscode-charts-green, #4ec9b0); }
+
+/* ---------- launcher (activity-bar view) ---------- */
+/* The launcher reuses the history-popover row/dot/footer styles above; these
+   rules just turn them into a full-height sidebar list instead of a popover. */
+.launcher-body {
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  overflow: hidden;
+  font-family: var(--vscode-font-family);
+  color: var(--vscode-foreground);
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+}
+.launcher {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 6px;
+  box-sizing: border-box;
+}
+.launcher-head { padding: 2px 2px 6px; }
+.launcher-head .onb-action { width: 100%; margin: 0; }
+.launcher-onboarding { padding: 2px; }
+.launcher-list {
+  flex: 1;
+  max-height: none; /* fill the view; the popover cap doesn't apply here */
+}

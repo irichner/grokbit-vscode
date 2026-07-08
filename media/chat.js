@@ -10,6 +10,7 @@
   const newBtn = $("new-btn");
   const historyBtn = $("history-btn");
   const modeBtn = $("mode-btn");
+  const modelLabel = $("model-label");
   const gearBtn = $("gear-btn");
   const addBtn = $("add-btn");
   const chipsEl = $("chips");
@@ -22,6 +23,7 @@
   const addPopover = $("add-popover");
   const historyPopover = $("history-popover");
   const scrollBottomBtn = $("scroll-bottom-btn");
+  const changedFilesEl = $("changed-files");
 
   // grok's accepted reasoning-effort values, lowest → highest (matches the CLI;
   // `max` is not a real grok level and is intentionally excluded — see #3/#4).
@@ -77,6 +79,11 @@
     pendingDiffByToolCallId: new Map(),
     toolItemsByToolCallId: new Map(),
     toolFailuresById: new Map(), // toolCallId → error text, so a single-call group carries it onto the flat
+    // Files edited in the CURRENT turn (toolCallId → { path, adds, dels }), shown
+    // as a scannable strip above the composer and cleared on the next user send.
+    // Only edits grok actually applied land here (a plan-gate-blocked write becomes
+    // a failed tool, which removes it); replayed history never populates it.
+    changedFiles: new Map(),
 
     agentRenderScheduled: false,
     thoughtBuffer: "",
@@ -295,6 +302,30 @@
     modeBtn.classList.toggle("yolo-active", modeId === "yolo");
   }
 
+  // Compact model + effort chip in the composer toolbar. Both settings live two
+  // clicks deep in the gear menu; this surfaces the current values always-visible
+  // and opens the gear (model + effort controls) on click. Hidden until a model
+  // is known (the initial `session` event).
+  function updateModelLabel() {
+    if (!modelLabel) return;
+    const name = modelDisplayName(state.currentModelId, state.availableModels) || "";
+    if (!name && !state.currentModelId) { modelLabel.hidden = true; return; }
+    const short = truncate(name || "Grok", 14);
+    const eff = state.effort ? ` · ${shortEffort(state.effort)}` : "";
+    modelLabel.innerHTML = `<span class="btn-label">${escapeHtml(short + eff)}</span>`;
+    const full = name || "Model";
+    modelLabel.title = `${full}${state.effort ? " (" + capitalize(state.effort) + " effort)" : ""} — click to change`;
+    modelLabel.hidden = false;
+  }
+
+  function shortEffort(e) {
+    if (!e) return "";
+    if (e === "minimal") return "min";
+    if (e === "medium") return "med";
+    if (e === "xhigh") return "xhi";
+    return e.slice(0, 3);
+  }
+
   newBtn.innerHTML = ICON.squarePen;
   historyBtn.innerHTML = ICON.clock;
   updateSendButton(); // spinner by default — session is starting up (busy+locked)
@@ -305,7 +336,7 @@
 
   // ---------- markdown ----------
 
-  const { looksLikeFileRef, formatRelativeTime, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, parseAttachmentContext } = globalThis.GrokWebviewHelpers;
+  const { looksLikeFileRef, formatRelativeTime, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext } = globalThis.GrokWebviewHelpers;
 
   function escapeAttr(s) {
     return String(s == null ? "" : s)
@@ -1019,6 +1050,7 @@
         vscode.postMessage({ type: "setEffort", level: state.effort });
         renderGearMain();
         gearPopover.hidden = false;
+        updateModelLabel(); // reflect the new effort on the composer chip
       };
       dotsEl.appendChild(dot);
     });
@@ -1115,17 +1147,18 @@
     const fine = document.createElement("div");
     fine.className = "popover-fineprint";
     fine.textContent =
-      "Unofficial · community-built · MIT | " +
+      "Grokbit · unofficial · MIT | " +
       "A VS Code UI for xAI’s Grok Build CLI - not affiliated with or endorsed by xAI. " +
-      "Grok, Grok Build, and xAI are trademarks of xAI; this project uses those names only to describe what it’s compatible with.";
+      "Grok, Grok Build, and xAI are trademarks of xAI; this project uses those names only to describe what it’s compatible with. " +
+      "Based on phuryn/grok-build-vscode by Paweł Huryn (MIT).";
     gearPopover.appendChild(fine);
 
     // ── Repository link (bottom) ─────────────────────────────────────────
     addGearSep();
     const ghIcon = '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="vertical-align:-2px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>';
     addGearItem(
-      `<span class="popover-gh">${ghIcon} phuryn/grok-build-vscode</span><span class="popover-external">↗</span>`,
-      () => { vscode.postMessage({ type: "openUrl", url: "https://github.com/phuryn/grok-build-vscode" }); closePopovers(); },
+      `<span class="popover-gh">${ghIcon} irichner/grokbit-vscode</span><span class="popover-external">↗</span>`,
+      () => { vscode.postMessage({ type: "openUrl", url: "https://github.com/irichner/grokbit-vscode" }); closePopovers(); },
     );
   }
 
@@ -1500,7 +1533,7 @@
       const onb = $("welcome-onboarding");
       if (onb) onb.innerHTML = "";
       const ver = $("welcome-version");
-      if (ver) { ver.classList.add("loading-dots"); ver.textContent = "Starting"; }
+      if (ver) { ver.hidden = false; ver.classList.add("loading-dots"); ver.textContent = "Starting"; }
     }
     state.welcomeVisible = true;
     state.pendingDiffByToolCallId.clear();
@@ -1536,7 +1569,7 @@
     const ver = $("welcome-version");
     if (!onb) return;
     if (mode === "missing-cli") {
-      if (ver) { ver.classList.remove("loading-dots"); ver.textContent = "CLI not installed"; }
+      if (ver) { ver.hidden = false; ver.classList.remove("loading-dots"); ver.textContent = "CLI not installed"; }
       const installCmd = info.platform === "win32"
         ? "irm https://x.ai/cli/install.ps1 | iex"
         : "curl -fsSL https://x.ai/cli/install.sh | bash";
@@ -1551,7 +1584,7 @@
           `<button class="onb-action onb-secondary" type="button" data-act="recheck">Re-check connection</button>` +
         `</div>`;
     } else if (mode === "auth-required") {
-      if (ver) { ver.classList.remove("loading-dots"); ver.textContent = "Authentication required"; }
+      if (ver) { ver.hidden = false; ver.classList.remove("loading-dots"); ver.textContent = "Authentication required"; }
       onb.innerHTML =
         `<div class="onb">` +
           `<p class="onb-heading">Sign in to continue</p>` +
@@ -1877,7 +1910,14 @@
     // would attach to an orphaned node. Keeping the group (chevron + body) makes a
     // single edit behave exactly like a multi-tool batch, which already works, in both
     // the live and replay orderings.
-    if (calls.length === 1 && categorize(calls[0]) !== "edit") {
+    //
+    // Same reasoning for a lone command that produced scrollback: its "show output"
+    // toggle lives on the tool-item, so flattening would drop it. Keep those as a
+    // group too (a command with no output still flattens to a clean single row).
+    const lone = calls[0];
+    const loneItem = calls.length === 1 && lone.toolCallId && state.toolItemsByToolCallId.get(lone.toolCallId);
+    const loneHasOutput = loneItem && loneItem.querySelector(".tool-output-toggle");
+    if (calls.length === 1 && categorize(lone) !== "edit" && !loneHasOutput) {
       const flat = document.createElement("div");
       flat.className = "tool-flat";
       flat.innerHTML = toolIconFor(calls); // icon first
@@ -1934,6 +1974,10 @@
     const item = document.createElement("div");
     item.className = "tool-item";
     item.textContent = toolLabel(call);
+    // Stamp the category from the tool_call (which carries kind/title). A later
+    // tool_call_update often has neither, so re-categorizing the update would
+    // wrongly bucket everything as "command"; readers key off this instead.
+    item.dataset.toolCategory = categorize(call);
     body.appendChild(item);
     if (call.toolCallId) state.toolItemsByToolCallId.set(call.toolCallId, item);
 
@@ -1950,6 +1994,83 @@
     scrollToBottom();
   }
 
+  // ---------- inline diff (rendered in the chat, never a separate editor tab) ----------
+  // A diff must never open its own editor tab: the auto-opened tab covered the
+  // chat webview, whose reveal-replay re-rendered the pending permission card
+  // and re-opened the tab — a focus-stealing loop (closing the diff revealed
+  // the chat, which replayed, which reopened the diff). Rendering the diff
+  // inside the chat tab has no host side effect, so replay is harmless.
+
+  const DIFF_CONTEXT_LINES = 3; // unchanged lines kept visible around each hunk
+  const DIFF_MAX_RENDERED = 800; // hard cap on rendered rows per diff
+
+  function diffLineEl(row) {
+    const line = document.createElement("div");
+    line.className = "diff-line " + row.type;
+    line.textContent = row.text || " "; // a space keeps empty lines from collapsing
+    return line;
+  }
+
+  // Build the scrollable diff block from an edit's { path, oldText, newText }.
+  // Long unchanged runs collapse to a clickable "N unchanged lines" gap.
+  function renderInlineDiff(diff) {
+    const rows = computeLineDiff(diff.oldText, diff.newText);
+    const wrap = document.createElement("div");
+    wrap.className = "inline-diff";
+    let rendered = 0;
+    let truncated = 0;
+    const pushRow = (row) => {
+      if (rendered >= DIFF_MAX_RENDERED) {
+        truncated++;
+        return;
+      }
+      rendered++;
+      wrap.appendChild(diffLineEl(row));
+    };
+    const pushGap = (hiddenRows) => {
+      const gap = document.createElement("button");
+      gap.className = "diff-gap";
+      gap.textContent = `⋯ ${hiddenRows.length} unchanged lines ⋯`;
+      gap.onclick = (e) => {
+        e.stopPropagation(); // don't toggle the enclosing tool group
+        const frag = document.createDocumentFragment();
+        for (const r of hiddenRows) frag.appendChild(diffLineEl(r));
+        gap.replaceWith(frag);
+      };
+      wrap.appendChild(gap);
+    };
+    let i = 0;
+    while (i < rows.length) {
+      if (rows[i].type !== "same") {
+        pushRow(rows[i]);
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j < rows.length && rows[j].type === "same") j++;
+      const run = rows.slice(i, j);
+      // Context is only useful next to a change: the leading run needs no head,
+      // the trailing run no tail.
+      const head = i === 0 ? 0 : DIFF_CONTEXT_LINES;
+      const tail = j === rows.length ? 0 : DIFF_CONTEXT_LINES;
+      if (run.length > head + tail + 1) {
+        run.slice(0, head).forEach(pushRow);
+        pushGap(run.slice(head, run.length - tail));
+        run.slice(run.length - tail).forEach(pushRow);
+      } else {
+        run.forEach(pushRow);
+      }
+      i = j;
+    }
+    if (truncated > 0) {
+      const note = document.createElement("div");
+      note.className = "diff-gap diff-truncated";
+      note.textContent = `… ${truncated} more lines (diff truncated)`;
+      wrap.appendChild(note);
+    }
+    return wrap;
+  }
+
   function attachDiffPreviewToToolItem(toolCallId, diff) {
     const item = state.toolItemsByToolCallId.get(toolCallId);
     if (!item || item.querySelector(".preview-link")) return; // already attached
@@ -1961,15 +2082,18 @@
     item.appendChild(sub);
     const preview = document.createElement("button");
     preview.className = "preview-link";
-    preview.textContent = "open diff →";
+    preview.textContent = "view diff";
+    let diffEl = null; // built lazily on first view
     preview.onclick = (e) => {
       e.stopPropagation(); // don't toggle the tool-group expand/collapse
-      vscode.postMessage({
-        type: "openDiff",
-        path: diff.path,
-        oldText: diff.oldText,
-        newText: diff.newText,
-      });
+      if (!diffEl) {
+        diffEl = renderInlineDiff(diff);
+        diffEl.classList.add("tool-item-diff");
+        item.appendChild(diffEl);
+      } else {
+        diffEl.hidden = !diffEl.hidden;
+      }
+      preview.textContent = diffEl.hidden ? "view diff" : "hide diff";
     };
     item.appendChild(preview);
     scrollToBottom();
@@ -1992,6 +2116,73 @@
         attachDiffPreviewToToolItem(call.toolCallId, diff);
       }
     }
+  }
+
+  // Command tool rows summarize as "Ran `npm test`" but drop the stdout/stderr —
+  // when the group is collapsed you approved a command and never saw what it
+  // printed. Attach a lazy "show output" toggle (+ copy) with a scrollable
+  // monospace scrollback so the "what did it actually print?" gap closes without
+  // cluttering the default view. Only for command/execute rows: reads show their
+  // filename (open the file for content) and edits already get a diff preview.
+  const TOOL_OUTPUT_MAX_CHARS = 40000; // hard cap on rendered scrollback per row
+
+  function attachOutputToToolItem(toolCallId, output) {
+    if (!toolCallId) return;
+    const item = state.toolItemsByToolCallId.get(toolCallId);
+    if (!item || item.querySelector(".tool-output-toggle")) return; // once per row
+    const text = String(output == null ? "" : output);
+    if (!text.trim()) return;
+
+    const toggle = document.createElement("button");
+    toggle.className = "preview-link tool-output-toggle";
+    toggle.textContent = "show output";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "preview-link tool-output-copy";
+    copyBtn.textContent = "copy";
+    copyBtn.hidden = true; // revealed with the output
+    copyBtn.onclick = (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(text).then(() => {
+        copyBtn.textContent = "copied";
+        setTimeout(() => { copyBtn.textContent = "copy"; }, 1500);
+      });
+    };
+
+    let pre = null; // built lazily on first reveal
+    toggle.onclick = (e) => {
+      e.stopPropagation(); // don't toggle the surrounding tool-group
+      if (!pre) {
+        pre = document.createElement("pre");
+        pre.className = "tool-output";
+        pre.textContent = text.length > TOOL_OUTPUT_MAX_CHARS
+          ? text.slice(0, TOOL_OUTPUT_MAX_CHARS) + "\n… (output truncated — use copy for the full text)"
+          : text;
+        item.appendChild(pre);
+      } else {
+        pre.hidden = !pre.hidden;
+      }
+      const open = !pre.hidden;
+      toggle.textContent = open ? "hide output" : "show output";
+      copyBtn.hidden = !open;
+      if (open) scrollToBottom();
+    };
+    item.appendChild(toggle);
+    item.appendChild(copyBtn);
+  }
+
+  // Attach the command scrollback from a (live or replayed) tool call's text
+  // content. Runs for both `tool_call` and `tool_call_update` — like applyToolDiffs,
+  // grok delivers command output on the update LIVE but folds it into a single
+  // completed `tool_call` on session/load replay. Category comes from the row's
+  // stored tool_call kind (the update usually has none), so only true execute rows
+  // get an output panel — a read's completion content is its file, not scrollback.
+  function applyToolOutput(call) {
+    if (!call || !call.toolCallId) return;
+    const item = state.toolItemsByToolCallId.get(call.toolCallId);
+    if (!item || item.dataset.toolCategory !== "command") return;
+    const out = toolUpdateText(call);
+    if (out) attachOutputToToolItem(call.toolCallId, out);
   }
 
   // Render a tool failure on its row: the row goes error-colored and the reason
@@ -2264,7 +2455,11 @@
     if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl) {
       commitAgentTurn();
     }
-    clearWelcome();
+    // No clearWelcome() here — the bubble path's addMessage() clears it. The
+    // suppressed paths below (primer turn, system-reminder) must leave the
+    // welcome up: a primer-only session's replay renders nothing, and hiding
+    // the welcome for it left a completely blank chat. With the welcome kept,
+    // an empty resumed session looks like a fresh one.
     if (!state.activeUserEl && !state.skipUserBubble) {
       // A new user message is starting. If we're replaying and this message is
       // the extension's primer, suppress it AND grok's response to it — both
@@ -2613,23 +2808,11 @@
       subtitle.textContent = `${diff.path} — ${oldLines} → ${newLines} lines`;
       el.appendChild(subtitle);
 
-      const openDiff = () =>
-        vscode.postMessage({
-          type: "openDiff",
-          path: diff.path,
-          oldText: diff.oldText,
-          newText: diff.newText,
-          requestId: req.id,
-        });
-      const preview = document.createElement("button");
-      preview.className = "preview-link";
-      // Auto-opens below; the button stays so you can re-open if you closed it.
-      preview.textContent = "open diff →";
-      preview.onclick = openDiff;
-      el.appendChild(preview);
-      // Open the diff automatically when the card appears, so reviewing an edit
-      // is one glance + one click on the decision — no "open diff" step (#21).
-      openDiff();
+      // The diff renders inline in the card — reviewing an edit is one glance +
+      // one click on the decision (#21) — and stays in this tab: an editor-tab
+      // preview covered the chat webview and its reveal-replay reopened the tab
+      // in a loop, so no host-side diff tab, ever.
+      el.appendChild(renderInlineDiff(diff));
     }
 
     const actions = document.createElement("div");
@@ -3372,6 +3555,7 @@
         state.extVersion = msg.extVersion || "";
         if (typeof msg.showThinking === "boolean") state.showThinking = msg.showThinking;
         applyThinkingVisibility();
+        updateModelLabel(); // effort is now known
         break;
       case "showThinking":
         // Live toggle (grok.showThinking). Initial value also arrives via
@@ -3408,7 +3592,7 @@
         state.cliVersion = msg.info.version || "";
         state.startingPhase = true;
         const verEl = $("welcome-version");
-        if (verEl) { verEl.classList.add("loading-dots"); verEl.textContent = "Starting"; }
+        if (verEl) { verEl.hidden = false; verEl.classList.add("loading-dots"); verEl.textContent = "Starting"; }
         const onb = $("welcome-onboarding");
         if (onb) onb.innerHTML = "";
         break;
@@ -3418,7 +3602,7 @@
         // spawns; overwritten by "starting…" once grok connects, then
         // "connected · v<new version>" once the primer finishes.
         const verEl = $("welcome-version");
-        if (verEl) { verEl.classList.add("loading-dots"); verEl.textContent = "Updating Grok Build CLI"; }
+        if (verEl) { verEl.hidden = false; verEl.classList.add("loading-dots"); verEl.textContent = "Updating Grok Build CLI"; }
         break;
       }
       case "session": {
@@ -3427,6 +3611,10 @@
         const m = state.availableModels.find((x) => x.modelId === msg.currentModelId);
         if (m?.totalContextTokens) state.contextWindow = m.totalContextTokens;
         updateDonut(0);
+        updateModelLabel(); // model is now known — reveal the composer chip
+        // Stash the grok session id for the panel serializer: after a window
+        // reload the host re-binds this tab to its session from this state.
+        if (msg.sessionId) vscode.setState({ id: msg.sessionId });
         break;
       }
       case "modelChanged": {
@@ -3437,6 +3625,7 @@
         // donut keeps showing the wrong ceiling and an inflated percentage.
         const m = state.availableModels.find((x) => x.modelId === msg.modelId);
         if (m && m.totalContextTokens) { state.contextWindow = m.totalContextTokens; updateDonut(); }
+        updateModelLabel();
         break;
       }
       case "modeChanged":
@@ -3603,6 +3792,7 @@
         // already carries its diff (no follow-up update) — attach the preview here
         // or the restored edit has no "open diff →" (#30).
         applyToolDiffs(msg.call);
+        applyToolOutput(msg.call); // command scrollback, if this replay carries it
         // Resume: if this tool was permission-gated, drop the restored (collapsed)
         // card right here — exactly where it was answered — instead of at the turn
         // boundary.
@@ -3646,6 +3836,7 @@
           break;
         }
         applyToolDiffs(msg.call);
+        applyToolOutput(msg.call); // command stdout/stderr → "show output" toggle
         break;
       }
       case "permissionRequest":
@@ -3754,11 +3945,14 @@
           // which fires while the primer is still in flight (spinner still up).
           if (state.startingPhase) {
             state.startingPhase = false;
+            // Connected — the status line has nothing left to say, so it goes
+            // away entirely (the CLI version stays visible in gear → About).
+            // Transient states (Starting / Updating / onboarding) re-show it.
             const verEl = $("welcome-version");
             if (verEl) {
-              const ver = state.cliVersion ? ` · v${state.cliVersion}` : "";
-              verEl.classList.remove("loading-dots"); // settled — no animated dots
-              verEl.textContent = `Connected${ver}`;
+              verEl.classList.remove("loading-dots");
+              verEl.textContent = "";
+              verEl.hidden = true;
             }
           }
         }
@@ -3847,11 +4041,22 @@
     renderMic();
   }
   newBtn.onclick = () => {
-    resetForNewSession();
+    // Opens a NEW editor tab (host-side); this panel keeps its own chat, so
+    // nothing here is reset.
     vscode.postMessage({ type: "newSession" });
   };
   modeBtn.onclick = (e) => { e.stopPropagation(); if (state.busy) return; openModePopover(); };
   gearBtn.onclick = (e) => { e.stopPropagation(); openGearPopover(); };
+  // The composer model/effort chip opens the gear's model + effort controls
+  // (they sit at the top of the main view). Positioned at the chip itself.
+  if (modelLabel) modelLabel.onclick = (e) => {
+    e.stopPropagation();
+    if (!gearPopover.hidden) { closePopovers(); return; }
+    closePopovers();
+    renderGearMain();
+    positionPopover(gearPopover, modelLabel);
+    gearPopover.hidden = false;
+  };
 
   // Welcome screen's "about" link → open the gear popover's Version & about panel.
   const welcomeAboutLink = $("welcome-about-link");

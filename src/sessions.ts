@@ -94,6 +94,23 @@ export function sessionsDirFor(grokHome: string, cwd: string): string {
   return path.join(grokHome, "sessions", encodeURIComponent(cwd));
 }
 
+/** Tab label for a session that hasn't been named yet (no prompt sent). */
+export const NEW_TAB_TITLE = "Grokbit New";
+
+/**
+ * Editor-tab title for a session. Tab labels are small, so the name is
+ * whitespace-collapsed, trimmed, and truncated to ~24 chars with an ellipsis;
+ * a session with no name yet (nothing sent) reads {@link NEW_TAB_TITLE}.
+ * Name precedence is the caller's job (customName → in-memory first prompt →
+ * on-disk displayName); this just formats whatever won. Pure.
+ */
+export function tabTitleFor(name: string | undefined, maxLen = 24): string {
+  const collapsed = (name ?? "").replace(/\s+/g, " ").trim();
+  if (!collapsed) return NEW_TAB_TITLE;
+  if (collapsed.length <= maxLen) return collapsed;
+  return collapsed.slice(0, maxLen - 1).trimEnd() + "…";
+}
+
 /** Default friendly name when no `customName` or `session_summary` is available. */
 export function fallbackName(summary: string, updatedAt: number): string {
   const s = (summary || "").trim();
@@ -345,15 +362,16 @@ export interface ClearDeps {
   fs: FsLike;
   grokHome: string;
   cwd: string;
-  /** Session id to keep (the live/focused one — grok re-persists it, so deleting it wouldn't stick). */
-  exceptId?: string;
+  /** Session ids to keep — every open panel's session (a live CLI re-persists its
+   *  own session, so deleting one wouldn't stick; the tab would also go orphaned). */
+  exceptIds?: Set<string>;
 }
 
-/** Remove every session directory under `cwd`, optionally keeping one. Returns the ids it removed.
+/** Remove every session directory under `cwd`, keeping the given ids. Returns the ids it removed.
  *  Best-effort: a directory that fails to remove is skipped, not thrown, so one locked dir doesn't
  *  abort the sweep. The directory name is the session id (mirrors `deleteSessionDir`). */
 export function clearSessions(deps: ClearDeps): string[] {
-  const { fs, grokHome, cwd, exceptId } = deps;
+  const { fs, grokHome, cwd, exceptIds } = deps;
   const dir = sessionsDirFor(grokHome, cwd);
   if (!fs.existsSync(dir)) return [];
   let entries: string[];
@@ -364,7 +382,7 @@ export function clearSessions(deps: ClearDeps): string[] {
   }
   const removed: string[] = [];
   for (const name of entries) {
-    if (exceptId && name === exceptId) continue;
+    if (exceptIds?.has(name)) continue;
     const full = path.join(dir, name);
     try {
       if (!fs.statSync(full).isDirectory()) continue;

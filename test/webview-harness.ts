@@ -40,6 +40,7 @@ export const BODY = `
     <button id="add-btn"></button>
     <button id="gear-btn"></button>
     <div id="donut"><svg><circle id="donut-arc"/></svg><span id="donut-label"></span></div>
+    <button id="model-label" hidden></button>
     <div id="chips"></div>
     <button id="mode-btn"></button>
     <button id="send-btn"></button>

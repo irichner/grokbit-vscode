@@ -230,6 +230,79 @@
     return "Tool call failed.";
   }
 
+  // Line diff of an edit's before/after text, for the inline diff the chat
+  // renders itself (permission card + edit tool rows). Diffs render INSIDE the
+  // chat tab by design — never a separate diff-editor tab: the old auto-opened
+  // tab covered the chat webview in the same editor group, and because a hidden
+  // webview is torn down (retainContextWhenHidden:false) every re-reveal
+  // replayed the pending permission card and re-opened the tab — a focus-
+  // stealing loop the user couldn't close out of.
+  //
+  // Returns rows [{ type: "same"|"add"|"del", text }] in unified order
+  // (deletions before additions within a changed hunk). Common prefix/suffix
+  // are trimmed first — grok's edits are usually a small patch in a big file —
+  // and the LCS table over what remains is capped so a pathological full
+  // rewrite degrades to one del-block + add-block instead of an O(n·m) stall.
+  const DIFF_LCS_CELL_CAP = 250000; // ≈500×500 changed lines
+
+  function computeLineDiff(oldText, newText) {
+    const oldS = typeof oldText === "string" ? oldText : "";
+    const newS = typeof newText === "string" ? newText : "";
+    if (oldS === newS) return oldS.split("\n").map((text) => ({ type: "same", text }));
+    if (oldS === "") return newS.split("\n").map((text) => ({ type: "add", text }));
+    if (newS === "") return oldS.split("\n").map((text) => ({ type: "del", text }));
+    const a = oldS.split("\n");
+    const b = newS.split("\n");
+    let start = 0;
+    while (start < a.length && start < b.length && a[start] === b[start]) start++;
+    let endA = a.length;
+    let endB = b.length;
+    while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+      endA--;
+      endB--;
+    }
+    const rows = [];
+    for (let i = 0; i < start; i++) rows.push({ type: "same", text: a[i] });
+    const m = endA - start;
+    const n = endB - start;
+    if (m * n > DIFF_LCS_CELL_CAP) {
+      for (let i = start; i < endA; i++) rows.push({ type: "del", text: a[i] });
+      for (let j = start; j < endB; j++) rows.push({ type: "add", text: b[j] });
+    } else if (m || n) {
+      // LCS lengths over the trimmed middle, then a backtrack. Preferring "add"
+      // on ties while walking backwards yields dels-before-adds after reversal.
+      const w = n + 1;
+      const dp = new Uint32Array((m + 1) * w);
+      for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+          dp[i * w + j] =
+            a[start + i - 1] === b[start + j - 1]
+              ? dp[(i - 1) * w + j - 1] + 1
+              : Math.max(dp[(i - 1) * w + j], dp[i * w + j - 1]);
+        }
+      }
+      const mid = [];
+      let i = m;
+      let j = n;
+      while (i > 0 || j > 0) {
+        if (i > 0 && j > 0 && a[start + i - 1] === b[start + j - 1]) {
+          mid.push({ type: "same", text: a[start + i - 1] });
+          i--;
+          j--;
+        } else if (j > 0 && (i === 0 || dp[i * w + j - 1] >= dp[(i - 1) * w + j])) {
+          mid.push({ type: "add", text: b[start + j - 1] });
+          j--;
+        } else {
+          mid.push({ type: "del", text: a[start + i - 1] });
+          i--;
+        }
+      }
+      for (let k = mid.length - 1; k >= 0; k--) rows.push(mid[k]);
+    }
+    for (let i = endA; i < a.length; i++) rows.push({ type: "same", text: a[i] });
+    return rows;
+  }
+
   // Parse the <vscode-context> envelope that prompt-builder.ts wraps around the
   // file-path context (attached files + the open-editor file). On session restore
   // grok replays the full prompt text; pulling the block back out lets us re-render
@@ -253,7 +326,7 @@
     return { files, body };
   }
 
-  const api = { FILE_EXTS, looksLikeFileRef, formatRelativeTime, modelDisplayName, MIC_STATES, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, parseAttachmentContext };
+  const api = { FILE_EXTS, looksLikeFileRef, formatRelativeTime, modelDisplayName, MIC_STATES, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;
   } else {

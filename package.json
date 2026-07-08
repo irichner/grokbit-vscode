@@ -1,7 +1,7 @@
 {
   "name": "grok-vscode-phuryn",
-  "displayName": "Grok Build for VS Code (Community)",
-  "description": "VS Code client for xAI's Grok Build CLI — review edits in a diff before approving, @-mention files, resumable history, inline image/video, and voice. Requires the Grok Build CLI plus a SuperGrok or X Premium+ subscription (or an xAI API key). MIT, open-source. Not affiliated with or endorsed by xAI.",
+  "displayName": "Grokbit",
+  "description": "Grokbit — VS Code client for xAI's Grok Build CLI — each session in its own editor tab, review edits in a diff before approving, @-mention files, resumable history, inline image/video, and voice. Requires the Grok Build CLI plus a SuperGrok or X Premium+ subscription (or an xAI API key). MIT, open-source. Based on grok-build-vscode by Paweł Huryn. Not affiliated with or endorsed by xAI.",
   "version": "1.4.29",
   "publisher": "PawelHuryn",
   "author": {
@@ -9,13 +9,13 @@
     "url": "https://www.productcompass.pm"
   },
   "license": "MIT",
-  "homepage": "https://github.com/phuryn/grok-build-vscode",
+  "homepage": "https://github.com/irichner/grokbit-vscode",
   "bugs": {
-    "url": "https://github.com/phuryn/grok-build-vscode/issues"
+    "url": "https://github.com/irichner/grokbit-vscode/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/phuryn/grok-build-vscode"
+    "url": "https://github.com/irichner/grokbit-vscode"
   },
   "engines": {
     "vscode": "^1.94.0"
@@ -39,15 +39,18 @@
     "tool-calls",
     "sidebar"
   ],
-  "icon": "resources/grok-icon.png",
+  "icon": "resources/blackhole-icon.png",
   "main": "./out/extension.js",
+  "activationEvents": [
+    "onWebviewPanel:grok.session"
+  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
         {
           "id": "grokSidebar",
-          "title": "Grok",
-          "icon": "resources/grok-icon.svg"
+          "title": "Grokbit",
+          "icon": "resources/blackhole-icon.svg"
         }
       ]
     },
@@ -56,54 +59,54 @@
         {
           "type": "webview",
           "id": "grok.chat",
-          "name": "Grok"
+          "name": "Grokbit"
         }
       ]
     },
     "commands": [
       {
         "command": "grok.open",
-        "title": "Grok: Open"
+        "title": "Grokbit: Open"
       },
       {
         "command": "grok.newSession",
-        "title": "Grok: New Session"
+        "title": "Grokbit: New Session"
       },
       {
         "command": "grok.compact",
-        "title": "Grok: Compact Conversation"
+        "title": "Grokbit: Compact Conversation"
       },
       {
         "command": "grok.pickModel",
-        "title": "Grok: Pick Model"
+        "title": "Grokbit: Pick Model"
       },
       {
         "command": "grok.toggleMode",
-        "title": "Grok: Toggle Plan / Agent Mode"
+        "title": "Grokbit: Toggle Plan / Agent Mode"
       },
       {
         "command": "grok.sendSelection",
-        "title": "Grok: Send Selection"
+        "title": "Grokbit: Send Selection"
       },
       {
         "command": "grok.sendFile",
-        "title": "Grok: Send File"
+        "title": "Grokbit: Send File"
       },
       {
         "command": "grok.insertAtMention",
-        "title": "Grok: Insert @-Mention"
+        "title": "Grokbit: Insert @-Mention"
       },
       {
         "command": "grok.showLogs",
-        "title": "Grok: Show Logs"
+        "title": "Grokbit: Show Logs"
       },
       {
         "command": "grok.logout",
-        "title": "Grok: Log Out"
+        "title": "Grokbit: Log Out"
       },
       {
         "command": "grok._debugDummyPlan",
-        "title": "Grok: Debug — Show dummy plan card (for testing Approve/Reject/Cancel)"
+        "title": "Grokbit: Debug — Show dummy plan card (for testing Approve/Reject/Cancel)"
       }
     ],
     "keybindings": [
@@ -142,7 +145,7 @@
       ]
     },
     "configuration": {
-      "title": "Grok",
+      "title": "Grokbit",
       "properties": {
         "grok.cliPath": {
           "type": "string",
@@ -203,6 +206,11 @@
           "default": false,
           "markdownDescription": "Show Grok's reasoning (thinking) traces in chat. Off by default — a lightweight \"Thinking…\" indicator stands in while Grok reasons. Also toggleable live from the gear menu → **Config & debug → Show thinking traces** (applies to already-loaded sessions too)."
         },
+        "grok.notifyWhenWaiting": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Show a VS Code notification when a Grok session in a **background** tab needs you — a permission request, a question, or a plan to review. Off by default. The notification is passive (it never steals focus); clicking **Go to session** reveals that tab. The status-bar HUD also shows a `Needs you` count regardless of this setting."
+        },
         "grok.telemetry.enabled": {
           "type": "boolean",
           "default": true,
@@ -213,7 +221,7 @@
           "default": 100,
           "minimum": 60,
           "maximum": 300,
-          "markdownDescription": "Zoom for the Grok chat panel only, as a percent (100 = default). Scales the whole chat UI — text, icons, spacing — without affecting the rest of VS Code (unlike `Ctrl/Cmd+Shift+=`). Applies live, no reload needed. Supports User (global) and Workspace (local) scope."
+          "markdownDescription": "Zoom for the Grokbit chat panel only, as a percent (100 = default). Scales the whole chat UI — text, icons, spacing — without affecting the rest of VS Code (unlike `Ctrl/Cmd+Shift+=`). Applies live, no reload needed. Supports User (global) and Workspace (local) scope."
         },
         "grok.voiceApiKey": {
           "type": "string",

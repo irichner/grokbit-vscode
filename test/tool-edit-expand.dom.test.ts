@@ -1,5 +1,5 @@
 // DOM-level test for issue #30 — a permission that resolves to a *single* edit
-// must stay expandable so its diff ("N → M lines" + "open diff →") remains
+// must stay expandable so its diff ("N → M lines" + "view diff") remains
 // reviewable, both live and after a session restore. Drives the REAL shipped
 // media/chat.js in a happy-dom window.
 //
@@ -9,11 +9,22 @@
 // body. A read+edit batch (≥2 calls) stayed an expandable `.tool-group`, so its
 // diff survived — exactly the contrast the reporter saw. The fix keeps a lone
 // edit as a group; these tests pin that in both orderings.
+//
+// The diff itself renders INLINE inside the tool item (never a separate editor
+// tab — that tab covered the chat webview and its reveal-replay reopened it in
+// a focus-stealing loop): "view diff" toggles the in-chat diff block.
 import { describe, it, expect } from "vitest";
 import { bootWebview, dispatch, click } from "./webview-harness";
 
 const DIFF = { type: "diff", path: "src/foo.ts", oldText: "a\nb", newText: "a\nB\nc" };
 const EDIT_CALL = { toolCallId: "tc1", kind: "edit", title: "Edit src/foo.ts" };
+
+// "same:a" / "del:b" — type prefix + text, for compact row assertions.
+function diffRows(scope: Element): string[] {
+  return [...scope.querySelectorAll(".inline-diff .diff-line")].map(
+    (el) => `${[...el.classList].find((c) => c !== "diff-line")}:${el.textContent}`,
+  );
+}
 
 describe("single-edit tool group stays expandable (#30)", () => {
   it("keeps a lone edit as an expandable group with its diff, not a flat row (live)", () => {
@@ -30,13 +41,22 @@ describe("single-edit tool group stays expandable (#30)", () => {
 
     const link = group!.querySelector(".tool-group-body .preview-link") as HTMLButtonElement;
     expect(link).not.toBeNull();
-    expect(link.textContent).toContain("open diff");
+    expect(link.textContent).toContain("view diff");
     expect(group!.querySelector(".tool-item-subtitle")!.textContent).toContain("2 → 3 lines");
 
+    // The diff toggles open INLINE — no openDiff round-trip to the host (an
+    // editor tab would cover the chat webview and replay would reopen it).
     click(window, link);
-    const openDiffs = posted.filter((m: any) => m.type === "openDiff");
-    expect(openDiffs).toHaveLength(1);
-    expect(openDiffs[0]).toMatchObject({ path: "src/foo.ts", oldText: "a\nb", newText: "a\nB\nc" });
+    expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(0);
+    const diffEl = group!.querySelector(".tool-item .inline-diff") as HTMLElement;
+    expect(diffEl).not.toBeNull();
+    expect(diffEl.hidden).toBe(false);
+    expect(diffRows(group!)).toEqual(["same:a", "del:b", "add:B", "add:c"]);
+    expect(link.textContent).toContain("hide diff");
+
+    click(window, link); // toggle back off — the block hides, nothing is lost
+    expect(diffEl.hidden).toBe(true);
+    expect(link.textContent).toContain("view diff");
   });
 
   it("expands and collapses the body when its header is clicked", () => {
@@ -70,7 +90,7 @@ describe("single-edit tool group stays expandable (#30)", () => {
     expect(doc.querySelector(".tool-group")).toBeNull();
   });
 
-  it("survives restore: a completed edit that carries its own diff still shows 'open diff'", () => {
+  it("survives restore: a completed edit that carries its own diff still shows 'view diff'", () => {
     const { window, posted, doc } = bootWebview();
 
     // grok's REAL session/load wire (captured from the live CLI, 0.2.82): a
@@ -96,13 +116,12 @@ describe("single-edit tool group stays expandable (#30)", () => {
     expect(doc.querySelector(".tool-flat")).toBeNull();
     const link = group!.querySelector(".tool-group-body .preview-link") as HTMLButtonElement;
     expect(link).not.toBeNull();
-    expect(link.textContent).toContain("open diff");
+    expect(link.textContent).toContain("view diff");
     expect(group!.querySelector(".tool-item-subtitle")!.textContent).toContain("2 → 3 lines");
 
     click(window, link);
-    const openDiffs = posted.filter((m: any) => m.type === "openDiff");
-    expect(openDiffs).toHaveLength(1);
-    expect(openDiffs[0]).toMatchObject({ path: "src/foo.ts", oldText: "a\nb", newText: "a\nB\nc" });
+    expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(0);
+    expect(diffRows(group!)).toEqual(["same:a", "del:b", "add:B", "add:c"]);
 
     // The answered permission card replays right at the tool it gated.
     expect(doc.querySelector(".card.permission.perm-resolved")).not.toBeNull();

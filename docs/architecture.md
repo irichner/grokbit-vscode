@@ -1,8 +1,13 @@
 # Architecture
 
-How the Grok Build VS Code extension is put together, and the one place it
-deliberately stops being "thin." For day-to-day usage see the
-[README](../README.md); for the test layers see [TESTS.md](../TESTS.md).
+How Grokbit is put together, and the one place it deliberately stops being
+"thin." For day-to-day usage see the [README](../README.md); for the test layers
+see [TESTS.md](../TESTS.md).
+
+The big structural fact: **each session renders in its own native editor tab**
+(a `WebviewPanel`, view type `grok.session`), and the activity-bar view is a
+**launcher** (session list + New button) rather than the chat itself. One
+`Session` ↔ one panel ↔ one `grok agent stdio` process.
 
 ## The thin-client boundary
 
@@ -40,7 +45,8 @@ The extension implements **every mandatory server→client handler**
 
 ## How a session starts
 
-When the panel opens (or you click **+** for a new session):
+When a session tab opens (launcher **New session**, the `Grokbit: New Session`
+command, or a panel's **+** button):
 
 1. Locate the `grok` binary: `grok.cliPath` setting → `~/.grok/bin/grok` → `PATH`.
 2. Spawn `grok agent stdio` as a background child — visible in `ps` / Task
@@ -60,33 +66,61 @@ it acks. While any user turn is waiting on grok — including that brief held-be
 primer gap — the chat shows an animated **Grokking…** placeholder, replaced in
 place by the first thought / message / tool card.
 
-## The session pool (Agent Dashboard)
+## Native tabs + the session pool
 
-The sidebar shows one conversation at a time, but it keeps a **pool of live
-sessions** behind it — one spawned `grok agent stdio` process each, with exactly
-one *focused* (the one you see). All the per-session state lives in a
-[`Session`](../src/session.ts) object; the sidebar holds `focused` plus a `Set` of
-every live `Session` (`pool`). The point is **lossless re-focus**: a backgrounded
-session keeps streaming into its own *view buffer* (every webview post that built
-its chat, in order), so re-focusing it is a `clearMessages` + replay of that
-buffer — no grok reload, no process kill, even mid-turn or mid-approval.
+Each session is its own **editor tab** — a `WebviewPanel` created by
+`openPanel`/`bindPanel` in [src/sidebar.ts](../src/sidebar.ts), rendering the
+same `getHtml`/`chat.js` webview the old sidebar used. All the per-session state
+lives in a [`Session`](../src/session.ts) object (which now also carries its
+`panel`, the `ready` gate, its own `chips`, and a lazy-start `pendingStart`
+marker); the host tracks the set of live processes (`pool`), the set of open
+tabs (`panels`), and the *last-active* tab (`active` — genuinely nullable: with
+no tab open there is no active session).
 
-Switching focus (`focusSession`) never touches grok: it swaps `this.focused`,
-replays the target's buffer to the webview, and re-pushes the mode/sessions UI.
-Clicking a session that *isn't* live (cold — it was reaped, or predates this
-window) loads it from grok's on-disk history into a fresh pool member instead
-(`openSession`).
+Delivery is owned by the pure [`PanelRouter`](../src/panel-router.ts) behind a
+minimal `{ postMessage }` port, with three intents:
+
+- **`emit(session, …)`** — buffered chat content. Always appended to the
+  session's *view buffer*; delivered live only while its panel is `ready`.
+  Content streamed while a tab is hidden is never lost — the next reveal replays
+  the buffer.
+- **`postTo(session, …)`** — transient, one panel; dropped when the panel isn't
+  ready **by design**. Only replies to webview-initiated requests (the panel is
+  visible by construction) and safe-to-drop ephemera that are re-derived on
+  replay (`modeChanged`, `chips`, voice partials).
+- **`broadcast(…)`** — global state to every ready panel *and* the launcher
+  (CLI updating, onboarding, display prefs, dots, session-list refreshes).
+
+The `ready` lifecycle: panels are created with `retainContextWhenHidden:false`,
+so a hidden tab's webview is torn down; its next reveal rebuilds it and chat.js
+re-fires `{type:"ready"}`, which re-marks it ready, posts per-panel config, and
+replays the buffer (`replayInto` — clear → buffer → derived mode/chips last).
+`ready` never spawns: **panel creation drives `startSession`**, `ready` only
+replays, and `pendingStart` covers the lazy cases (serializer-restored
+background tabs, post-CLI-update respawns) so a hidden tab that's never revealed
+never spawns a process.
 
 Two details make the pool safe:
 
 - **Per-session generation guard.** Each `Session` owns a `gen` counter, bumped
   only when *its* client is torn down. Handlers capture their session's `gen` when
-  wired, so a backgrounded session's in-flight events are never judged "stale" just
-  because focus moved elsewhere (the old global counter would have done exactly
-  that).
-- **Session-scoped emit.** `emit(session, …)` buffers to that session and only
-  forwards to the webview when it's the focused one; `post(…)` is for UI-wide
-  messages (status dots, the sessions list) that aren't tied to one chat.
+  wired, so a hidden tab's in-flight events are never judged "stale" just
+  because another tab was activated.
+- **The shared `opening` set.** Every entry point that can materialize a panel
+  for a session id — launcher row click, a panel's history dropdown, the window-
+  reload serializer — funnels through one in-flight guard, so racing opens can't
+  produce two tabs for one session.
+
+**Closing a tab** (`onPanelClosed`) disposes the live grok process but keeps
+on-disk history, so the session stays in the launcher and reopens with full
+replay; an *empty primer-only* session is instead deleted from disk (#24 —
+abandoning an untouched "New session" must not pile primer sessions into
+history). It also cancels a voice capture the panel owned and re-homes `active`
+to the most recently used open tab. **Window reload** restores open tabs via a
+`WebviewPanelSerializer` (the webview stashes just the grok session id in its
+state): the visible tab spawns immediately; background tabs defer their spawn to
+first reveal. The Output channel logs `spawned grok (pid …) — N live` so the
+lazy-start behavior is observable.
 
 **Status dots.** Every row in the history dropdown shows a dot. It's **gray** at
 rest — and "at rest" is deliberately one bucket: idle, already-read, cold, or
@@ -97,11 +131,11 @@ permission / question / plan review), **green** *finished with output you haven'
 opened yet*, **red** *finished with an error you haven't opened*.
 
 The green/red dot is an **unread badge**, not a live state. When a session's turn
-ends while you're looking at a *different* session, a persisted `unread` flag is set
-(in the same `globalState` session-meta that holds rename overrides); opening that
+ends while its tab isn't visible, a persisted `unread` flag is set (in the same
+`globalState` session-meta that holds rename overrides); opening/revealing that
 session clears it. Because the flag lives in metadata rather than the live process,
-the badge **survives both the idle reaping below and a full VS Code restart** — so
-you can fire off several agents, walk away, and come back to find the green dots are
+the badge **survives both a closed tab and a full VS Code restart** — so you can
+fire off several agents, walk away, and come back to find the green dots are
 exactly the sessions with results waiting. There's no timer: a session you never
 open stays green, because it genuinely *is* still unread. The actual color is a pure
 function ([`computeDot`](../src/session-pool.ts)) of `(live status, unread,
@@ -109,18 +143,16 @@ unreadError)`, so the policy is unit-tested without a process pool. The host pus
 one changed dot at a time (cheap, no disk read) and the full map on each list
 refresh.
 
-**Reaping** ([src/session-pool.ts](../src/session-pool.ts)). A live process per
-session isn't free, so the pool is bounded — silently. The pure `selectReapable`
-picks victims under two rules: an **idle TTL** (a session untouched for an hour is
-torn down, swept every 5 min) and an **LRU cap** (at most ~8 live; the
-least-recently-used eligible sessions are evicted past it). It **never** reaps the
-focused session or a `working`/`needs-you` one — so the cap can be exceeded when
-everything spare is busy, by design. Reaping just kills the process and recomputes
-the dot — a reaped session that's still unread **stays green**, a read one goes
-gray — and re-clicking the row reloads the session from disk.
+**Process bounding.** The old time/LRU reaper is retired: an open tab is a
+visible, user-owned thing, and silently killing its process would be confusing.
+Instead the count is **soft-bounded** — opening a tab past `MAX_LIVE_SESSIONS`
+(8) live processes shows a one-time-per-window warning suggesting closing unused
+tabs; nothing is ever blocked or killed. Lazy start is the structural
+mitigation: hidden tabs (reload restore, CLI-update respawn) don't spawn until
+first revealed. Closing a tab is what actually frees a process.
 
 One safety valve sits next to this: the explicit **Update Grok Build CLI** action
-tears down every live session to swap the binary, so it now confirms first if any
+tears down every live session to swap the binary, so it confirms first if any
 session is `working` or `needs-you` (the silent startup auto-update runs before
 anything is in flight, so it doesn't ask). The teardown is **awaited** before
 `grok update` runs — `kill()` only signals, and on Windows the `grok.exe` lock
@@ -128,7 +160,10 @@ clears a beat after the process actually exits, so an un-awaited update would ra
 it and fail with *"cannot rename locked executable"*. On Windows the kill is a
 `taskkill /T /F` of the process **tree** (grok backgrounds subagent/command
 children that a parent-only kill would orphan, and they keep the binary locked),
-and the update retries once if a lingering lock still slips through.
+and the update retries once if a lingering lock still slips through. After the
+update, every open tab respawns **per panel**: the active, visible tab resumes
+immediately; every other tab gets `pendingStart` and respawns lazily on its next
+reveal — no tab is silently orphaned with a dead process.
 
 ## Plan Mode — the one part that isn't thin
 
@@ -179,11 +214,12 @@ The full pedagogical write-up lives in
 
 | File | Role |
 |---|---|
-| [src/extension.ts](../src/extension.ts) | Entry point — registers commands, keybindings, output channel |
-| [src/sidebar.ts](../src/sidebar.ts) | Webview provider, message routing, fs handlers, diff preview, logout, generated-media serving (`postGeneratedMedia` → `asWebviewUri`, base64 fallback) |
+| [src/extension.ts](../src/extension.ts) | Entry point — registers commands, keybindings, output channel, the launcher view, and the panel serializer |
+| [src/sidebar.ts](../src/sidebar.ts) | Host — panel (tab) lifecycle, launcher, message routing, fs handlers, logout, generated-media serving (`postGeneratedMedia` → `asWebviewUri`, base64 fallback) |
+| [src/panel-router.ts](../src/panel-router.ts) | Pure session↔panel delivery core — `ready` gate, buffer + conditional deliver, `replayInto`, broadcast, the shared `opening` dedupe |
 | [src/acp.ts](../src/acp.ts) | ACP client — spawns CLI, manages session lifecycle, emits events |
-| [src/session.ts](../src/session.ts) | Per-session state bag — one `Session` per live `grok agent stdio` process (the sidebar holds a *pool* of these + one focused) |
-| [src/session-pool.ts](../src/session-pool.ts) | Pure reaping policy (`selectReapable`) — idle-TTL + LRU cap over the live-session pool |
+| [src/session.ts](../src/session.ts) | Per-session state bag — one `Session` per live `grok agent stdio` process / editor tab (`panel`, `ready`, `chips`, `pendingStart`) |
+| [src/session-pool.ts](../src/session-pool.ts) | Pure dashboard-dot policy (`computeDot`) |
 | [src/acp-dispatch.ts](../src/acp-dispatch.ts) | Pure protocol helpers — line parsing, update routing, response + generated-media extraction (`isMediaGenToolCall`/`extractGeneratedMediaPaths`) |
 | [src/cli-locator.ts](../src/cli-locator.ts) | Locate the `grok` binary; cross-platform |
 | [src/terminal-manager.ts](../src/terminal-manager.ts) | Headless shells for the agent's `terminal/*` calls |
@@ -199,7 +235,8 @@ The full pedagogical write-up lives in
 | [src/voice.ts](../src/voice.ts) | Voice-input pure helpers — STT request/response, ffmpeg args, device parsing, key resolution |
 | [src/voice-recorder.ts](../src/voice-recorder.ts) | Batch capture (`ffmpeg` → WAV) + STT REST upload |
 | [src/voice-streamer.ts](../src/voice-streamer.ts) | Live capture (ffmpeg PCM → WebSocket STT) |
-| [media/chat.{js,css}](../media/) | Webview UI |
+| [media/chat.{js,css}](../media/) | Webview UI (rendered in each session tab) |
+| [media/launcher.js](../media/launcher.js) | Activity-bar launcher — session list + dots + New + rename/delete + onboarding states (reuses chat.css row styles) |
 | [media/webview-helpers.js](../media/webview-helpers.js) | Pure webview helpers (file-ref detection, relative-time, mic-button state machine, trailing send-phrase highlight, math extraction `splitMath`/`stripUnsupportedTex`, and the deferred subagent classifier `isSubagentToolCall`/`subagentLabel`) — shared between webview and tests |
 
 ## History at scale
@@ -277,9 +314,9 @@ the steady-state fix.
   the effort-change empty-session branch, guarded so a dead client on a session *with*
   history keeps its history.
 - **Empty primer sessions never accumulate (#24).** Beyond the model/effort restart
-  case above, *any* time you leave an empty (primer-only, `hasHistory === false`)
-  session — New Session or switching to another — `parkFocused` deletes its on-disk
-  dir, so at most one untitled **New session** exists at a time. A one-shot startup
+  case above, closing an empty (primer-only, `hasHistory === false`) session's tab
+  deletes its on-disk dir (`onPanelClosed`), so abandoned "New session" tabs leave
+  nothing behind. A one-shot startup
   sweep (`sweepEmptyPrimerSessions`) clears empties left by earlier runs, each
   confirmed by reading `chat_history.jsonl` (`isEmptyPrimerSession`): swept only if
   the session received our primer and **zero real user queries**. Detection is

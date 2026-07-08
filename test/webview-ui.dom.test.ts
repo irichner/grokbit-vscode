@@ -653,47 +653,61 @@ describe("welcome version line (session-start lifecycle)", () => {
   // class), so the literal text is dot-free while a status is transient.
   const animating = (doc: Document) => verEl(doc).classList.contains("loading-dots");
 
-  it("flips to connected only when priming finishes, not at the handshake", () => {
+  it("disappears when priming finishes, not at the handshake", () => {
     const { window, doc } = bootWebview();
 
     // ACP handshake done — but the hidden primer is still in flight, so the
-    // line must stay "Starting…" (animated), NOT jump to "Connected" yet.
+    // line must stay "Starting…" (animated), NOT vanish yet.
     dispatch(window, { type: "initialized", info: { version: "0.2.33" } });
     expect(ver(doc)).toBe("Starting");
     expect(animating(doc)).toBe(true);
+    expect(verEl(doc).hidden).toBe(false);
 
-    // Priming spinner clears → grok is finally ready → reveal the version.
+    // Priming spinner clears → grok is ready → the status line has nothing
+    // left to say and goes away (the CLI version lives in gear → About).
     dispatch(window, { type: "setBusy", value: false });
-    expect(ver(doc)).toBe("Connected · v0.2.33");
+    expect(verEl(doc).hidden).toBe(true);
     expect(animating(doc)).toBe(false); // settled — dots stop
   });
 
-  it("shows the silent-update hint, then starting, then the new version", () => {
+  it("shows the silent-update hint, then starting, then disappears", () => {
     const { window, doc } = bootWebview();
 
     dispatch(window, { type: "cliUpdating" });
     expect(ver(doc)).toBe("Updating Grok Build CLI");
     expect(animating(doc)).toBe(true);
+    expect(verEl(doc).hidden).toBe(false);
 
     dispatch(window, { type: "initialized", info: { version: "0.2.40" } });
     expect(ver(doc)).toBe("Starting");
     expect(animating(doc)).toBe(true);
+    expect(verEl(doc).hidden).toBe(false);
 
     dispatch(window, { type: "setBusy", value: false });
-    expect(ver(doc)).toBe("Connected · v0.2.40");
-    expect(animating(doc)).toBe(false);
+    expect(verEl(doc).hidden).toBe(true);
   });
 
-  it("does not overwrite the version on later (post-priming) busy toggles", () => {
+  it("stays hidden on later (post-priming) busy toggles", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "initialized", info: { version: "0.2.33" } });
     dispatch(window, { type: "setBusy", value: false });
-    expect(ver(doc)).toBe("Connected · v0.2.33");
+    expect(verEl(doc).hidden).toBe(true);
 
-    // A normal prompt's busy cycle later — the line must not revert.
+    // A normal prompt's busy cycle later — the line must not reappear.
     dispatch(window, { type: "setBusy", value: true });
     dispatch(window, { type: "setBusy", value: false });
-    expect(ver(doc)).toBe("Connected · v0.2.33");
+    expect(verEl(doc).hidden).toBe(true);
+  });
+
+  it("reappears for the onboarding states after being hidden", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "initialized", info: { version: "0.2.33" } });
+    dispatch(window, { type: "setBusy", value: false });
+    expect(verEl(doc).hidden).toBe(true);
+
+    dispatch(window, { type: "onboarding", state: "auth-required" });
+    expect(verEl(doc).hidden).toBe(false);
+    expect(ver(doc)).toBe("Authentication required");
   });
 });
 

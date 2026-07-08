@@ -9,6 +9,13 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerWebviewViewProvider(GrokSidebar.viewId, sidebar, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
+    // Window-reload persistence: restored session tabs re-bind through the same
+    // opening guard as every other panel entry point, and background tabs defer
+    // their spawn to first reveal (see restorePanel).
+    vscode.window.registerWebviewPanelSerializer(GrokSidebar.panelViewType, {
+      deserializeWebviewPanel: (panel, state: { id?: string } | undefined) =>
+        sidebar.restorePanel(panel, state?.id),
+    }),
     output,
     { dispose: () => sidebar.dispose() },
     vscode.commands.registerCommand("grok.open", () =>

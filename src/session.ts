@@ -1,4 +1,6 @@
+import type * as vscode from "vscode";
 import { AcpClient } from "./acp";
+import { FileChip } from "./chips";
 
 /** Live state for the dashboard dot. `cold` (no live process) is represented by
  *  the absence of a Session, so it isn't in this union. */
@@ -145,4 +147,34 @@ export class Session {
    * to reconstruct the view losslessly — no grok reload, no process kill.
    */
   buffer: unknown[] = [];
+
+  /**
+   * This session's composer attachments. Per-session (not host-global) so each
+   * chat keeps its own attachment list — two composers must never share one.
+   */
+  chips: FileChip[] = [];
+
+  /**
+   * The editor tab rendering this session, once opened (type-only vscode import
+   * — this module stays runtime-pure so tests can import it without a VS Code
+   * host). Undefined between panel dispose and the session's own teardown.
+   */
+  panel?: vscode.WebviewPanel;
+
+  /**
+   * True only between the panel webview's `{type:"ready"}` message and the next
+   * hide or dispose (with retainContextWhenHidden:false a hidden webview is torn
+   * down; its reveal re-runs the script and re-fires `ready`). Gates live
+   * delivery — see panel-router.ts for the full contract.
+   */
+  ready = false;
+
+  /**
+   * Lazy-start marker: this session's panel exists but its grok process should
+   * only spawn on the next reveal (`ready` consumes it). The value is the grok
+   * session id to resume, or "" to start fresh. Set by the CLI-update respawn
+   * (hidden tabs) and by serializer restore (background tabs), so N restored
+   * tabs never spawn N processes at once.
+   */
+  pendingStart?: string;
 }

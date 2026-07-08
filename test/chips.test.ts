@@ -6,6 +6,7 @@ import {
   removeChip,
   toggleChip,
 } from "../src/chips";
+import { Session } from "../src/session";
 
 describe("chips", () => {
   it("creates an implicit chip with a stable id", () => {
@@ -52,5 +53,33 @@ describe("chips", () => {
     const exp = makeExplicitChip("/b", "b");
     const result = clearImplicitChips([imp, exp]);
     expect(result).toEqual([exp]);
+  });
+});
+
+// Chips moved from a host-global list onto each Session so every composer keeps
+// its own attachments. The invariant that matters (and would regress silently if
+// chips ever became shared/static again): mutating one session's list — adding,
+// removing, or the send path's clear — never touches another session's.
+describe("per-session chips isolation", () => {
+  it("two sessions' chip lists are independent", () => {
+    const a = new Session();
+    const b = new Session();
+    a.chips.push(makeExplicitChip("/a.ts", "a.ts"));
+    expect(a.chips).toHaveLength(1);
+    expect(b.chips).toHaveLength(0);
+
+    b.chips.push(makeImplicitChip("/b.ts", "b.ts"));
+    b.chips = removeChip(b.chips, b.chips[0].id);
+    expect(a.chips).toHaveLength(1); // untouched by b's remove
+  });
+
+  it("the send path's clear empties only the sending session", () => {
+    const sender = new Session();
+    const other = new Session();
+    sender.chips.push(makeExplicitChip("/s.ts", "s.ts"));
+    other.chips.push(makeExplicitChip("/o.ts", "o.ts"));
+    sender.chips = []; // what handleSend does after building the prompt
+    expect(sender.chips).toHaveLength(0);
+    expect(other.chips).toHaveLength(1);
   });
 });

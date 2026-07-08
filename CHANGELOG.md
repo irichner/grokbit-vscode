@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Rebranded to "Grokbit."** Extension display name, activity-bar title, Settings section, command-palette titles, and welcome/About copy now say Grokbit. Based on [phuryn/grok-build-vscode](https://github.com/phuryn/grok-build-vscode) by Paweł Huryn (MIT) — the attribution credit is kept in the README, welcome screen, and About panel. Command IDs, setting keys, and the `grok` CLI integration are unchanged.
+- **Each session now opens in its own native editor tab** instead of a single swapped-in-place sidebar view. Tabs are titled with a short summary of the first prompt ("Grokbit New" until one is sent), stream independently (a hidden tab's turn replays losslessly on reveal), restore across window reloads (background tabs spawn lazily on first reveal), and the activity-bar view becomes a session launcher with status dots.
+
+### Fixed
+
+- **A proposed edit's diff no longer opens (and endlessly re-opens) a diff editor tab — it now renders inline in the chat.** The auto-opened diff tab covered the chat tab, and revealing the chat replayed the pending permission card, which re-opened the diff: closing it brought it straight back and clicking other tabs bounced focus to it. Permission cards and edit tool rows ("view diff") now render the diff inside the chat — theme diff colors, long unchanged runs collapsed behind a click — and the extension never opens a diff editor tab. ([media/chat.js](media/chat.js), [media/webview-helpers.js](media/webview-helpers.js), [media/chat.css](media/chat.css), [src/sidebar.ts](src/sidebar.ts))
+- **Opening a leftover primer-only session from history no longer shows a blank tab.** Its replay contains only the hidden plan-mode primer (suppressed by design), and the webview hid the welcome screen before deciding to suppress — leaving a void with just a title. The welcome now stays up (an empty session reads as a fresh one, titled "Grokbit New"), and the #24 cleanup extends to resumed sessions: closing the tab deletes the empty session dir (after the grok process actually exits), so these stop lingering and re-floating to the top of history on every open.
+
 ## 1.4.29 — 2026-07-05
 
 ### Fixed

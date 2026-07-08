@@ -2,9 +2,9 @@
 
 Three layers:
 
-1. **Grok-free automated tests** (Vitest) — pure-logic unit tests plus happy-dom DOM tests that drive the real `media/chat.js`, plus a fast TerminalManager suite that spawns real `/bin/sh` children. **545 tests, all passing in a few seconds.** The per-file counts below predate several feature releases (voice, ask-question, plan-mode, v1.4.0 media/subagent/logout, v1.4.19 card-collapse/background-task) and are indicative, not exact — `npm test` is the source of truth. **None of them spawn the `grok` binary**, so the whole suite runs in CI on a clean Ubuntu box (`.github/workflows/ci.yml` runs `npm ci && npm test && npm run package` and never installs grok). **CI runs this exact suite — `npm test` locally ≡ CI, verbatim.**
+1. **Grok-free automated tests** (Vitest) — pure-logic unit tests plus happy-dom DOM tests that drive the real `media/chat.js`, plus a fast TerminalManager suite that spawns real `/bin/sh` children. **664 tests, all passing in a few seconds.** The per-file counts below predate several feature releases (voice, ask-question, plan-mode, v1.4.0 media/subagent/logout, v1.4.19 card-collapse/background-task) and are indicative, not exact — `npm test` is the source of truth. **None of them spawn the `grok` binary**, so the whole suite runs in CI on a clean Ubuntu box (`.github/workflows/ci.yml` runs `npm ci && npm test && npm run package` and never installs grok). **CI runs this exact suite — `npm test` locally ≡ CI, verbatim.**
 2. **Real-grok pre-release suite** (`npm run test:live`, `scripts/live-tests.cjs`) — an **on-demand, run-on-request** gate that spawns the real `grok` binary and drives it over ACP end-to-end: handshake, prompt round-trip, session restore, plan-mode gate, image gen, video gen (subagent delegation is exercised opportunistically and **SKIP**s when grok doesn't delegate — it's deferred/research-only). It **reuses the real compiled modules** (`out/acp-dispatch.js`, `out/plan-gate.js`, `media/webview-helpers.js`) so it tests shipped logic, not re-implementations. Non-deterministic / entitlement-gated outcomes **SKIP** (don't fail the gate); only a real regression **FAILS**. It is **never run by `npm test` or CI** — it needs an authenticated `grok` + network + subscription, and it's the human's pre-release checklist, not a commit gate. Flags: `--quick`, `--only=<name>`, `--skip=<name>`, `GROK_BIN=<path>`. See [CLAUDE.md § Test taxonomy](CLAUDE.md).
-3. **VS Code integration tests** (deferred to v0.2 with `@vscode/test-electron`) — covers command registration, view lifecycle, settings reads, and the diff editor. Deferred because they require a headed VS Code, are slow, and the modules already cover the bug-prone surface.
+3. **VS Code integration tests** (deferred to v0.2 with `@vscode/test-electron`) — covers command registration, view lifecycle, and settings reads. Deferred because they require a headed VS Code, are slow, and the modules already cover the bug-prone surface.
 
 Separately, **grok-dependent probes** live as standalone scripts under `research/*.cjs`. They exercise the real CLI's ACP behavior (e.g. confirming `exit_plan_mode` treats any client reply as approval, or capturing the native-Windows media/subagent wire shapes) and are run **manually** — Vitest's `include` glob is `test/**/*.test.ts`, so it never collects them. They're non-destructive (ACK writes without touching disk and run in a temp cwd) and require a `grok` binary on PATH; CI doesn't run them. The probes are the **discovery** tool (capture an undocumented shape once); layer 2 is the **regression** tool (re-verify the shapes still hold before each release).
 
@@ -94,6 +94,19 @@ These actually spawn real `/bin/sh` children — fast enough to keep in the unit
 - Sorts by most-recently-updated; tolerates malformed/missing session files without throwing
 - Delete removes the right entry and leaves others intact
 
+### `test/panel-router.test.ts` — session↔panel delivery core (native tabs)
+
+The pure routing rules every session tab leans on (`src/panel-router.ts`), driven
+through stub `{postMessage}` ports:
+
+- `emit` while hidden buffers and the next `replayInto` delivers it — content
+  streamed into a hidden tab is never lost
+- `postTo` to a not-ready panel drops, by design (transients only; never buffers)
+- `broadcast` reaches every ready panel and skips hidden ones
+- `replayInto` posts clear → buffer in order → the derived transients last
+- the shared `opening` set dedupes concurrent open attempts per session id
+  (launcher click racing a serializer restore)
+
 ### `test/plan-gate.test.ts` — plan-mode policy (38 tests)
 
 The pure heart of client-side plan enforcement. No spawn, no fs — just the classification logic the two choke points call.
@@ -166,6 +179,13 @@ happy-dom test driving the shipped webview through a `planHistoryQueue` + `sessi
 - `agentReset` removes the in-flight agent bubble
 - Subsequent `messageChunk` after `agentReset` creates a fresh bubble (the false-approval text doesn't leak through)
 
+### `test/primer-only-restore.dom.test.ts` — primer-only session restore (2 tests)
+
+happy-dom test for resuming a lingering primer-only session (opened + primed, never messaged) — the replay's every turn is the hidden primer's, all suppressed:
+
+- Fully suppressed replay → welcome screen stays visible (the regression: `appendUserChunk` cleared the welcome *before* its primer check, leaving a completely blank pane)
+- Replay with real content after the primer turn → welcome clears, conversation renders, primer stays hidden
+
 ### `test/webview-ui.dom.test.ts` — webview regressions in a real DOM (28 tests)
 
 happy-dom test locking in the native-Windows regressions this build fixed (plus later busy/version/dedup behavior), so they can't silently come back:
@@ -225,7 +245,7 @@ happy-dom test locking in the native-Windows regressions this build fixed (plus 
 ## What we deliberately don't unit-test
 
 - **`AcpClient.spawn` and child process I/O.** This is exercised by the manual probes under `research/*.cjs` (hit the real `grok` binary) and is what the v0.2 `@vscode/test-electron` integration tests will cover.
-- **`sidebar.ts`** end-to-end. It's mostly glue between VS Code APIs and the modules above; the modules carry the logic. A regression-prone area here is the diff editor invocation — that's better tested with `@vscode/test-electron` than with mocks.
+- **`sidebar.ts`** end-to-end. It's mostly glue between VS Code APIs and the modules above; the modules carry the logic — the remaining VS Code-API glue is better tested with `@vscode/test-electron` than with mocks.
 - **Real VS Code rendering & CSS.** The happy-dom tests cover webview logic, but pixel/layout regression on the cards is better caught by manual smoke + the future integration suite.
 
 ---

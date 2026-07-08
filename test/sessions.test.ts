@@ -14,6 +14,8 @@ import {
   listSessions,
   readSessionEntries,
   sessionsDirFor,
+  tabTitleFor,
+  NEW_TAB_TITLE,
 } from "../src/sessions";
 
 // Real grok chat_history.jsonl shape: role keyed on `type`, content is an array of
@@ -479,12 +481,12 @@ describe("clearSessions", () => {
     expect(fs.existsSync(dirFor("c"))).toBe(false);
   });
 
-  it("keeps the exceptId session", () => {
+  it("keeps every exceptIds session (all open panels' ids, not one focused id)", () => {
     const fs = buildThree();
-    const removed = clearSessions({ fs, grokHome, cwd, exceptId: "b" });
-    expect(removed.sort()).toEqual(["a", "c"]);
+    const removed = clearSessions({ fs, grokHome, cwd, exceptIds: new Set(["a", "b"]) });
+    expect(removed).toEqual(["c"]);
+    expect(fs.existsSync(dirFor("a"))).toBe(true);
     expect(fs.existsSync(dirFor("b"))).toBe(true);
-    expect(fs.existsSync(dirFor("a"))).toBe(false);
     expect(fs.existsSync(dirFor("c"))).toBe(false);
   });
 
@@ -497,6 +499,44 @@ describe("clearSessions", () => {
     });
     const removed = clearSessions({ fs, grokHome, cwd });
     expect(removed).toEqual(["a"]);
+  });
+});
+
+// Editor-tab titles: a small first-prompt summary, "Grokbit New" until one is
+// sent. Two tabs both named "Grok" is the failure mode this exists to prevent.
+describe("tabTitleFor", () => {
+  it("empty/undefined/whitespace ⇒ the new-tab label", () => {
+    expect(tabTitleFor(undefined)).toBe(NEW_TAB_TITLE);
+    expect(tabTitleFor("")).toBe(NEW_TAB_TITLE);
+    expect(tabTitleFor("   \n\t ")).toBe(NEW_TAB_TITLE);
+    expect(NEW_TAB_TITLE).toBe("Grokbit New");
+  });
+
+  it("passes a short name through, trimmed", () => {
+    expect(tabTitleFor("  fix login bug ")).toBe("fix login bug");
+  });
+
+  it("collapses internal whitespace (tab labels are one line)", () => {
+    expect(tabTitleFor("fix\nthe   login\tbug")).toBe("fix the login bug");
+  });
+
+  it("truncates long names to ~24 chars with an ellipsis", () => {
+    const long = "refactor the authentication helper across the whole API layer";
+    const title = tabTitleFor(long);
+    expect(title.length).toBeLessThanOrEqual(24);
+    expect(title.endsWith("…")).toBe(true);
+    expect(title.startsWith("refactor the authent")).toBe(true);
+  });
+
+  it("keeps a name exactly at the limit untouched", () => {
+    const exact = "a".repeat(24);
+    expect(tabTitleFor(exact)).toBe(exact);
+  });
+
+  it("never ends with a space before the ellipsis", () => {
+    // Truncation landing on a word boundary must not leave "word …".
+    const title = tabTitleFor("twenty-three characters and then some more");
+    expect(title).not.toMatch(/\s…$/);
   });
 });
 

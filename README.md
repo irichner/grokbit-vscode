@@ -1,10 +1,12 @@
-# Grok Build for VS Code (Community)
+# Grokbit
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com) [![Unofficial](https://img.shields.io/badge/Unofficial-community%20%C2%B7%20MIT-FF6B35)](#) [![The Product Compass](https://img.shields.io/badge/The%20Product%20Compass-productcompass.pm-FF6B35)](https://www.productcompass.pm)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com) [![Unofficial](https://img.shields.io/badge/Unofficial-community%20%C2%B7%20MIT-FF6B35)](#)
 
 > A VS Code UI for **xAI's Grok Build CLI** — not affiliated with or endorsed by xAI. *Grok*, *Grok Build*, and *xAI* are trademarks of xAI; this project uses those names only to describe what it's compatible with.
+>
+> Based on [phuryn/grok-build-vscode](https://github.com/phuryn/grok-build-vscode) by Paweł Huryn, MIT License.
 
-Use Grok Build inside a VS Code panel, drop your open files in as `@`-context, keep **resumable chat history**, generate **images & video inline**, and dictate by **voice**. If you'd rather stay in your editor than a terminal, this brings Grok Build's agent into your sidebar.
+Use Grok Build inside VS Code — **each session in its own editor tab**, drop your open files in as `@`-context, keep **resumable chat history**, generate **images & video inline**, and dictate by **voice**. If you'd rather stay in your editor than a terminal, this brings Grok Build's agent into your editor.
 
 You install the `grok` CLI once and sign in — with a **SuperGrok or X Premium+ subscription**, or an **xAI API key** — and the extension is the GUI on top.
 
@@ -18,7 +20,7 @@ You install the `grok` CLI once and sign in — with a **SuperGrok or X Premium+
 
 ## Why use this?
 
-If you live in your editor, this puts Grok Build right next to your code — a graphical workflow on top of the CLI: VS Code's **native diff editor** on a proposed edit before you approve it, **permission cards** (*Allow always / once / Reject*), your **active editor and selection as first-class `@file` context**, **session history** you can resume/rename/delete, **inline images and video** from `/imagine`, **voice dictation**, and **side-by-side** placement next to your other tools. The CLI does the heavy lifting; this is the GUI for when you'd rather not be in a terminal.
+If you live in your editor, this puts Grok Build right next to your code — a graphical workflow on top of the CLI: an **inline diff** on a proposed edit, right in the chat, before you approve it, **permission cards** (*Allow always / once / Reject*), your **active editor and selection as first-class `@file` context**, **session history** you can resume/rename/delete, **inline images and video** from `/imagine`, **voice dictation**, and **side-by-side** placement next to your other tools. The CLI does the heavy lifting; this is the GUI for when you'd rather not be in a terminal.
 
 A short tour of how the extension is wired (and the one place it's deliberately *not* thin — Plan Mode) lives in [docs/architecture.md](docs/architecture.md).
 
@@ -64,8 +66,8 @@ code --install-extension PawelHuryn.grok-vscode-phuryn
 Or build from source:
 
 ```bash
-git clone https://github.com/phuryn/grok-build-vscode.git
-cd grok-build-vscode
+git clone https://github.com/irichner/grokbit-vscode.git
+cd grokbit-vscode
 npm install
 ./scripts/install.sh        # Windows: pwsh scripts\install.ps1
 ```
@@ -84,7 +86,7 @@ Reload VS Code (**Ctrl+Shift+P → Developer: Reload Window**) and click the Gro
 
 1. **Open** the Grok sidebar (activity bar icon, or `Ctrl/Cmd+;`).
 2. **Type a prompt** and press **Enter**. Grok streams its answer, showing a *Thinking…* line while it reasons. Want the full reasoning inline? Turn on **Show thinking traces** in the gear menu → *Config & debug*.
-3. **Approve actions.** When Grok wants to write a file or run a command it may raise a permission card — preview an edit in the native **diff editor**, then *Allow once / always / Reject*.
+3. **Approve actions.** When Grok wants to write a file or run a command it may raise a permission card — review the edit's **inline diff** right in the card, then *Allow once / always / Reject*.
 4. **Pick your mode** (Agent / Plan / Auto accept), **model**, and **reasoning effort** from the bottom toolbar and gear menu.
 5. **Resume anytime** — the clock icon lists past sessions for this project.
 
@@ -95,11 +97,9 @@ Reload VS Code (**Ctrl+Shift+P → Developer: Reload Window**) and click the Gro
 _Click any feature to expand._
 
 <details>
-<summary><strong>Permission cards with diff preview</strong> — see every edit in VS Code's native diff before you approve</summary>
+<summary><strong>Permission cards with inline diff</strong> — see every edit right in the chat before you approve</summary>
 
-When Grok proposes an edit, hit **open diff →** to review it in VS Code's native diff editor, then *Allow once / always* or *Reject*. The file is written only **after** you approve — no surprise changes to your files.
-
-![Permission card with a native VS Code diff preview before approval](docs/screenshots/permission_diff.png)
+When Grok proposes an edit, the diff renders **inside the permission card** — additions and deletions in your theme's diff colors, with long unchanged stretches collapsed behind a click. Review it, then *Allow once / always* or *Reject*. The file is written only **after** you approve — no surprise changes to your files, and no diff tab stealing your editor focus. Past edits stay reviewable too: every edit row keeps a **view diff** toggle, live and after a session restore.
 
 </details>
 
@@ -323,7 +323,7 @@ npm run package  # → grok-vscode-phuryn-<version>.vsix
 
 ## Known limits
 
-- **Diff preview semantics.** The diff editor compares the proposed old vs. new text against each other, not against the file on disk at preview time. The write happens via `fs/write_text_file` after approval. This is an ACP constraint — `tool_call_update` carries the diff before the file is touched.
+- **Diff preview semantics.** The inline diff compares the proposed old vs. new text against each other, not against the file on disk at preview time. The write happens via `fs/write_text_file` after approval. This is an ACP constraint — `tool_call_update` carries the diff before the file is touched.
 - **No worktree UI.** `Grok: New Worktree Session` is planned but not yet implemented.
 - **View placement.** The view defaults to the left activity bar; drag it to the secondary side bar manually if you want it on the right.
 

@@ -6,12 +6,14 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { AcpClient, EffortLevel, ExitPlanRequest, PermissionRequest, QuestionRequest } from "./acp";
 import { Session, SessionStatus } from "./session";
-import { selectReapable, computeDot, Dot } from "./session-pool";
+import { computeDot, Dot } from "./session-pool";
+import { PanelRouter } from "./panel-router";
 import { resolveVoiceKey, parseVoiceCommand, DEFAULT_SEND_PHRASE } from "./voice";
 import { VoiceRecorder, transcribeAudio, resolveWindowsAudioDevice } from "./voice-recorder";
 import { VoiceStreamer } from "./voice-streamer";
-import { MediaRef, isIncompatibleAgentError, permissionOutcomeFor, summarizeBackgroundCommand } from "./acp-dispatch";
+import { MediaRef, isIncompatibleAgentError, permissionOutcomeFor, resolveModelId, summarizeBackgroundCommand } from "./acp-dispatch";
 import { modeToRemember, startsInYolo } from "./mode-prefs";
+import { computeStatusBar } from "./status-bar";
 import {
   APTABASE_APP_KEY_PROD,
   buildSessionStartEvent,
@@ -58,6 +60,7 @@ import {
   readSessionEntries,
   resolveGrokHome,
   sessionsDirFor,
+  tabTitleFor,
 } from "./sessions";
 
 type WebviewMsg =
@@ -71,7 +74,6 @@ type WebviewMsg =
   | { type: "toggleChip"; id: string }
   | { type: "openFile"; path: string }
   | { type: "openUrl"; url: string }
-  | { type: "openDiff"; path: string; oldText: string; newText: string; requestId?: number | string }
   | { type: "exportExpr"; action: string; kind: string; current?: string; svg?: string; png?: string; svgDark?: string; svgLight?: string }
   | { type: "setEffort"; level: string }
   | { type: "openGlobalConfig" }
@@ -103,6 +105,8 @@ type WebviewMsg =
 const SESSION_META_KEY = "grok.sessionMeta";
 /** globalState key for the anonymous per-install telemetry GUID (survives updates). */
 const INSTALL_ID_KEY = "grok.installId";
+/** Internal command the status-bar HUD fires on click (not in the palette). */
+const STATUS_BAR_COMMAND = "grok.revealActiveSession";
 
 // History pagination: rows fetched per "page" (initial open + each load-more / search page).
 const SESSION_PAGE_SIZE = 100;
@@ -119,31 +123,6 @@ const execFileAsync = promisify(execFile);
 // see research/plan-mode.md). The UI labels it "Agent"; the wire calls it
 // "default".
 const ACT_MODE_ID = "default";
-
-// Scheme for the permission-card diff preview's virtual documents. Backing the
-// before/after sides with a read-only content provider (rather than untitled
-// scratch buffers) means the diff tab never goes "dirty", so closing it doesn't
-// prompt to save (issue #21). The path keeps the real filename so VS Code infers
-// the language for syntax highlighting.
-const GROK_DIFF_SCHEME = "grok-diff";
-
-/**
- * Read-only content provider for the diff-preview virtual documents. Content is
- * stored per-URI and served verbatim; the documents are never editable or dirty,
- * so the diff tab closes without a save prompt. Pure VS Code glue.
- */
-class GrokDiffContentProvider implements vscode.TextDocumentContentProvider {
-  private readonly contents = new Map<string, string>();
-  provideTextDocumentContent(uri: vscode.Uri): string {
-    return this.contents.get(uri.toString()) ?? "";
-  }
-  set(uri: vscode.Uri, content: string): void {
-    this.contents.set(uri.toString(), content);
-  }
-  delete(...uris: vscode.Uri[]): void {
-    for (const uri of uris) this.contents.delete(uri.toString());
-  }
-}
 
 /** Best-effort MIME from a file extension, for inlining generated media. */
 function guessMediaMime(p: string): string {
@@ -164,18 +143,34 @@ function guessMediaMime(p: string): string {
 }
 
 export class GrokSidebar implements vscode.WebviewViewProvider {
+  /** The activity-bar launcher view: session list + New (no chat). */
   public static readonly viewId = "grok.chat";
+  /** The per-session editor-tab webview panel type (also the serializer key). */
+  public static readonly panelViewType = "grok.session";
   private view?: vscode.WebviewView;
-  /** The session currently shown in the chat — one member of {@link pool}. */
-  private focused = new Session();
   /**
-   * Every live session (each a spawned `grok agent stdio` process), including the
-   * focused one. Backgrounded members keep streaming into their own buffers, so
-   * re-focusing one replays its buffer losslessly — no kill, no reload. A session
-   * is added on its first successful start and removed when its client is disposed
-   * (switch-away of an empty one, delete, logout, reap, teardown).
+   * The last-active session panel — the target for editor commands
+   * (sendSelection/sendFile/insertAtMention/pickModel). NOT nulled on blur, so a
+   * command fired from an editor still lands in the chat the user last touched.
+   * Genuinely nullable (unlike the old always-present `focused`): with no tab
+   * open there is no active session — every reader must handle undefined.
+   */
+  private active?: Session;
+  /**
+   * Every live session (each a spawned `grok agent stdio` process). Sessions
+   * stream into their own buffers whether or not their panel is visible, so a
+   * reveal replays losslessly — no kill, no reload. A session is added on its
+   * first successful start and removed when its client is disposed (tab close,
+   * delete, logout, teardown).
    */
   private pool = new Set<Session>();
+  /**
+   * Every session with an open editor tab — live, spawning, or lazily pending
+   * (`pendingStart`). Superset of the panel-owning members of {@link pool}.
+   */
+  private panels = new Set<Session>();
+  /** Session↔panel delivery core (ready gate, buffer, replay, opening dedupe). */
+  private router = new PanelRouter<Session>();
   /**
    * Cache of parsed session metadata for the history popover, keyed by session id. Each value
    * remembers the `summary.json` mtime it was read at, so a cheap `indexSessions` stat pass can
@@ -185,34 +180,46 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
    */
   private sessionCache = new Map<string, { mtimeMs: number; entry: SessionListEntry }>();
   /**
-   * Bounds on the live-session pool (see session-pool.ts). A backgrounded session
-   * idle past {@link IDLE_TTL_MS}, or beyond the {@link MAX_LIVE_SESSIONS} LRU cap,
-   * is silently reaped (its process killed, its dot going cold) — re-focusing it
-   * reloads from grok's on-disk history. Working/needs-you and the focused session
-   * are never reaped.
+   * Soft bound on live `grok agent stdio` processes. An open tab is a visible,
+   * user-owned thing, so nothing is ever silently killed (the old time/LRU
+   * reaper is retired) — past this count a one-time-per-window warning suggests
+   * closing unused tabs. Lazy start (pendingStart) keeps hidden tabs from
+   * spawning at all, which is the structural mitigation.
    */
   private static readonly MAX_LIVE_SESSIONS = 8;
-  private static readonly IDLE_TTL_MS = 60 * 60 * 1000; // 1h
-  private static readonly REAP_INTERVAL_MS = 5 * 60 * 1000; // sweep every 5 min
+  private warnedMaxLive = false;
   // The empty-session sweep only scans the newest N by mtime — empty primer
   // sessions accumulate at the top (a fresh one each open), so this catches them
   // while keeping the one-shot scan bounded on a large store.
   private static readonly SWEEP_SCAN_LIMIT = 300;
-  private reaper?: ReturnType<typeof setInterval>;
   /** Guards {@link sweepEmptyPrimerSessions} to one run per activation. */
   private sweptEmptySessions = false;
   private output: vscode.OutputChannel;
-  private chips: FileChip[] = [];
   private editorWatcher?: vscode.Disposable;
   private terminalManager = new TerminalManager();
   private voiceRecorder = new VoiceRecorder();
   private voiceTempPath?: string;
   private voiceStreamer?: VoiceStreamer;
   private voiceFinalizing = false;
+  /**
+   * The session that started the current voice capture. All voice posts
+   * (state/partial/transcript/submit/error) route back to it, so a dictation
+   * begun in one chat never leaks into another one the user switched to
+   * mid-capture. Cleared when the capture ends.
+   */
+  private voiceOwner?: Session;
   // Stored so a "grok send" can transparently restart a fresh stream (each
   // message = one clean utterance) without re-resolving the mic device.
   private voiceStreamCtx?: { key: string; ffmpegPath: string; device?: string; phrase: string; keyterms: string[] };
   private configWatcher?: vscode.Disposable;
+  /**
+   * Global status-bar HUD (roadmap #2) reflecting the active session's model /
+   * effort / mode / context-usage / working state, plus a "needs you" count
+   * across all sessions. Built by the pure computeStatusBar; refreshed from the
+   * same hooks that drive the webview toolbar (setActive / setStatus / model &
+   * mode changes / promptComplete).
+   */
+  private statusBar?: vscode.StatusBarItem;
   private cliPath?: string;
   // Guards the silent grok-CLI auto-update so it runs at most once per activation.
   private cliUpdateChecked = false;
@@ -228,48 +235,27 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
   // later manual re-upgrade that breaks again gets downgraded again.
   private reactiveDowngradeInFlight = false;
 
-  // Diff-preview plumbing (issue #21): a read-only content provider backs the
-  // before/after sides (no save prompt on close), a monotonic counter keeps each
-  // diff's virtual URIs unique, and openDiffsByRequest maps a pending permission
-  // request → its diff URIs so the tab can be auto-closed when the user answers.
-  private readonly diffProvider = new GrokDiffContentProvider();
-  private diffSeq = 0;
-  private readonly openDiffsByRequest = new Map<string, { left: vscode.Uri; right: vscode.Uri }>();
-
   constructor(
     private context: vscode.ExtensionContext,
     output: vscode.OutputChannel,
   ) {
     this.output = output;
-    context.subscriptions.push(
-      vscode.workspace.registerTextDocumentContentProvider(GROK_DIFF_SCHEME, this.diffProvider),
+    // Status-bar HUD: a global, always-visible mirror of the active session's
+    // model/effort/mode/context/status (roadmap #2). Right-aligned, mid priority
+    // so it sits near the language/mode indicators. Its click reveals the active
+    // chat (or opens the launcher) — the natural target when it shows "needs you".
+    this.statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    this.statusBar.command = STATUS_BAR_COMMAND;
+    this.context.subscriptions.push(
+      this.statusBar,
+      vscode.commands.registerCommand(STATUS_BAR_COMMAND, () => this.revealActiveSession()),
     );
-  }
-
-  resolveWebviewView(view: vscode.WebviewView): void {
-    this.view = view;
-    view.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [
-        vscode.Uri.joinPath(this.context.extensionUri, "media"),
-        vscode.Uri.joinPath(this.context.extensionUri, "resources"),
-        // grok writes generated media under ~/.grok/sessions/<cwd>/<id>/{images,videos};
-        // serving it via asWebviewUri (instead of a base64 data: URI) lets the
-        // webview stream a multi-MB video from disk — see postGeneratedMedia.
-        vscode.Uri.file(resolveGrokHome()),
-      ],
-    };
-    view.webview.html = this.getHtml(view.webview);
-    view.webview.onDidReceiveMessage((m: WebviewMsg) => this.onMessage(m));
+    this.updateStatusBar();
+    // Panels exist independently of the launcher view, so the watchers are wired
+    // here (not in resolveWebviewView — the launcher may never be opened).
     this.watchActiveEditor();
-    // Periodic idle-TTL sweep over the live-session pool (the LRU cap is enforced
-    // eagerly on each new start; this catches sessions that simply went stale).
-    if (!this.reaper) {
-      this.reaper = setInterval(() => this.reapPool(), GrokSidebar.REAP_INTERVAL_MS);
-    }
-    // Re-tell the webview whether voice is set up when the relevant settings
+    // Re-tell every webview whether voice is set up when the relevant settings
     // change, so the mic button's "needs setup" hint updates without a reload.
-    this.configWatcher?.dispose();
     this.configWatcher = vscode.workspace.onDidChangeConfiguration((e) => {
       if (
         e.affectsConfiguration("grok.voiceApiKey") ||
@@ -284,10 +270,349 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
       if (e.affectsConfiguration("grok.showThinking")) {
         this.postShowThinking();
       }
+      if (e.affectsConfiguration("grok.defaultEffort")) {
+        this.updateStatusBar(); // the HUD shows the effort level
+      }
     });
   }
 
+  /** The activity-bar view is the session LAUNCHER — list + New button, no chat.
+   *  Chat renders in per-session editor tabs only; a session is never rendered in
+   *  two webviews at once (dual-render would double-route messages and replay the
+   *  buffer into two places). */
+  resolveWebviewView(view: vscode.WebviewView): void {
+    this.view = view;
+    view.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [
+        vscode.Uri.joinPath(this.context.extensionUri, "media"),
+        vscode.Uri.joinPath(this.context.extensionUri, "resources"),
+      ],
+    };
+    view.webview.html = this.getLauncherHtml(view.webview);
+    view.webview.onDidReceiveMessage((m: WebviewMsg) => this.onLauncherMessage(m));
+  }
+
+  /** Launcher-originated messages. The launcher has no session of its own — row
+   *  clicks open/reveal tabs, and list requests are answered to the launcher. */
+  private async onLauncherMessage(msg: WebviewMsg): Promise<void> {
+    switch (msg.type) {
+      case "ready":
+        this.postLauncherSessions();
+        break;
+      case "listSessions":
+        this.postLauncherSessions({ offset: msg.offset, limit: msg.limit, query: msg.query });
+        break;
+      case "resumeSession":
+        await this.openTabForId(msg.id);
+        break;
+      case "newSession":
+        await this.newTab();
+        break;
+      case "renameSession":
+        this.renameSession(msg.id, msg.name);
+        break;
+      case "deleteSession":
+        await this.deleteSession(msg.id, msg.name);
+        break;
+      case "clearAllSessions":
+        await this.clearAllSessions();
+        break;
+      case "runInstallCmd":
+      case "runGrokLogin":
+        // Session-free onboarding actions (open a terminal) — share the panel path.
+        await this.onMessage(msg, new Session());
+        break;
+      case "recheckConnection":
+        // Signed-out/missing-CLI recheck from the launcher: open a fresh tab —
+        // its startSession is the connection check, and it shows the outcome.
+        await this.newTab();
+        break;
+    }
+  }
+
+  // ---------- panel (editor tab) lifecycle ----------
+
+  /** Open a fresh session in a new editor tab and spawn its grok process. */
+  async newTab(): Promise<void> {
+    const session = new Session();
+    if (vscode.workspace.getConfiguration("grok").get<boolean>("includeActiveFileByDefault", true)) {
+      this.addActiveEditorChip(session); // lands in session.chips; ready's replay paints it
+    }
+    this.openPanel(session, tabTitleFor(undefined));
+    this.maybeWarnLiveCount();
+    await this.startSession(session);
+  }
+
+  /**
+   * Open the session with grok id `id`: reveal its tab if one is already open,
+   * else cold-load it from grok's on-disk history into a new tab. All entry
+   * points that can materialize a panel for an id (launcher row, a panel's
+   * history dropdown, serializer restore) funnel through the shared `opening`
+   * guard so two racing opens can't produce two tabs.
+   */
+  private async openTabForId(id: string): Promise<void> {
+    for (const s of this.panels) {
+      if (s.activeSessionId === id && s.panel) {
+        s.panel.reveal(undefined, false);
+        this.setActive(s);
+        return;
+      }
+    }
+    if (!this.router.beginOpen(id)) return; // another entry point is opening it
+    try {
+      const session = new Session();
+      session.activeSessionId = id;
+      this.openPanel(session, tabTitleFor(this.displayNameForId(id)));
+      this.maybeWarnLiveCount();
+      await this.startSession(session, id);
+      this.markRead(session); // opening a cold session clears its unread badge
+    } finally {
+      this.router.endOpen(id);
+    }
+  }
+
+  /** Create the editor-tab panel for a session and bind it. */
+  private openPanel(session: Session, title: string, column?: vscode.ViewColumn): void {
+    const panel = vscode.window.createWebviewPanel(
+      GrokSidebar.panelViewType,
+      title,
+      column ?? vscode.ViewColumn.Active,
+      {
+        enableScripts: true,
+        // Hidden panels are torn down and rebuilt on reveal — the webview
+        // re-fires `ready`, which drives replayInto. Flipping this to true
+        // breaks that lifecycle (ready would never re-fire); see panel-router.ts
+        // before turning the dial.
+        retainContextWhenHidden: false,
+        localResourceRoots: [
+          vscode.Uri.joinPath(this.context.extensionUri, "media"),
+          vscode.Uri.joinPath(this.context.extensionUri, "resources"),
+          // grok writes generated media under ~/.grok/sessions/<cwd>/<id>/…;
+          // serving it via asWebviewUri lets the webview stream a multi-MB
+          // video from disk — see postGeneratedMedia.
+          vscode.Uri.file(resolveGrokHome()),
+        ],
+      },
+    );
+    this.bindPanel(session, panel);
+  }
+
+  /** Wire a panel (fresh or serializer-restored) to its session: html, message
+   *  routing, visibility lifecycle, dispose. Reuses getHtml unchanged. */
+  bindPanel(session: Session, panel: vscode.WebviewPanel): void {
+    session.panel = panel;
+    this.panels.add(session);
+    this.router.bind(session, { postMessage: (m) => void panel.webview.postMessage(m) });
+    panel.iconPath = vscode.Uri.joinPath(this.context.extensionUri, "resources", "blackhole-icon.svg");
+    panel.webview.html = this.getHtml(panel.webview);
+    panel.webview.onDidReceiveMessage((m: WebviewMsg) => void this.onMessage(m, session));
+    panel.onDidChangeViewState((e) => {
+      if (e.webviewPanel.visible) {
+        // The rebuilt webview re-fires `ready` (retainContextWhenHidden:false),
+        // which marks it ready and replays; here we only track activation.
+        if (e.webviewPanel.active) this.setActive(session);
+      } else {
+        this.router.markHidden(session);
+      }
+    });
+    panel.onDidDispose(() => this.onPanelClosed(session));
+    this.setActive(session);
+    this.broadcastSessionsList();
+  }
+
+  /**
+   * Re-bind a serializer-restored panel after a window reload. Stashes only the
+   * grok session id in webview state; history reloads via the normal
+   * `startSession(session, id)` cold-load path. LAZY: only a visible restored
+   * tab spawns immediately — a background tab defers its spawn to first reveal
+   * (`pendingStart`), so N restored tabs don't spawn N processes at once. Goes
+   * through the shared `opening` guard — a restore can race a launcher click for
+   * the same id.
+   */
+  async restorePanel(panel: vscode.WebviewPanel, id: string | undefined): Promise<void> {
+    if (id && !this.router.beginOpen(id)) {
+      // Another entry point is already materializing this session — don't
+      // double-open; that tab will exist momentarily.
+      panel.dispose();
+      return;
+    }
+    try {
+      if (id) {
+        for (const s of this.panels) {
+          if (s.activeSessionId === id) {
+            panel.dispose();
+            s.panel?.reveal(undefined, false);
+            return;
+          }
+        }
+      }
+      const session = new Session();
+      session.activeSessionId = id;
+      this.bindPanel(session, panel);
+      // Title from the disk entry immediately, before any spawn.
+      panel.title = tabTitleFor(id ? this.displayNameForId(id) : undefined);
+      if (panel.visible) {
+        void this.startSession(session, id);
+      } else {
+        session.pendingStart = id ?? "";
+      }
+    } finally {
+      if (id) this.router.endOpen(id);
+    }
+  }
+
+  /**
+   * A session's tab was closed. Dispose the live grok process but KEEP on-disk
+   * history so the session is reopenable from the launcher — unless it's an
+   * empty primer-only session, which is deleted from disk (#24: abandoning an
+   * untouched "New session" must not pile primer sessions into history). Also
+   * cancels a voice capture this panel owned, and re-homes the last-active
+   * pointer.
+   */
+  private onPanelClosed(session: Session): void {
+    session.pendingPermissions.clear();
+    this.router.unbind(session);
+    this.panels.delete(session);
+    session.panel = undefined;
+    session.pendingStart = undefined;
+    if (this.voiceOwner === session) this.stopVoiceInput();
+    const busy = session.status === "working" || session.status === "needs-you";
+    const id = session.activeSessionId;
+    // A rename signals user intent to keep the session — never recycle it,
+    // mirroring the startup sweep's customName protection.
+    const overrides = this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {});
+    const renamed = !!(id && overrides[id]?.customName);
+    const emptyPrimerOnly = !session.hasHistory && !session.afterTurn && !busy && !renamed;
+    const exited = this.disposeSession(session);
+    if (emptyPrimerOnly && id) {
+      // grok re-persists its session dir while shutting down, so deleting
+      // before the process is really gone loses the race (locked files on
+      // Windows, or a post-delete final flush re-creates the dir). Wait for the
+      // actual exit, delete, then sweep once more for a late flush. Skipped if
+      // the user reopened the session in the meantime (it's live again).
+      void exited.then(async () => {
+        const liveAgain = () => [...this.pool].some((s) => s.activeSessionId === id);
+        await new Promise((r) => setTimeout(r, 500));
+        if (liveAgain()) return;
+        this.removeSessionFromDisk(id);
+        await new Promise((r) => setTimeout(r, 1500));
+        if (liveAgain()) return;
+        this.removeSessionFromDisk(id);
+        this.broadcastSessionsList();
+      });
+    }
+    if (this.active === session) {
+      this.active = [...this.panels].sort((a, b) => b.lastActiveAt - a.lastActiveAt)[0];
+    }
+    this.broadcastSessionsList();
+    this.updateStatusBar();
+  }
+
+  /** Track the last-active panel (target for editor commands) and clear its
+   *  unread badge — activating a tab means the user is looking at it. */
+  private setActive(session: Session): void {
+    const changed = this.active !== session;
+    this.active = session;
+    this.touch(session);
+    this.markRead(session);
+    if (changed) this.broadcastSessionsList();
+    this.updateStatusBar();
+  }
+
+  /** Resolve a session's model to its user-facing display name (mirrors the
+   *  webview's modelDisplayName + the versioned-id fallback in resolveModelId). */
+  private modelNameFor(session: Session | undefined): string {
+    const client = session?.client;
+    if (!client?.currentModelId) return "";
+    const id = resolveModelId(client.currentModelId, client.availableModels) ?? client.currentModelId;
+    return client.availableModels.find((m) => m.modelId === id)?.name ?? id;
+  }
+
+  /** How many live sessions are waiting on the user (permission / question /
+   *  plan-review). Aggregated across the pool, not just the active session. */
+  private countNeedsYou(): number {
+    let n = 0;
+    for (const s of this.pool) if (s.status === "needs-you") n++;
+    return n;
+  }
+
+  /** Recompute the status-bar HUD from current active-session state. Cheap and
+   *  idempotent — safe to call from every state-change hook. */
+  private updateStatusBar(): void {
+    const bar = this.statusBar;
+    if (!bar) return;
+    const active = this.active?.panel ? this.active : undefined;
+    const client = active?.client;
+    const modelId = client && (resolveModelId(client.currentModelId, client.availableModels) ?? client.currentModelId);
+    const contextWindow = modelId
+      ? client!.availableModels.find((m) => m.modelId === modelId)?.totalContextTokens
+      : undefined;
+    const view = computeStatusBar({
+      hasActive: !!active,
+      modelName: this.modelNameFor(active),
+      effort: vscode.workspace.getConfiguration("grok").get<string>("defaultEffort", ""),
+      mode: active ? this.displayMode(active) : undefined,
+      usedTokens: client?.lastMeta?.totalTokens,
+      contextWindow,
+      working: active?.status === "working",
+      needsYouCount: this.countNeedsYou(),
+    });
+    if (!view.show) { bar.hide(); return; }
+    bar.text = view.text;
+    bar.tooltip = view.tooltip;
+    bar.backgroundColor = view.warning
+      ? new vscode.ThemeColor("statusBarItem.warningBackground")
+      : undefined;
+    bar.show();
+  }
+
+  /** Status-bar click: bring the active chat forward (or open the launcher when
+   *  no session is open). No auto-focus anywhere else — this is user-initiated. */
+  private revealActiveSession(): void {
+    if (this.active?.panel) {
+      this.active.panel.reveal(undefined, false);
+    } else {
+      void vscode.commands.executeCommand("workbench.view.extension.grokSidebar");
+    }
+  }
+
+  /**
+   * Passive notification when a session needs the user (permission / question /
+   * plan review). Opt-in (grok.notifyWhenWaiting) and only for a session the user
+   * ISN'T already looking at — auto-focusing on a permission request is the exact
+   * focus-stealing failure this fork deleted the diff-editor tab to avoid, so we
+   * never call reveal() ourselves; the user clicks "Go to session" if they want it.
+   */
+  private notifyNeedsYou(session: Session, message: string): void {
+    if (!vscode.workspace.getConfiguration("grok").get<boolean>("notifyWhenWaiting", false)) return;
+    if (session.panel?.visible) return; // they're already watching this tab
+    void vscode.window.showInformationMessage(message, "Go to session").then((choice) => {
+      if (choice === "Go to session") session.panel?.reveal(undefined, false);
+    });
+  }
+
+  /** The active session, or a fresh tab when none is open (command entry points
+   *  must always have a target). */
+  private async requireActiveSession(): Promise<Session | undefined> {
+    if (this.active?.panel) return this.active;
+    await this.newTab();
+    return this.active;
+  }
+
+  /** One-time-per-window soft-bound warning — never blocks, never kills. */
+  private maybeWarnLiveCount(): void {
+    if (this.warnedMaxLive || this.pool.size < GrokSidebar.MAX_LIVE_SESSIONS) return;
+    this.warnedMaxLive = true;
+    void vscode.window.showWarningMessage(
+      `You have ${this.pool.size + 1} Grok sessions running — close unused tabs to free resources.`,
+    );
+  }
+
+  // ---------- commands ----------
+
   insertActiveMention(opts?: { selection?: boolean; uri?: vscode.Uri }): void {
+    // Capture the editor state FIRST — opening a panel steals editor focus.
     const editor = vscode.window.activeTextEditor;
     const uri = opts?.uri ?? editor?.document.uri;
     if (!uri) return;
@@ -298,30 +623,37 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
       selStart = editor.selection.start.line + 1;
       selEnd = editor.selection.end.line + 1;
     }
-    this.chips.push(makeExplicitChip(uri.fsPath, relPath, selStart, selEnd));
-    this.postChips();
-    this.reveal();
+    void (async () => {
+      const session = await this.requireActiveSession();
+      if (!session) return;
+      session.chips.push(makeExplicitChip(uri.fsPath, relPath, selStart, selEnd));
+      this.postChips(session);
+      session.panel?.reveal(undefined, false);
+    })();
   }
 
   newSession(): void {
-    void this.newFocusedSession();
+    void this.newTab();
   }
 
-  async pickModel(): Promise<void> {
-    if (!this.focused.client || !this.focused.client.availableModels.length) {
+  /** Model quick-pick. A panel's toolbar passes its own session; the command
+   *  palette targets the last-active tab (opening one if none). */
+  async pickModel(target?: Session): Promise<void> {
+    const session = target ?? (await this.requireActiveSession());
+    if (!session?.client || !session.client.availableModels.length) {
       vscode.window.showInformationMessage("Start a session first.");
       return;
     }
-    const items = this.focused.client.availableModels.map((m) => ({
+    const items = session.client.availableModels.map((m) => ({
       label: m.name ?? m.modelId,
-      description: m.modelId === this.focused.client!.currentModelId ? "$(check) current" : "",
+      description: m.modelId === session.client!.currentModelId ? "$(check) current" : "",
       detail: m.description,
       modelId: m.modelId,
     }));
     const picked = await vscode.window.showQuickPick(items, {
       placeHolder: "Pick a Grok model",
     });
-    if (picked) await this.switchModel(picked.modelId);
+    if (picked) await this.switchModel(session, picked.modelId);
   }
 
   /**
@@ -332,14 +664,14 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
    * restart — `newSession` re-applies it before the primer runs, while the agent
    * is still rebindable. Same-agent switches stay live (history intact).
    */
-  async switchModel(modelId: string): Promise<void> {
-    const client = this.focused.client;
+  async switchModel(session: Session, modelId: string): Promise<void> {
+    const client = session.client;
     // Ignore switches fired during the session-start window: the live set_model
     // would race the hidden primer (sometimes landing before the agent locks,
     // sometimes after — see research/model-switch-race-probe.cjs), making the
     // outcome unpredictable. The webview disables the control while busy; this
     // is the backstop for a click already in flight.
-    if (!client || this.focused.priming || modelId === client.currentModelId) return;
+    if (!client || session.priming || modelId === client.currentModelId) return;
     const cfg = vscode.workspace.getConfiguration("grok");
     try {
       await client.setModel(modelId);
@@ -349,26 +681,31 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
         vscode.window.showErrorMessage(`Failed to set model: ${(e as Error).message}`);
         return;
       }
-      if (!this.focused.hasHistory) {
+      if (!session.hasHistory) {
         // Primer-only session (no real conversation): a cross-agent switch restarts it with a fresh
         // grok id. There's nothing to summarize, so we never prompt here — and we don't leave the
         // abandoned primer-only session cluttering history (repeated switches would pile them up).
         // Drop it after the restart, carrying over any rename the user made.
-        const discardId = this.focused.activeSessionId;
+        const discardId = session.activeSessionId;
         await cfg.update("defaultModel", modelId, vscode.ConfigurationTarget.Global);
-        await this.startSession();
-        this.discardRestartedEmptySession(discardId);
+        await this.startSession(session);
+        this.discardRestartedEmptySession(session, discardId);
         return;
       }
       const mode = await this.pickRestartMode("Switching to this model requires a new session.");
       if (!mode) return; // dismissed — keep the current model
       await cfg.update("defaultModel", modelId, vscode.ConfigurationTarget.Global);
-      await this.restartSession(mode);
+      await this.restartSession(session, mode);
     }
   }
 
   openModePopover(): void {
-    this.post({ type: "openModePopover" });
+    void (async () => {
+      const session = await this.requireActiveSession();
+      if (!session) return;
+      session.panel?.reveal(undefined, false);
+      this.postTo(session, { type: "openModePopover" });
+    })();
   }
 
   /**
@@ -405,49 +742,55 @@ export async function getSessionToken(): Promise<string> {
 
 See design doc for the full state machine diagram.`;
 
-    this.post({
-      type: "exitPlanRequest",
-      req: {
-        id: "dummy-plan-" + Date.now(),
-        sessionId: this.focused.activeSessionId || "dummy-session",
-        plan: dummyPlan,
-      },
-    });
+    void (async () => {
+      const session = await this.requireActiveSession(); // route to the active tab; open one if none
+      if (!session) return;
+      session.panel?.reveal(undefined, false);
+      this.postTo(session, {
+        type: "exitPlanRequest",
+        req: {
+          id: "dummy-plan-" + Date.now(),
+          sessionId: session.activeSessionId || "dummy-session",
+          plan: dummyPlan,
+        },
+      });
 
-    // Make the bottom mode button reflect Plan during the manual test.
-    this.post({ type: "modeChanged", modeId: "plan" });
+      // Make the bottom mode button reflect Plan during the manual test.
+      this.postTo(session, { type: "modeChanged", modeId: "plan" });
+    })();
   }
 
   /**
-   * The mode the UI should show. Plan and YOLO are *client* states that the CLI
-   * doesn't model (the CLI only knows agent/plan), so we derive the button label
-   * here rather than echoing the CLI's raw mode id.
+   * The mode the UI should show for `session`. Plan and YOLO are *client* states
+   * that the CLI doesn't model (the CLI only knows agent/plan), so we derive the
+   * button label here rather than echoing the CLI's raw mode id.
    */
-  private displayMode(): "agent" | "plan" | "yolo" {
-    if (this.focused.planActive) return "plan";
-    if (this.focused.autoApprove) return "yolo";
+  private displayMode(session: Session): "agent" | "plan" | "yolo" {
+    if (session.planActive) return "plan";
+    if (session.autoApprove) return "yolo";
     return "agent";
   }
 
-  private postMode(): void {
-    this.post({ type: "modeChanged", modeId: this.displayMode() });
+  /** Refresh `session`'s own mode button. Transient — replay re-derives it. */
+  private postMode(session: Session): void {
+    this.postTo(session, { type: "modeChanged", modeId: this.displayMode(session) });
+    if (session === this.active) this.updateStatusBar();
   }
 
-  /** Toggle the client-enforced plan gate and keep the live client in sync. Only
-   *  the focused session drives the mode button — a background session entering
-   *  plan mode raises its own gate silently. */
+  /** Toggle the client-enforced plan gate and keep the live client in sync. The
+   *  mode button refresh targets that session's own view — a background session
+   *  entering plan mode raises its own gate silently. */
   private setPlanActive(session: Session, v: boolean): void {
     session.planActive = v;
     if (session.client) session.client.planActive = v;
-    if (session === this.focused) this.postMode();
+    this.postMode(session);
   }
 
-  async setMode(modeId: "agent" | "plan" | "yolo"): Promise<void> {
+  async setMode(session: Session, modeId: "agent" | "plan" | "yolo"): Promise<void> {
     // Agent/plan/yolo are mutually exclusive. Plan = client write/exec gate;
     // YOLO = auto-approve. Both ride on top of the CLI's agent mode, except
     // Plan which also tells the CLI to plan instead of act. The mode button only
-    // ever drives the focused session.
-    const session = this.focused;
+    // ever drives the session whose composer sent the switch.
     // Ignore mode changes until the session exists: before session/new the CLI
     // setMode throws "no session" (and for Plan that error is surfaced to the user).
     // The mode button is disabled while busy; this backstops the toggle-mode command.
@@ -509,11 +852,11 @@ See design doc for the full state machine diagram.`;
    * the send button re-enables when the cancelled turn finally ends.
    */
   private handleExitPlan(
+    session: Session,
     requestId: number | string,
     verdict: "approved" | "abandoned" | "rejected",
     comment?: string,
   ): void {
-    const session = this.focused;
     const client = session.client;
     if (!client) return;
     const gen = session.gen;
@@ -756,7 +1099,7 @@ See design doc for the full state machine diagram.`;
       const mime = m.mimeType || guessMediaMime(m.path);
       // Served from disk when the file is under a localResourceRoot (grok home):
       // the webview pulls bytes lazily, so even a big video renders.
-      const webview = this.view?.webview;
+      const webview = session.panel?.webview;
       if (webview && this.isServableFromDisk(m.path)) {
         const src = webview.asWebviewUri(vscode.Uri.file(m.path)).toString();
         this.emit(session, { type: "media", media: m.media, src, mimeType: mime, path: m.path });
@@ -858,12 +1201,21 @@ See design doc for the full state machine diagram.`;
    * CLI owns auth, so we shell out to it, tear down the live session, and drop
    * the webview back to the auth-required onboarding state. Resolves issue #13.
    */
+  /**
+   * Sign out of the Grok CLI. Tears the whole pool down, then force-closes every
+   * open session panel (`panel.dispose()` → onPanelClosed runs its normal
+   * cleanup; `this.active` goes undefined). Logout never touches disk, so the
+   * launcher keeps listing the full session history — that's where the user
+   * picks up after signing back in (a row clicked while signed out opens a tab
+   * showing the auth-required onboarding; after re-login rows reopen with full
+   * replay). The launcher itself shows the signed-out state.
+   */
   async logout(): Promise<void> {
     const cliPath = this.cliPath || locateGrokCli(
       vscode.workspace.getConfiguration("grok").get<string>("cliPath", ""),
     );
     if (!cliPath) {
-      this.post({ type: "onboarding", state: "missing-cli", platform: process.platform });
+      this.broadcast({ type: "onboarding", state: "missing-cli", platform: process.platform });
       return;
     }
     const choice = await vscode.window.showWarningMessage(
@@ -873,18 +1225,21 @@ See design doc for the full state machine diagram.`;
     );
     if (choice !== "Sign Out") return;
     // Tear down every live session first so no client's `exit` (or in-flight
-    // turn) races the onboarding state we're about to show, then reset focus to a
-    // fresh, unstarted session.
+    // turn) races the signed-out state, then close the tabs.
     await this.disposePool();
-    this.focused = new Session();
+    for (const s of [...this.panels]) s.panel?.dispose(); // → onPanelClosed each
+    this.active = undefined;
     const term = vscode.window.createTerminal("Grok Logout");
     term.sendText(`"${cliPath}" logout`);
-    this.post({ type: "clearMessages" });
-    this.post({ type: "onboarding", state: "auth-required" });
+    this.broadcast({ type: "onboarding", state: "auth-required" });
+    this.broadcastSessionsList();
+    this.updateStatusBar();
   }
 
+  /** Extension deactivate: tear down every session's process (disposePool covers
+   *  all pool members — every panel's live session is one). VS Code disposes the
+   *  panels themselves. */
   dispose(): void {
-    if (this.reaper) { clearInterval(this.reaper); this.reaper = undefined; }
     void this.disposePool();
     this.editorWatcher?.dispose();
     this.configWatcher?.dispose();
@@ -896,9 +1251,9 @@ See design doc for the full state machine diagram.`;
 
   // ---------- internals ----------
 
-  private async ensureClient(): Promise<AcpClient | undefined> {
-    if (this.focused.client) return this.focused.client;
-    return this.startSession();
+  private async ensureClient(session: Session): Promise<AcpClient | undefined> {
+    if (session.client) return session.client;
+    return this.startSession(session);
   }
 
   /** Read `grok --version` for the policy checks. Returns "" on failure (logged). */
@@ -921,7 +1276,9 @@ See design doc for the full state machine diagram.`;
    * is logged and we proceed with the current binary. Respects the update policy
    * (issue #22) so it never pulls the CLI onto an unsupported build on Windows.
    */
-  private async maybeUpdateCliOnUpgrade(cliPath: string): Promise<void> {
+  // With lazy starts this triggers on the first panel to spawn (once per
+  // activation, before that first spawn); its updating notice targets that panel.
+  private async maybeUpdateCliOnUpgrade(cliPath: string, session: Session): Promise<void> {
     if (this.cliUpdateChecked) return;
     this.cliUpdateChecked = true;
     const current = (this.context.extension.packageJSON as { version?: string })?.version ?? "";
@@ -940,7 +1297,7 @@ See design doc for the full state machine diagram.`;
           this.output.appendLine(
             `Extension upgraded ${lastSeen} → ${current}; updating grok CLI (silent: ${args.join(" ")}).`,
           );
-          this.post({ type: "cliUpdating" });
+          this.postTo(session, { type: "cliUpdating" });
           try {
             const { stdout, stderr } = await execFileAsync(cliPath, args, { timeout: 180_000 });
             if (stdout?.trim()) this.output.appendLine(stdout.trim());
@@ -1001,7 +1358,7 @@ See design doc for the full state machine diagram.`;
       `grok CLI ${fromVersion} has the stdio regression (issue #22, ${reason}); ` +
         `pinning to ${GROK_STDIO_DOWNGRADE_TARGET}.`,
     );
-    this.post({ type: "cliUpdating" });
+    this.broadcast({ type: "cliUpdating" });
     try {
       const { stdout, stderr } = await execFileAsync(
         cliPath,
@@ -1029,12 +1386,12 @@ See design doc for the full state machine diagram.`;
    * Read-only — `grok update --check --json` doesn't touch the binary, so it's
    * safe while a session is live. Posts a grokUpdateStatus back to the webview.
    */
-  private async checkGrokUpdate(): Promise<void> {
+  private async checkGrokUpdate(session: Session): Promise<void> {
     const cliPath = this.cliPath || locateGrokCli(
       vscode.workspace.getConfiguration("grok").get<string>("cliPath", ""),
     );
     if (!cliPath) {
-      this.post({ type: "grokUpdateStatus", error: "grok CLI not found" });
+      this.postTo(session, { type: "grokUpdateStatus", error: "grok CLI not found" });
       return;
     }
     // Compute the update policy from the installed version (issue #22) so the menu
@@ -1044,7 +1401,7 @@ See design doc for the full state machine diagram.`;
     try {
       const { stdout } = await execFileAsync(cliPath, ["update", "--check", "--json"], { timeout: 30_000 });
       const info = JSON.parse(stdout) as { currentVersion?: string; latestVersion?: string; updateAvailable?: boolean };
-      this.post({
+      this.postTo(session, {
         type: "grokUpdateStatus",
         current: info.currentVersion ?? null,
         latest: info.latestVersion ?? null,
@@ -1053,24 +1410,24 @@ See design doc for the full state machine diagram.`;
       });
     } catch (e) {
       this.output.appendLine(`grok update --check failed: ${(e as Error).message}`);
-      this.post({ type: "grokUpdateStatus", error: (e as Error).message, policy });
+      this.postTo(session, { type: "grokUpdateStatus", error: (e as Error).message, policy });
     }
   }
 
   /**
    * On-demand "Update Grok Build" from the About panel. grok holds its binary
-   * open while running (a hard lock on Windows), so we tear the session down,
-   * run `grok update`, then resume the *same* session on the fresh binary —
-   * preserving the conversation. The welcome lifecycle (Updating… → Starting… →
-   * Connected · v<new>) shows progress. cliUpdateChecked is already set, so
-   * startSession's silent path won't re-run the update.
+   * open while running (a hard lock on Windows), so every live session is torn
+   * down, `grok update` runs, and each open tab resumes its own session on the
+   * fresh binary — visible tabs immediately, hidden ones lazily on next reveal.
+   * cliUpdateChecked is already set, so startSession's silent path won't re-run
+   * the update.
    */
   private async updateGrokCliOnDemand(): Promise<void> {
     const cliPath = this.cliPath || locateGrokCli(
       vscode.workspace.getConfiguration("grok").get<string>("cliPath", ""),
     );
     if (!cliPath) {
-      this.post({ type: "onboarding", state: "missing-cli", platform: process.platform });
+      this.broadcast({ type: "onboarding", state: "missing-cli", platform: process.platform });
       return;
     }
     // Enforce the update policy (issue #22) server-side too — the menu already
@@ -1100,21 +1457,29 @@ See design doc for the full state machine diagram.`;
       );
       if (choice !== "Update Anyway") return;
     }
-    const resumeId = this.focused.activeSessionId;
     // Free the binary: every pooled session's process holds it open (a hard lock
     // on Windows), so tear the whole pool down before the update replaces the
-    // executable, then resume the focused session on the fresh binary. Other
-    // backgrounded sessions go cold — re-focusing one reloads it from disk.
-    // AWAIT the teardown: kill() only *signals*, and on Windows the OS releases
-    // the grok.exe lock a beat after the process actually exits — running the
-    // update before that loses the rename with "cannot rename locked executable".
-    this.focused = new Session();
-    this.post({ type: "clearMessages" });
-    this.post({ type: "cliUpdating" });
+    // executable. AWAIT the teardown: kill() only *signals*, and on Windows the
+    // OS releases the grok.exe lock a beat after the process actually exits —
+    // running the update before that loses the rename with "cannot rename locked
+    // executable". Every open panel shows the updating state (not just one).
+    this.broadcast({ type: "cliUpdating" });
     await this.disposePool();
     await this.runGrokUpdate(cliPath, updateArgs);
-    // Respawn on the (possibly) updated binary, resuming the same session.
-    await this.startSession(resumeId);
+    // Respawn per panel on the (possibly) updated binary: every VISIBLE (ready)
+    // panel resumes immediately — a visible split tab has no "next reveal", so
+    // lazy-starting it would orphan it with a dead process — while each hidden
+    // panel respawns LAZILY on its next reveal (its next `ready` consumes
+    // pendingStart). No tab is silently orphaned, and a hidden tab that's never
+    // revealed never spawns.
+    for (const s of this.panels) {
+      const resumeId = s.activeSessionId;
+      if (s.ready) {
+        void this.startSession(s, resumeId);
+      } else {
+        s.pendingStart = resumeId ?? "";
+      }
+    }
   }
 
   /** Run `grok update`, retrying once on the Windows "locked executable" error.
@@ -1155,45 +1520,47 @@ See design doc for the full state machine diagram.`;
     return choice === "Just Restart" ? "clear" : "summarize";
   }
 
-  /** Restart the session. "clear" drops the visible history; "summarize" first
+  /** Restart `session`. "clear" drops the visible history; "summarize" first
    *  captures a one-paragraph summary of the conversation and re-injects it as
-   *  hidden context after the restart so the new session keeps the thread. */
-  private async restartSession(mode: "clear" | "summarize"): Promise<void> {
+   *  hidden context after the restart so the new session keeps the thread.
+   *  Purely per-session: it replaces that session's client in place and never
+   *  touches any other session. */
+  private async restartSession(session: Session, mode: "clear" | "summarize"): Promise<void> {
     if (mode === "clear") {
-      this.emit(this.focused, { type: "clearMessages" });
-      await this.startSession();
+      this.emit(session, { type: "clearMessages" });
+      await this.startSession(session);
       return;
     }
-    const currentClient = this.focused.client;
-    this.emit(this.focused, { type: "summarizing" });
+    const currentClient = session.client;
+    this.emit(session, { type: "summarizing" });
     const chunks: string[] = [];
     const captureChunk = (t: string) => chunks.push(t);
     currentClient?.on("messageChunk", captureChunk);
-    this.focused.suppressContent = true;
+    session.suppressContent = true;
     try {
       await currentClient?.prompt(
         "Summarize our conversation so far in a concise paragraph. Be brief.",
       );
     } catch { /* best effort */ } finally {
       currentClient?.off("messageChunk", captureChunk);
-      this.focused.suppressContent = false;
+      session.suppressContent = false;
     }
     const summary = chunks.join("").trim();
 
-    await this.startSession(); // resets suppressContent + eagerly kicks off the primer
+    await this.startSession(session); // resets suppressContent + eagerly kicks off the primer
 
-    if (summary && this.focused.client) {
+    if (summary && session.client) {
       // Await the eager primer FIRST (it manages its own suppression and ends with
       // suppressContent=false), THEN re-assert suppression for the hidden summary
       // injection. Doing it the other way round would let the primer's completion
       // clear the flag mid-summary and leak "[Context from previous session]".
-      await this.ensurePrimed(this.focused.client, this.focused, this.focused.gen);
-      this.emit(this.focused, { type: "sessionContext" });
-      this.focused.suppressContent = true;
+      await this.ensurePrimed(session.client, session, session.gen);
+      this.emit(session, { type: "sessionContext" });
+      session.suppressContent = true;
       try {
-        await this.focused.client.prompt(`[Context from previous session]\n${summary}`);
+        await session.client.prompt(`[Context from previous session]\n${summary}`);
       } catch { /* best effort */ } finally {
-        this.focused.suppressContent = false;
+        session.suppressContent = false;
       }
     }
   }
@@ -1204,8 +1571,8 @@ See design doc for the full state machine diagram.`;
    *  user rename (`customName`) onto the new session so the chosen name survives the restart. The
    *  caller must only invoke this when the prior session genuinely had no history. No-op if the ids
    *  match or the old session was never persisted. */
-  private discardRestartedEmptySession(oldId: string | undefined): void {
-    const newId = this.focused.activeSessionId;
+  private discardRestartedEmptySession(session: Session, oldId: string | undefined): void {
+    const newId = session.activeSessionId;
     if (!oldId || oldId === newId) return;
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
     const grokHome = resolveGrokHome(process.env);
@@ -1217,21 +1584,21 @@ See design doc for the full state machine diagram.`;
     const overrides = this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     void this.context.globalState.update(SESSION_META_KEY, carrySessionName(overrides, oldId, newId));
     this.sessionCache.delete(oldId);
-    this.postSessionsList();
+    if (newId) this.sessionCache.delete(newId);
+    this.updateTabTitle(session); // the carried rename survives on the tab too
+    this.broadcastSessionsList();
   }
 
-  private async startSession(resumeId?: string): Promise<AcpClient | undefined> {
-    // The session this start (re)builds. Today always the focused one (pool-of-1);
-    // Step D passes a pool member. Its handlers close over `session`/`gen` so a
-    // backgrounded session's events stay bound to it even after focus moves.
-    const session = this.focused;
+  private async startSession(session: Session, resumeId?: string): Promise<AcpClient | undefined> {
+    // The session this start (re)builds. Its handlers close over `session`/`gen`
+    // so a backgrounded session's events stay bound to it even after focus moves.
     const gen = ++session.gen;
     session.buffer = [];
     session.status = "idle";
-    // Stop any in-progress voice capture so listening never carries across a
-    // new/resumed/restarted session (covers New Session, history resume, and
-    // model/effort restarts — all of which route through here).
-    this.stopVoiceInput();
+    // Stop an in-progress voice capture owned by THIS session so listening never
+    // carries across its restart (model/effort restarts, resume) — but never
+    // touch a capture another tab owns.
+    if (!this.voiceOwner || this.voiceOwner === session) this.stopVoiceInput();
     session.client?.dispose();
     session.client = undefined;
     // A brand-new session starts in the remembered mode (#25) immediately, so the
@@ -1258,7 +1625,8 @@ See design doc for the full state machine diagram.`;
     session.titleGenerated = false;
     session.firstUserMessageForTitle = undefined;
     session.priming = true;
-    this.emit(session, { type: "modeChanged", modeId: rememberedYolo ? "yolo" : "agent" });
+    // Transient (not buffered): replay derives the mode from session state instead.
+    this.postTo(session, { type: "modeChanged", modeId: rememberedYolo ? "yolo" : "agent" });
     if (resumeId) this.emit(session, { type: "clearMessages" });
 
     // Lock the composer (spinner, disabled) for the session-start window —
@@ -1277,12 +1645,16 @@ See design doc for the full state machine diagram.`;
       session.priming = false;
       this.emit(session, { type: "setBusy", value: false });
       this.emit(session, { type: "onboarding", state: "missing-cli", platform: process.platform });
+      // Mirror on the launcher so the missing CLI is visible without a tab.
+      if (this.view) {
+        void this.view.webview.postMessage({ type: "onboarding", state: "missing-cli", platform: process.platform });
+      }
       return undefined;
     }
 
     // If our extension was upgraded, silently bring the CLI up to date *before*
     // spawning it (once per activation). Bail if a newer start superseded us.
-    await this.maybeUpdateCliOnUpgrade(cliPath);
+    await this.maybeUpdateCliOnUpgrade(cliPath, session);
     if (gen !== session.gen) return undefined;
 
     // If the (possibly just-updated) CLI is on a build with the Windows stdio
@@ -1353,6 +1725,7 @@ See design doc for the full state machine diagram.`;
     client.on("modelChanged", (id) => {
       if (gen !== session.gen) return;
       this.emit(session, { type: "modelChanged", modelId: id });
+      if (session === this.active) this.updateStatusBar();
     });
     client.on("modeChanged", (id) => {
       if (gen !== session.gen) return;
@@ -1361,12 +1734,12 @@ See design doc for the full state machine diagram.`;
         // natural-language request). Raise our gate so the exit is enforced.
         session.autoApprove = false;
         this.setPlanActive(session, true);
-      } else if (session === this.focused) {
+      } else {
         // CLI reports a non-plan mode. Do NOT auto-drop the gate here: the buggy
         // exit_plan_mode emits "default" even when the user chose to keep
         // planning. The gate is lowered only by explicit user action (approve,
         // or pick Agent/YOLO). Just refresh the button label.
-        this.postMode();
+        this.postMode(session);
       }
     });
     client.on("commandsUpdate", (cmds) => {
@@ -1461,6 +1834,7 @@ See design doc for the full state machine diagram.`;
     client.on("promptComplete", (meta) => {
       if (gen !== session.gen) return;
       this.emit(session, { type: "promptComplete", meta });
+      if (session === this.active) this.updateStatusBar(); // refresh context %
     });
     client.on("xaiNotification", (u) => {
       if (gen !== session.gen) return;
@@ -1500,6 +1874,7 @@ See design doc for the full state machine diagram.`;
       });
       this.emit(session, { type: "permissionRequest", req });
       this.setStatus(session, "needs-you");
+      this.notifyNeedsYou(session, "Grok needs your approval to continue.");
     });
     client.on("mutationBlocked", (info: { kind: string; target: string }) => {
       if (gen !== session.gen) return;
@@ -1519,6 +1894,7 @@ See design doc for the full state machine diagram.`;
       // (plan/YOLO included); there's no sensible auto-answer.
       this.emit(session, { type: "questionRequest", req });
       this.setStatus(session, "needs-you");
+      this.notifyNeedsYou(session, "Grok has a question for you.");
     });
     client.on("exit", (code) => {
       if (gen !== session.gen) return; // suppress exit events from disposed/replaced clients
@@ -1598,8 +1974,19 @@ See design doc for the full state machine diagram.`;
           this.emit(session, { type: "historyReplay", active: false });
         }
         session.activeSessionId = resumeId;
-        session.titleGenerated = true; // existing session, name already in storage
-        session.hasHistory = true;
+        // A resumed session normally has a real conversation — but a lingering
+        // primer-only one (opened, primed, never messaged) replays nothing
+        // visible. userMessageCount counts only real user messages during the
+        // replay (primer turns excluded), so zero means still-new: the first
+        // send titles it + reports telemetry, closing the tab recycles its dir
+        // (#24), and a model/effort switch restarts it transparently instead
+        // of prompting. Marking it hasHistory (as before) disarmed all of that,
+        // so resumed primer-only sessions lingered forever — and each resume
+        // re-primed them, bumping their mtime back to the top of history.
+        const resumedRealHistory = session.userMessageCount > 0;
+        session.titleGenerated = resumedRealHistory;
+        session.hasHistory = resumedRealHistory;
+        if (!resumedRealHistory) this.updateTabTitle(session); // not the primer-derived disk name
 
         // Plan-gate restoration: the CLI replays its own current_mode_update
         // events during loadSession, which our modeChanged handler honors by
@@ -1627,9 +2014,18 @@ See design doc for the full state machine diagram.`;
       session.priming = false;
       this.pool.add(session);
       this.touch(session);
-      this.reapPool(); // enforce the LRU cap now that the pool grew
+      // Observable for the lazy-start guarantee (reload restore / CLI update):
+      // the Output channel shows exactly which tabs spawned and when.
+      this.output.appendLine(`spawned grok (pid ${client.pid ?? "?"}) — ${this.pool.size} live`);
+      // Connection works — clear any signed-out/missing-CLI banner on the
+      // launcher (launcher-only; panels manage their own onboarding views).
+      if (this.view) void this.view.webview.postMessage({ type: "onboarding", state: "" });
       this.emit(session, { type: "setBusy", value: false });
       void this.ensurePrimed(client, session, gen);
+      // One-shot legacy cleanup of empty primer-only sessions, once the first
+      // session is live (so this one is excluded from the sweep). Guarded to a
+      // single run per activation inside the sweep itself.
+      this.sweepEmptyPrimerSessions();
     } catch (err) {
       if (gen !== session.gen) { client.dispose(); return undefined; }
       const msg = (err as any).message ?? String(err);
@@ -1640,6 +2036,8 @@ See design doc for the full state machine diagram.`;
       this.emit(session, { type: "setBusy", value: false });
       if (/auth|unauthor|forbidden|401|403|api[_\s-]?key|credential|sign.?in/i.test(msg)) {
         this.emit(session, { type: "onboarding", state: "auth-required" });
+        // Mirror the signed-out state on the launcher so it's visible without a tab.
+        if (this.view) void this.view.webview.postMessage({ type: "onboarding", state: "auth-required" });
       } else if (process.platform === "win32" && /timed out: (initialize|session\/(new|load))|exited \(code null\)/i.test(msg)) {
         // The signature of the Windows stdio regression (issue #22): a startup request
         // hangs because the agent won't read stdin until EOF. It spanned 0.2.61–0.2.70
@@ -1657,7 +2055,7 @@ See design doc for the full state machine diagram.`;
           try {
             const detected = parseGrokVersion(version)?.join(".") ?? version;
             if (await this.downgradeBrokenCli(cliPath, detected, "reactive")) {
-              return await this.startSession(resumeId); // retry the spawn on the supported build
+              return await this.startSession(session, resumeId); // retry the spawn on the supported build
             }
           } finally {
             this.reactiveDowngradeInFlight = false;
@@ -1680,33 +2078,48 @@ See design doc for the full state machine diagram.`;
     return client;
   }
 
-  private async onMessage(msg: WebviewMsg): Promise<void> {
+  private async onMessage(msg: WebviewMsg, session: Session): Promise<void> {
     switch (msg.type) {
-      case "ready":
-        this.postInitialState();
+      case "ready": {
+        // Per-panel, on EVERY ready (first load and each re-reveal — the hidden
+        // webview is torn down, so reveal rebuilds it): config, then replay the
+        // buffer, then the derived per-session transients. One-shot activation
+        // work (spawning, the primer-session sweep) does NOT live here — panel
+        // creation drives startSession; ready only replays.
+        this.router.markReady(session);
+        this.postPanelConfig(session);
+        this.replayInto(session);
+        if (session.pendingStart !== undefined) {
+          // Lazy start (CLI-update respawn / serializer-restored background tab):
+          // the first reveal spawns; a tab that's never revealed never spawns.
+          const resumeId = session.pendingStart || undefined;
+          session.pendingStart = undefined;
+          void this.startSession(session, resumeId);
+        }
         break;
+      }
       case "send":
-        await this.handleSend(msg.text, msg.chips);
+        await this.handleSend(session, msg.text, msg.chips);
         break;
       case "newSession":
-        await this.newFocusedSession();
+        await this.newTab();
         break;
       case "cancel":
-        await this.focused.client?.cancel();
+        await session.client?.cancel();
         break;
       case "pickModel":
-        await this.pickModel();
+        await this.pickModel(session);
         break;
       case "setMode":
-        await this.setMode(msg.modeId);
+        await this.setMode(session, msg.modeId);
         break;
       case "removeChip":
-        this.chips = removeChip(this.chips, msg.id);
-        this.postChips();
+        session.chips = removeChip(session.chips, msg.id);
+        this.postChips(session);
         break;
       case "toggleChip":
-        this.chips = toggleChip(this.chips, msg.id);
-        this.postChips();
+        session.chips = toggleChip(session.chips, msg.id);
+        this.postChips(session);
         break;
       case "openFile": {
         const ref = parseFileRef(msg.path);
@@ -1735,62 +2148,58 @@ See design doc for the full state machine diagram.`;
       case "openUrl":
         void vscode.env.openExternal(vscode.Uri.parse(msg.url));
         break;
-      case "openDiff":
-        await this.openDiffEditor(msg.path, msg.oldText, msg.newText, msg.requestId);
-        break;
       case "exportExpr":
         await this.exportExpr(msg);
         break;
       case "dropFile":
-        this.addDroppedFile(msg.path, msg.shift);
+        this.addDroppedFile(session, msg.path, msg.shift);
         break;
       case "permissionAnswer":
-        this.focused.client?.respondPermission(msg.requestId, msg.optionId);
+        session.client?.respondPermission(msg.requestId, msg.optionId);
         // Record the resolution in the session buffer so re-focusing this session
         // replays the card collapsed instead of active (the live collapse is a
         // webview-only DOM mutation that the buffer never captured).
-        this.emit(this.focused, { type: "permissionResolved", requestId: msg.requestId, optionId: msg.optionId });
+        this.emit(session, { type: "permissionResolved", requestId: msg.requestId, optionId: msg.optionId });
         // Persist it (title + outcome) so a cold reload replays a collapsed card —
         // the CLI doesn't replay request_permission on session/load.
-        this.persistPermissionAnswer(this.focused, msg.requestId, msg.optionId);
-        this.closeDiffForRequest(msg.requestId); // tidy up the auto-opened diff (#21)
-        this.setStatus(this.focused, "working"); // turn resumes after the answer
+        this.persistPermissionAnswer(session, msg.requestId, msg.optionId);
+        this.setStatus(session, "working"); // turn resumes after the answer
         break;
       case "exitPlanAnswer":
-        this.handleExitPlan(msg.requestId, msg.verdict, msg.comment);
+        this.handleExitPlan(session, msg.requestId, msg.verdict, msg.comment);
         break;
       case "questionAnswer":
-        this.focused.client?.respondQuestion(msg.requestId, msg.answers ?? {}, msg.annotations ?? {});
-        this.setStatus(this.focused, "working");
+        session.client?.respondQuestion(msg.requestId, msg.answers ?? {}, msg.annotations ?? {});
+        this.setStatus(session, "working");
         break;
       case "questionCancel":
-        this.focused.client?.respondQuestionCancelled(msg.requestId);
-        this.setStatus(this.focused, "working");
+        session.client?.respondQuestionCancelled(msg.requestId);
+        this.setStatus(session, "working");
         break;
       case "setModel":
-        await this.switchModel(msg.modelId);
+        await this.switchModel(session, msg.modelId);
         break;
       case "setEffort": {
-        if (this.focused.priming) break; // ignore changes fired mid-session-start (see switchModel)
+        if (session.priming) break; // ignore changes fired mid-session-start (see switchModel)
         const newLevel = msg.level;
         const cfg2 = vscode.workspace.getConfiguration("grok");
 
-        if (!this.focused.hasHistory || !this.focused.client) {
+        if (!session.hasHistory || !session.client) {
           // As with a model switch on an empty session: restart without the summarize-vs-restart
           // prompt and discard the abandoned primer-only session — but only when it truly had no
           // history (a dead client on a session WITH history must keep that history).
-          const wasEmpty = !this.focused.hasHistory;
-          const discardId = this.focused.activeSessionId;
+          const wasEmpty = !session.hasHistory;
+          const discardId = session.activeSessionId;
           await cfg2.update("defaultEffort", newLevel, vscode.ConfigurationTarget.Global);
-          await this.startSession();
-          if (wasEmpty) this.discardRestartedEmptySession(discardId);
+          await this.startSession(session);
+          if (wasEmpty) this.discardRestartedEmptySession(session, discardId);
           break;
         }
 
         const mode = await this.pickRestartMode("Changing reasoning effort requires restarting the session.");
         if (!mode) break; // dismissed
         await cfg2.update("defaultEffort", newLevel, vscode.ConfigurationTarget.Global);
-        await this.restartSession(mode);
+        await this.restartSession(session, mode);
         break;
       }
       case "openGlobalConfig": {
@@ -1859,7 +2268,7 @@ See design doc for the full state machine diagram.`;
           vscode.workspace.getConfiguration("grok").get<string>("cliPath", ""),
         );
         if (!cliPath) {
-          this.post({ type: "onboarding", state: "missing-cli" });
+          this.broadcast({ type: "onboarding", state: "missing-cli" });
           break;
         }
         const term = vscode.window.createTerminal("Grok Login");
@@ -1868,22 +2277,24 @@ See design doc for the full state machine diagram.`;
         break;
       }
       case "recheckConnection":
-        await this.startSession();
+        await this.startSession(session);
         break;
       case "logout":
         await this.logout();
         break;
       case "checkGrokUpdate":
-        await this.checkGrokUpdate();
+        await this.checkGrokUpdate(session);
         break;
       case "updateGrok":
         await this.updateGrokCliOnDemand();
         break;
       case "listSessions":
-        this.postSessionsList({ offset: msg.offset, limit: msg.limit, query: msg.query });
+        // Dropdown reply to the requesting panel only — its pagination/search
+        // state is its own. Mutations broadcast separately.
+        this.replySessionsList(session, { offset: msg.offset, limit: msg.limit, query: msg.query });
         break;
       case "resumeSession":
-        await this.openSession(msg.id);
+        await this.openTabForId(msg.id);
         break;
       case "renameSession":
         this.renameSession(msg.id, msg.name);
@@ -1895,10 +2306,10 @@ See design doc for the full state machine diagram.`;
         await this.clearAllSessions();
         break;
       case "pickFile":
-        await this.pickFileFromComputer();
+        await this.pickFileFromComputer(session);
         break;
       case "voiceStart":
-        await this.handleVoiceStart();
+        await this.handleVoiceStart(session);
         break;
       case "voiceStop":
         await this.handleVoiceStop();
@@ -1918,7 +2329,7 @@ See design doc for the full state machine diagram.`;
    * webview appends). A non-empty `query` filters by display name across ALL sessions (it warms the
    * cache once so search stays complete, not just over what's already loaded).
    */
-  private postSessionsList(opts?: { offset?: number; limit?: number; query?: string }): void {
+  private buildSessionsMessage(opts?: { offset?: number; limit?: number; query?: string }): any {
     const offset = Math.max(0, opts?.offset ?? 0);
     const limit = opts?.limit ?? SESSION_PAGE_SIZE;
     const query = (opts?.query ?? "").trim().toLowerCase();
@@ -1976,8 +2387,8 @@ See design doc for the full state machine diagram.`;
 
     // A live, still-empty (primer-only) session must read "New session", never grok's
     // primer-derived summary — even after grok flushes summary.json. The truth is in
-    // memory (hasHistory), so override the disk-derived name here. This is the single
-    // untitled session the user starts from; abandoning it deletes it (parkFocused).
+    // memory (hasHistory), so override the disk-derived name here. Closing such a
+    // tab deletes the session entirely (onPanelClosed), so these never pile up.
     const liveEmpty = new Set<string>();
     for (const s of this.pool) {
       if (s.activeSessionId && !s.hasHistory) liveEmpty.add(s.activeSessionId);
@@ -1997,16 +2408,36 @@ See design doc for the full state machine diagram.`;
         dots[s.activeSessionId] = this.dotForId(s.activeSessionId);
       }
     }
-    this.post({
+    return {
       type: "sessions",
       entries: pageEntries,
-      activeId: this.focused.activeSessionId,
+      activeId: this.active?.activeSessionId ?? null,
       dots,
       offset,
       total,
       hasMore,
       query: opts?.query ?? "",
-    });
+    };
+  }
+
+  /** Dropdown reply: one page to the panel that asked for it. */
+  private replySessionsList(session: Session, opts?: { offset?: number; limit?: number; query?: string }): void {
+    this.postTo(session, this.buildSessionsMessage(opts));
+  }
+
+  /** One page to the launcher view (its own request/refresh). */
+  private postLauncherSessions(opts?: { offset?: number; limit?: number; query?: string }): void {
+    if (!this.view) return;
+    void this.view.webview.postMessage(this.buildSessionsMessage(opts));
+  }
+
+  /** Session-list mutation (new/rename/delete/clear/open/close): refresh every
+   *  ready panel's dropdown state AND the launcher with an unfiltered first page.
+   *  A panel with a search active re-requests with its query (sticky search). */
+  private broadcastSessionsList(): void {
+    const message = this.buildSessionsMessage();
+    this.router.broadcast(message);
+    if (this.view) void this.view.webview.postMessage(message);
   }
 
   /** Synthesize a list entry for a live session grok hasn't written a `summary.json` for yet (a
@@ -2081,7 +2512,11 @@ See design doc for the full state machine diagram.`;
     // A rename changes displayName but not summary.json's mtime, so the mtime-keyed cache would
     // otherwise keep serving the old name. Drop it so the next read rebuilds the entry.
     this.sessionCache.delete(id);
-    this.postSessionsList();
+    // Retitle the session's open tab live (works mid-turn too).
+    for (const s of this.panels) {
+      if (s.activeSessionId === id) this.updateTabTitle(s);
+    }
+    this.broadcastSessionsList();
   }
 
   private async deleteSession(id: string, name?: string): Promise<void> {
@@ -2110,30 +2545,33 @@ See design doc for the full state machine diagram.`;
       delete next[id];
       void this.context.globalState.update(SESSION_META_KEY, next);
     }
-    // Tear down the live process if this session is in the pool (focused or
-    // backgrounded), then re-home focus if we just killed the visible one.
-    const live = [...this.pool].find((s) => s.activeSessionId === id);
-    if (live) {
-      const wasFocused = live === this.focused;
-      this.disposeSession(live);
-      if (wasFocused) {
-        this.focused = new Session();
-        await this.startSession();
-      }
+    // A deleted session's open tab must close too (dispose → onPanelClosed tears
+    // the process down and re-homes `active`); a live process without a panel is
+    // torn down directly.
+    const open = [...this.panels].find((s) => s.activeSessionId === id);
+    if (open?.panel) {
+      open.panel.dispose();
+    } else {
+      const live = [...this.pool].find((s) => s.activeSessionId === id);
+      if (live) this.disposeSession(live);
     }
-    this.postSessionsList();
+    this.broadcastSessionsList();
   }
 
-  /** Delete every session in this workspace's history except the live/focused one (grok
-   *  re-persists that, so deleting it wouldn't stick). Behind a modal confirm showing the
-   *  count. Tears down any backgrounded live members it deletes and purges their overrides. */
+  /** Delete every session in this workspace's history except EVERY open panel's
+   *  session (each live CLI re-persists its own, so deleting one wouldn't stick —
+   *  and the tab would be orphaned). Behind a modal confirm showing the count.
+   *  Tears down any live process it deletes and purges their overrides. */
   private async clearAllSessions(): Promise<void> {
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
     const grokHome = resolveGrokHome(process.env);
-    const exceptId = this.focused?.activeSessionId;
+    const exceptIds = new Set<string>();
+    for (const s of this.panels) {
+      if (s.activeSessionId) exceptIds.add(s.activeSessionId);
+    }
     // Count via the cheap stat-only index — no need to parse every summary just to confirm.
     const clearableCount = indexSessions({ fs: defaultFs, grokHome, cwd }).filter(
-      (e) => e.id !== exceptId,
+      (e) => !exceptIds.has(e.id),
     ).length;
     if (clearableCount === 0) {
       void vscode.window.showInformationMessage("No history to clear.");
@@ -2148,7 +2586,7 @@ See design doc for the full state machine diagram.`;
 
     let removed: string[] = [];
     try {
-      removed = clearSessions({ fs: defaultFs, grokHome, cwd, exceptId });
+      removed = clearSessions({ fs: defaultFs, grokHome, cwd, exceptIds });
     } catch (e) {
       this.output.appendLine(`[sessions] clear-all failed: ${(e as Error).message}`);
     }
@@ -2167,17 +2605,18 @@ See design doc for the full state machine diagram.`;
       if (changed) await this.context.globalState.update(SESSION_META_KEY, next);
     }
 
-    // Tear down any backgrounded live pool members we just deleted (the focused one is kept).
+    // Tear down any panel-less live pool members we just deleted (every open
+    // panel's id was protected above, so no tab is affected by construction).
     const gone = new Set(removed);
     for (const s of [...this.pool]) {
-      if (s !== this.focused && s.activeSessionId && gone.has(s.activeSessionId)) {
+      if (s.activeSessionId && gone.has(s.activeSessionId)) {
         this.disposeSession(s);
       }
     }
-    this.postSessionsList();
+    this.broadcastSessionsList();
   }
 
-  private async pickFileFromComputer(): Promise<void> {
+  private async pickFileFromComputer(session: Session): Promise<void> {
     const picked = await vscode.window.showOpenDialog({
       canSelectFiles: true,
       canSelectFolders: false,
@@ -2186,9 +2625,9 @@ See design doc for the full state machine diagram.`;
     });
     if (!picked || picked.length === 0) return;
     for (const uri of picked) {
-      this.addDroppedFile(uri.fsPath, false);
+      this.addDroppedFile(session, uri.fsPath, false);
     }
-    this.reveal();
+    session.panel?.reveal(undefined, false);
   }
 
   /** Resolve the xAI key for Speech-to-Text: the `grok.voiceApiKey` setting,
@@ -2211,7 +2650,7 @@ See design doc for the full state machine diagram.`;
   }
 
   private postFontScale(): void {
-    this.post({ type: "fontScale", value: this.chatFontScale() });
+    this.broadcast({ type: "fontScale", value: this.chatFontScale() });
   }
 
   /** grok.showThinking (#26) — whether grok's reasoning traces are shown. Off by
@@ -2221,7 +2660,7 @@ See design doc for the full state machine diagram.`;
   }
 
   private postShowThinking(): void {
-    this.post({ type: "showThinking", value: this.showThinking() });
+    this.broadcast({ type: "showThinking", value: this.showThinking() });
   }
 
   /** Anonymous, per-install GUID — generated once and kept in globalState (so it
@@ -2258,7 +2697,7 @@ See design doc for the full state machine diagram.`;
       const event = buildSessionStartEvent(
         {
           installId: this.installId(),
-          mode: this.displayMode(),
+          mode: this.displayMode(session),
           model: session.client?.currentModelId || cfg.get<string>("defaultModel", "") || "",
           effort: cfg.get<string>("defaultEffort", ""),
         },
@@ -2279,14 +2718,19 @@ See design doc for the full state machine diagram.`;
     }
   }
 
-  private postVoiceConfigured(): void {
+  private voiceConfiguredMessage(): any {
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
     const cfg = vscode.workspace.getConfiguration("grok");
-    this.post({
+    return {
       type: "voiceConfigured",
       value: !!this.resolveVoiceApiKey(cwd),
       sendPhrase: cfg.get<string>("voiceSendPhrase", DEFAULT_SEND_PHRASE),
-    });
+    };
+  }
+
+  /** Config-change fanout; each panel also gets this on its own ready. */
+  private postVoiceConfigured(): void {
+    this.broadcast(this.voiceConfiguredMessage());
   }
 
   /** Show actionable guidance for setting up the voice API key. */
@@ -2303,15 +2747,31 @@ See design doc for the full state machine diagram.`;
     }
   }
 
+  /** Post a voice message to the capture-owner session (single-owner routing) —
+   *  safe-to-drop ephemera by contract, hence postTo. No owner → no capture →
+   *  nothing to tell anyone. */
+  private postVoice(message: any): void {
+    if (this.voiceOwner) this.postTo(this.voiceOwner, message);
+  }
+
   /** Begin recording the microphone (in the extension host — the webview can't
    *  reach the mic). The webview has already flipped its button to "listening";
-   *  on any setup failure we send `voiceError` to reset it. */
-  private async handleVoiceStart(): Promise<void> {
+   *  on any setup failure we send `voiceError` to reset it. Captures the
+   *  requesting session as the single owner of this capture. */
+  private async handleVoiceStart(session: Session): Promise<void> {
+    // One capture at a time: a second panel's start is rejected, not adopted —
+    // the transcript must keep landing in the chat that started listening.
+    if ((this.voiceStreamer || this.voiceRecorder.active) && this.voiceOwner && this.voiceOwner !== session) {
+      this.postTo(session, { type: "voiceError" });
+      return;
+    }
+    this.voiceOwner = session;
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
     const key = this.resolveVoiceApiKey(cwd);
     if (!key) {
       void this.promptVoiceKeySetup();
-      this.post({ type: "voiceError" });
+      this.postVoice({ type: "voiceError" });
+      this.voiceOwner = undefined;
       return;
     }
     const cfg = vscode.workspace.getConfiguration("grok");
@@ -2329,7 +2789,7 @@ See design doc for the full state machine diagram.`;
     try {
       await this.voiceRecorder.start({ ffmpegPath, outputPath: tmp, device, log: (m) => this.output.appendLine(m) });
       this.voiceTempPath = tmp;
-      this.post({ type: "voiceState", status: "listening" });
+      this.postVoice({ type: "voiceState", status: "listening" });
     } catch (e) {
       const msg = (e as Error).message;
       this.output.appendLine(`[voice] start failed: ${msg}`);
@@ -2342,7 +2802,8 @@ See design doc for the full state machine diagram.`;
       } else {
         vscode.window.showErrorMessage(msg);
       }
-      this.post({ type: "voiceError" });
+      this.postVoice({ type: "voiceError" });
+      this.voiceOwner = undefined;
     }
   }
 
@@ -2380,7 +2841,7 @@ See design doc for the full state machine diagram.`;
 
     streamer.on("partial", (ev: { text: string; speechFinal: boolean }) => {
       if (!isCurrent()) return;
-      this.post({ type: "voicePartial", text: ev.text });
+      this.postVoice({ type: "voicePartial", text: ev.text });
       // A finished utterance ending in the send phrase → submit + keep listening.
       if (ev.speechFinal && ctx.phrase) {
         const parsed = parseVoiceCommand(ev.text, ctx.phrase);
@@ -2397,16 +2858,17 @@ See design doc for the full state machine diagram.`;
       this.output.appendLine(`[voice] stream error: ${e.message}`);
       if (!this.voiceFinalizing) {
         vscode.window.showErrorMessage(`Voice transcription failed: ${e.message}`);
-        this.post({ type: "voiceError" });
+        this.postVoice({ type: "voiceError" });
       }
       this.voiceStreamer = undefined;
       this.voiceStreamCtx = undefined;
+      this.voiceOwner = undefined;
     });
 
     try {
       await streamer.start({ ffmpegPath: ctx.ffmpegPath, apiKey: ctx.key, device: ctx.device, keyterms: ctx.keyterms, log: (m) => this.output.appendLine(m) });
       if (!isCurrent()) { streamer.cancel(); return; }
-      this.post({ type: "voiceState", status: "listening" });
+      this.postVoice({ type: "voiceState", status: "listening" });
     } catch (e) {
       if (!isCurrent()) return;
       this.voiceStreamer = undefined;
@@ -2421,7 +2883,8 @@ See design doc for the full state machine diagram.`;
       } else {
         vscode.window.showErrorMessage(msg);
       }
-      this.post({ type: "voiceError" });
+      this.postVoice({ type: "voiceError" });
+      this.voiceOwner = undefined;
     }
   }
 
@@ -2431,7 +2894,7 @@ See design doc for the full state machine diagram.`;
     const old = this.voiceStreamer;
     this.voiceStreamer = undefined; // detach so late events are ignored
     old?.cancel();
-    if (text.trim()) this.post({ type: "voiceSubmit", text: text.trim() });
+    if (text.trim()) this.postVoice({ type: "voiceSubmit", text: text.trim() });
     void this.openVoiceStream(); // reuses cached device → fast restart
   }
 
@@ -2443,18 +2906,20 @@ See design doc for the full state machine diagram.`;
     const streamer = this.voiceStreamer;
     this.voiceStreamer = undefined;
     this.voiceStreamCtx = undefined;
-    if (!streamer) { this.voiceFinalizing = false; return; }
-    this.post({ type: "voiceState", status: "transcribing" });
+    if (!streamer) { this.voiceFinalizing = false; this.voiceOwner = undefined; return; }
+    this.postVoice({ type: "voiceState", status: "transcribing" });
     let finalText = "";
     try { finalText = await streamer.stop(); } catch { finalText = streamer.transcript; }
     const phrase = vscode.workspace.getConfiguration("grok").get<string>("voiceSendPhrase", DEFAULT_SEND_PHRASE);
     const { text, send } = parseVoiceCommand(finalText, phrase);
     this.voiceFinalizing = false;
     if (!text && !send) {
-      this.post({ type: "voiceError" });
+      this.postVoice({ type: "voiceError" });
+      this.voiceOwner = undefined;
       return;
     }
-    this.post({ type: "voiceTranscript", text, send });
+    this.postVoice({ type: "voiceTranscript", text, send });
+    this.voiceOwner = undefined;
   }
 
   /** Hard-stop any voice capture (no transcript) and reset the mic to idle.
@@ -2468,7 +2933,8 @@ See design doc for the full state machine diagram.`;
     this.voiceRecorder.cancel();
     try { if (this.voiceTempPath) fs.unlinkSync(this.voiceTempPath); } catch { /* best effort */ }
     this.voiceTempPath = undefined;
-    if (wasActive) this.post({ type: "voiceState", status: "idle" });
+    if (wasActive) this.postVoice({ type: "voiceState", status: "idle" });
+    this.voiceOwner = undefined;
   }
 
   /** Stop recording, transcribe via xAI STT, and send the text to the composer. */
@@ -2479,14 +2945,16 @@ See design doc for the full state machine diagram.`;
       return;
     }
     if (!this.voiceRecorder.active) {
-      this.post({ type: "voiceError" });
+      this.postVoice({ type: "voiceError" });
+      this.voiceOwner = undefined;
       return;
     }
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
     const key = this.resolveVoiceApiKey(cwd);
     if (!key) {
       this.voiceRecorder.cancel();
-      this.post({ type: "voiceError" });
+      this.postVoice({ type: "voiceError" });
+      this.voiceOwner = undefined;
       return;
     }
     let wavPath: string;
@@ -2495,10 +2963,11 @@ See design doc for the full state machine diagram.`;
     } catch (e) {
       this.output.appendLine(`[voice] stop failed: ${(e as Error).message}`);
       vscode.window.showErrorMessage(`Voice recording failed: ${(e as Error).message}`);
-      this.post({ type: "voiceError" });
+      this.postVoice({ type: "voiceError" });
+      this.voiceOwner = undefined;
       return;
     }
-    this.post({ type: "voiceState", status: "transcribing" });
+    this.postVoice({ type: "voiceState", status: "transcribing" });
     try {
       const raw = await transcribeAudio(wavPath, key, (m) => this.output.appendLine(m));
       // Strip a trailing "grok send" (configurable) so dictation can submit
@@ -2507,79 +2976,26 @@ See design doc for the full state machine diagram.`;
       const { text, send } = parseVoiceCommand(raw, sendPhrase);
       if (!text && !send) {
         vscode.window.showInformationMessage("Voice control: nothing was transcribed (silence?).");
-        this.post({ type: "voiceError" });
+        this.postVoice({ type: "voiceError" });
         return;
       }
-      this.post({ type: "voiceTranscript", text, send });
+      this.postVoice({ type: "voiceTranscript", text, send });
     } catch (e) {
       this.output.appendLine(`[voice] transcription failed: ${(e as Error).message}`);
       vscode.window.showErrorMessage((e as Error).message);
-      this.post({ type: "voiceError" });
+      this.postVoice({ type: "voiceError" });
     } finally {
       try { if (this.voiceTempPath) fs.unlinkSync(this.voiceTempPath); } catch { /* best effort */ }
       this.voiceTempPath = undefined;
+      this.voiceOwner = undefined;
     }
-  }
-
-  private async openDiffEditor(
-    filePath: string,
-    oldText: string,
-    newText: string,
-    requestId?: number | string,
-  ): Promise<void> {
-    const base = path.basename(filePath);
-    // Unique key per diff so sequential edits to the same file don't collide on
-    // the content map. The trailing real filename gives VS Code the language.
-    const key = String(this.diffSeq++);
-    const left = vscode.Uri.from({ scheme: GROK_DIFF_SCHEME, path: `/${key}/before/${base}` });
-    const right = vscode.Uri.from({ scheme: GROK_DIFF_SCHEME, path: `/${key}/after/${base}` });
-    this.diffProvider.set(left, oldText);
-    this.diffProvider.set(right, newText);
-    if (requestId !== undefined) {
-      // Auto-open is per pending permission; remember the URIs so the matching
-      // tab can be closed (and its content dropped) once the user decides (#21).
-      this.closeDiffForRequest(requestId); // drop a stale diff for the same request first
-      this.openDiffsByRequest.set(String(requestId), { left, right });
-    }
-    // preview:true reuses a single preview tab across grok's many small sequential
-    // edits; preserveFocus:true keeps focus on the chat so the permission card is
-    // immediately clickable.
-    await vscode.commands.executeCommand(
-      "vscode.diff",
-      left,
-      right,
-      `Grok proposed: ${base}`,
-      { preview: true, preserveFocus: true } as vscode.TextDocumentShowOptions,
-    );
-  }
-
-  /** Close the diff tab opened for a pending permission request and free its
-   *  virtual content (issue #21). No-op if the user already closed it. */
-  private closeDiffForRequest(requestId: number | string): void {
-    const k = String(requestId);
-    const uris = this.openDiffsByRequest.get(k);
-    if (!uris) return;
-    this.openDiffsByRequest.delete(k);
-    for (const group of vscode.window.tabGroups.all) {
-      for (const tab of group.tabs) {
-        const input = tab.input;
-        if (
-          input instanceof vscode.TabInputTextDiff &&
-          input.original.toString() === uris.left.toString() &&
-          input.modified.toString() === uris.right.toString()
-        ) {
-          void vscode.window.tabGroups.close(tab);
-        }
-      }
-    }
-    this.diffProvider.delete(uris.left, uris.right);
   }
 
   private async postExitPlanRequest(req: ExitPlanRequest, session: Session, gen: number): Promise<void> {
     const plan = req.plan || session.lastPlanText;
     let snapshot: { path: string; name: string } | undefined;
     try {
-      snapshot = await this.createPlanReviewSnapshot(plan);
+      snapshot = await this.createPlanReviewSnapshot(plan, session.activeSessionId ?? session.client?.sessionId);
     } catch (e) {
       this.output.appendLine(`[plan-review] ${(e as Error).message}`);
     }
@@ -2593,6 +3009,7 @@ See design doc for the full state machine diagram.`;
       req: { ...req, plan, planPath: snapshot?.path, planName: snapshot?.name },
     });
     this.setStatus(session, "needs-you");
+    this.notifyNeedsYou(session, "Grok's plan is ready for your review.");
   }
 
   private async withPlanReviewPaths<T extends { text: string }>(
@@ -2614,9 +3031,7 @@ See design doc for the full state machine diagram.`;
 
   private async createPlanReviewSnapshot(plan: string, sessionId?: string): Promise<{ path: string; name: string }> {
     const content = plan && plan.trim() ? plan : "(empty plan)\n";
-    const sessionPart = sanitizePlanReviewFilePart(
-      sessionId ?? this.focused.activeSessionId ?? this.focused.client?.sessionId ?? "session",
-    ).slice(0, 80);
+    const sessionPart = sanitizePlanReviewFilePart(sessionId ?? "session").slice(0, 80);
     const dir = vscode.Uri.joinPath(this.context.globalStorageUri, "plan-reviews", sessionPart);
     await vscode.workspace.fs.createDirectory(dir);
     const uri = await this.uniquePlanReviewUri(dir, `${planReviewFileBaseName(content)}.md`);
@@ -2639,7 +3054,7 @@ See design doc for the full state machine diagram.`;
     return vscode.Uri.joinPath(dir, `${stem}-${Date.now()}${ext}`);
   }
 
-  private addDroppedFile(absPath: string, shiftHeld: boolean): void {
+  private addDroppedFile(session: Session, absPath: string, shiftHeld: boolean): void {
     if (!fs.existsSync(absPath)) return;
     const uri = vscode.Uri.file(absPath);
     const relPath = vscode.workspace.asRelativePath(uri);
@@ -2655,21 +3070,20 @@ See design doc for the full state machine diagram.`;
       } catch {
         /* fall back to a no-selection chip */
       }
-      this.chips.push(
+      session.chips.push(
         totalLines != null
           ? makeExplicitChip(absPath, relPath, 1, totalLines)
           : makeExplicitChip(absPath, relPath),
       );
     } else {
-      this.chips.push(makeExplicitChip(absPath, relPath));
+      session.chips.push(makeExplicitChip(absPath, relPath));
     }
-    this.postChips();
+    this.postChips(session);
   }
 
-  private async handleSend(text: string, chips: FileChip[]): Promise<void> {
-    const client = await this.ensureClient();
+  private async handleSend(session: Session, text: string, chips: FileChip[]): Promise<void> {
+    const client = await this.ensureClient(session);
     if (!client) return;
-    const session = this.focused;
     const gen = session.gen;
 
     const finalPrompt = buildPrompt(text, chips, {
@@ -2677,13 +3091,15 @@ See design doc for the full state machine diagram.`;
       extName: (p) => path.extname(p),
     });
 
-    this.chips = [];
-    this.postChips();
+    session.chips = [];
+    this.postChips(session);
 
     const isFirstSend = !session.hasHistory;
     session.hasHistory = true;
     if (isFirstSend) {
       session.firstUserMessageForTitle = text;
+      // The tab retitles the moment the first prompt is sent, not at turn end.
+      this.updateTabTitle(session);
       // One `session_start` per session, on the first real user message — never
       // the primer (that takes a separate prompt path that doesn't set hasHistory).
       this.reportSessionStart(session);
@@ -2744,12 +3160,20 @@ See design doc for the full state machine diagram.`;
       [sid]: { ...(overrides[sid] ?? {}), customName: title },
     };
     void this.context.globalState.update(SESSION_META_KEY, next);
+    // The generated name changes displayName without touching summary.json's
+    // mtime — invalidate the cache entry and retitle the tab now.
+    this.sessionCache.delete(sid);
+    this.updateTabTitle(session);
+    this.broadcastSessionsList();
   }
 
-  private postInitialState(): void {
+  /** Per-panel config, posted on each `ready` (the rebuilt webview starts from
+   *  scratch). Strictly per-panel — no activation work, no spawning: panel
+   *  creation drives startSession; ready only configures and replays. */
+  private postPanelConfig(session: Session): void {
     const cfg = vscode.workspace.getConfiguration("grok");
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-    this.post({
+    this.postTo(session, {
       type: "initialState",
       effort: cfg.get("defaultEffort", ""),
       cwd,
@@ -2757,17 +3181,21 @@ See design doc for the full state machine diagram.`;
       extVersion: (this.context.extension.packageJSON as { version?: string })?.version ?? "",
       showThinking: cfg.get("showThinking", false),
     });
-    if (cfg.get<boolean>("includeActiveFileByDefault", true)) {
-      this.addActiveEditorChip();
-    }
-    this.postVoiceConfigured();
-    // Sweep stale empty primer sessions once the first session is live (so the
-    // newly-focused session is excluded from the sweep).
-    void this.startSession().then(() => this.sweepEmptyPrimerSessions());
+    this.postTo(session, this.voiceConfiguredMessage());
   }
 
-  private postChips(): void {
-    this.post({ type: "chips", chips: this.chips });
+  /** Rebuild a panel's view: clear + buffer replay, then the DERIVED per-session
+   *  transients last (mode, chips — not buffered, so stale flips never replay). */
+  private replayInto(session: Session): void {
+    this.router.replayInto(session, [
+      { type: "modeChanged", modeId: this.displayMode(session) },
+      { type: "chips", chips: session.chips },
+    ]);
+  }
+
+  /** Refresh `session`'s composer chips. Transient — replay re-derives them. */
+  private postChips(session: Session): void {
+    this.postTo(session, { type: "chips", chips: session.chips });
   }
 
   // grok's OUTPUT for a hidden turn (primer / summary injection) — dropped from
@@ -2788,72 +3216,87 @@ See design doc for the full state machine diagram.`;
     "messageChunk", "userMessageChunk", "thoughtChunk", "toolCall", "toolCallUpdate", "xaiNotification",
   ]);
 
-  private post(message: any): void {
-    if (this.focused.suppressContent && GrokSidebar.SUPPRESS_TYPES.has(message.type)) return;
-    if (this.focused.suppressPlanReject && GrokSidebar.PLAN_REJECT_SUPPRESS.has(message.type)) return;
-    this.view?.webview.postMessage(message);
-  }
-
   /**
-   * Session-scoped post. Records the message in that session's view buffer (so a
-   * focus switch can rebuild its chat losslessly — clearMessages + replay) and,
-   * when the session is the focused one, forwards it to the webview. Per-session
-   * suppress flags drop primer/summary content from BOTH the buffer and the live
-   * view (so they never reappear on replay). `clearMessages` resets the buffer —
-   * the replay path issues its own clear before replaying, and a (re)started
-   * session begins empty. Background sessions buffer silently; nothing reaches
-   * the webview until they're focused. (Pool-of-1 today: session is always the
-   * focused one, so this is behaviorally identical to `post`.)
+   * Session-scoped post — buffered chat content. Records the message in that
+   * session's view buffer (so a focus switch / panel reveal can rebuild its chat
+   * losslessly — clearMessages + replay) and, when the session is the visible
+   * one, forwards it to the webview. Per-session suppress flags drop
+   * primer/summary content from BOTH the buffer and the live view (so they never
+   * reappear on replay). `clearMessages` resets the buffer — the replay path
+   * issues its own clear before replaying, and a (re)started session begins
+   * empty. Background sessions buffer silently; nothing reaches a webview until
+   * they're shown. Anything a hidden session must not miss goes through here.
    */
   private emit(session: Session, message: any): void {
     if (session.suppressContent && GrokSidebar.SUPPRESS_TYPES.has(message.type)) return;
     if (session.suppressPlanReject && GrokSidebar.PLAN_REJECT_SUPPRESS.has(message.type)) return;
-    if (message.type === "clearMessages") session.buffer = [];
-    else session.buffer.push(message);
-    if (session === this.focused) this.view?.webview.postMessage(message);
+    this.router.emit(session, message);
+  }
+
+  /**
+   * Transient, one-session post — NOT buffered, so it is dropped (by design) when
+   * the session isn't the visible one. Only for (a) replies to a webview-initiated
+   * request (the panel is visible by construction: `sessions` reply,
+   * `grokUpdateStatus`, `initialState`) and (b) safe-to-drop ephemera whose
+   * current value is re-derived on each replay (`modeChanged`, `chips`, voice
+   * partial/state). Anything that must survive a hide goes through {@link emit}.
+   */
+  private postTo(session: Session, message: any): void {
+    this.router.postTo(session, message);
+  }
+
+  /**
+   * UI-wide post — global state every panel AND the launcher must reflect:
+   * CLI updating, auth/onboarding, user display prefs, session-list dots.
+   */
+  private broadcast(message: any): void {
+    this.router.broadcast(message);
+    if (this.view) void this.view.webview.postMessage(message);
   }
 
   // ---------- session pool ----------
 
   /**
-   * Make `session` the visible one and rebuild the chat from its buffer. The
-   * buffer holds every post that built that session's view (in order), so a
-   * clear + replay reconstructs it losslessly — including a turn still in flight
-   * (its still-wired handlers keep emitting straight to the webview once focused).
-   * Bypasses `emit` deliberately: we post the buffer's contents to the webview
-   * without re-running the suppress/clearMessages bookkeeping (that already ran
-   * when each message was first buffered).
+   * Keep a session's editor-tab title current. Precedence mirrors the launcher
+   * naming: `customName` override (covers the auto-generated first-prompt title
+   * AND any user rename) → the in-memory first user message → the cold-load
+   * displayName from disk → "Grokbit New". Formatting is the pure `tabTitleFor`.
    */
-  private focusSession(session: Session): void {
-    if (session === this.focused) return;
-    this.focused = session;
-    this.touch(session);
-    this.markRead(session); // opening it clears any unread (green/red) badge
-    const wv = this.view?.webview;
-    if (wv) {
-      wv.postMessage({ type: "clearMessages" });
-      for (const m of session.buffer) wv.postMessage(m);
-    }
-    this.postMode();
-    this.postSessionsList();
+  private updateTabTitle(session: Session): void {
+    if (!session.panel) return;
+    session.panel.title = tabTitleFor(this.bestNameFor(session));
   }
 
-  /**
-   * Leave the focused session running in the pool so it can be re-focused later
-   * — unless it's an untouched, idle session, which isn't worth a live process,
-   * so we tear it down. Called before switching focus to a new/other session.
-   */
-  private parkFocused(): void {
-    const cur = this.focused;
-    const busy = cur.status === "working" || cur.status === "needs-you";
-    if (cur.hasHistory || cur.afterTurn || busy) return; // real/active work — keep it parked & alive
-    // Empty (primer-only) session being left behind (New Session, or switching to
-    // another): tear down its process AND delete its on-disk dir so it doesn't pile
-    // up in history (#24). The next focused session becomes the single live "New
-    // session"; abandoning this one removes it entirely.
-    this.disposeSession(cur);
-    this.removeSessionFromDisk(cur.activeSessionId);
-    this.postSessionsList();
+  private bestNameFor(session: Session): string | undefined {
+    const id = session.activeSessionId;
+    if (id) {
+      const overrides = this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {});
+      const custom = overrides[id]?.customName?.trim();
+      if (custom) return custom;
+    }
+    if (session.firstUserMessageForTitle?.trim()) return session.firstUserMessageForTitle;
+    // Live but still empty (primer-only): the disk displayName is grok's
+    // primer-derived summary — treat it as unnamed instead, mirroring the
+    // launcher's "New session" override for live !hasHistory rows.
+    if (!session.hasHistory) return undefined;
+    return id ? this.displayNameForId(id) : undefined;
+  }
+
+  /** Display name for a session id from the read cache, else one disk read. */
+  private displayNameForId(id: string): string | undefined {
+    const cached = this.sessionCache.get(id)?.entry;
+    if (cached) return cached.displayName;
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    const overrides = this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {});
+    const entries = readSessionEntries({
+      fs: defaultFs,
+      grokHome: resolveGrokHome(process.env),
+      cwd,
+      ids: [id],
+      overrides,
+      log: (m) => this.output.appendLine(m),
+    });
+    return entries[0]?.displayName;
   }
 
   /** Delete a session's on-disk dir + drop its meta override and read-cache entry.
@@ -2891,7 +3334,7 @@ See design doc for the full state machine diagram.`;
     const overrides = this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     const liveIds = new Set<string>();
     for (const s of this.pool) if (s.activeSessionId) liveIds.add(s.activeSessionId);
-    if (this.focused.activeSessionId) liveIds.add(this.focused.activeSessionId);
+    for (const s of this.panels) if (s.activeSessionId) liveIds.add(s.activeSessionId);
 
     const sessDir = sessionsDirFor(grokHome, cwd);
     const index = indexSessions({ fs: defaultFs, grokHome, cwd, log });
@@ -2937,7 +3380,7 @@ See design doc for the full state machine diagram.`;
       }
       void this.context.globalState.update(SESSION_META_KEY, next);
       log(`[sessions] swept ${removed.length} empty primer session(s) from history`);
-      this.postSessionsList();
+      this.broadcastSessionsList();
     }
   }
 
@@ -2945,38 +3388,24 @@ See design doc for the full state machine diagram.`;
    *  generation so any in-flight handlers/awaits bound to the old client bail.
    *  Recomputes the dot after removal — a reaped session that's still unread stays
    *  green; an idle/read one goes gray. */
-  private disposeSession(session: Session): void {
+  /** Returns a promise that settles once the session's grok process has
+   *  actually exited (kill() only signals) — the close-recycle path waits on it
+   *  before deleting the session dir grok re-persists during shutdown. */
+  private disposeSession(session: Session): Promise<void> {
     const id = session.activeSessionId;
     session.gen++;
-    session.client?.dispose();
+    const exited = session.client?.dispose() ?? Promise.resolve();
     session.client = undefined;
     this.pool.delete(session);
-    if (id) this.post({ type: "sessionDot", id, dot: this.dotForId(id) });
+    if (id) this.broadcast({ type: "sessionDot", id, dot: this.dotForId(id) });
+    this.updateStatusBar(); // pool membership changed — recount "needs you"
+    return exited;
   }
 
-  /** Stamp a session's recency for LRU/TTL reaping (created / focused / made busy). */
+  /** Stamp a session's recency (created / activated / made busy) — drives the
+   *  re-home order when the active tab closes. */
   private touch(session: Session): void {
     session.lastActiveAt = Date.now();
-  }
-
-  /**
-   * Enforce the pool bounds (idle TTL + LRU cap). Silently tears down whatever the
-   * pure policy selects — never the focused session, never a working/needs-you one.
-   * Called eagerly after each new start (cap) and on the periodic timer (TTL).
-   */
-  private reapPool(): void {
-    const candidates = [...this.pool].map((session) => ({
-      session,
-      status: session.status,
-      lastActiveAt: session.lastActiveAt,
-      focused: session === this.focused,
-    }));
-    const doomed = selectReapable(candidates, {
-      maxLive: GrokSidebar.MAX_LIVE_SESSIONS,
-      idleTtlMs: GrokSidebar.IDLE_TTL_MS,
-      now: Date.now(),
-    });
-    for (const c of doomed) this.disposeSession(c.session);
   }
 
   /**
@@ -2989,15 +3418,16 @@ See design doc for the full state machine diagram.`;
   private setStatus(session: Session, status: SessionStatus): void {
     if (session.status === status) return;
     session.status = status;
-    // Activity refreshes the LRU/TTL clock so a busy session never ages out.
+    // Activity refreshes the recency clock (re-home ordering).
     if (status === "working" || status === "needs-you") this.touch(session);
-    // A turn that finishes while the user is looking at a *different* session
-    // becomes "unread" (green/red dot) until they open it. If it's the focused
-    // session, they watched it happen — no badge.
-    if ((status === "done" || status === "error") && session !== this.focused) {
+    // A turn that finishes while its tab isn't visible becomes "unread"
+    // (green/red dot) until the tab is opened/revealed. If the tab is visible
+    // — active or in a split — the user watched it happen; no badge.
+    if ((status === "done" || status === "error") && !session.panel?.visible) {
       this.setMetaUnread(session.activeSessionId, true, status === "error");
     }
     this.pushDot(session);
+    this.updateStatusBar();
   }
 
   /** Push just this session's recomputed dot to the webview (cheap — no disk read
@@ -3005,7 +3435,7 @@ See design doc for the full state machine diagram.`;
    *  and on reaping (where the session has left the pool but may stay green). */
   private pushDot(session: Session): void {
     const id = session.activeSessionId;
-    if (id) this.post({ type: "sessionDot", id, dot: this.dotForId(id) });
+    if (id) this.broadcast({ type: "sessionDot", id, dot: this.dotForId(id) });
   }
 
   /** The dashboard dot for a grok-session id, from live status (if it's a live pool
@@ -3059,35 +3489,6 @@ See design doc for the full state machine diagram.`;
     return Promise.all(closing).then(() => undefined);
   }
 
-  /** Start a brand-new session, keeping the current one alive in the background. */
-  private async newFocusedSession(): Promise<void> {
-    this.parkFocused();
-    this.focused = new Session();
-    await this.startSession();
-  }
-
-  /**
-   * Open the session with grok id `id`. If it's already live in the pool, re-focus
-   * it instantly (lossless buffer replay — no reload). Otherwise park the current
-   * session and load this one cold from grok's on-disk history into a fresh member.
-   */
-  private async openSession(id: string): Promise<void> {
-    for (const s of this.pool) {
-      if (s.activeSessionId === id && s.client) {
-        this.focusSession(s);
-        return;
-      }
-    }
-    this.parkFocused();
-    this.focused = new Session();
-    await this.startSession(id);
-    this.markRead(this.focused); // opening a cold session clears its unread badge
-  }
-
-  private reveal(): void {
-    this.view?.show?.(true);
-  }
-
   private watchActiveEditor(): void {
     this.editorWatcher?.dispose();
     this.editorWatcher = vscode.window.onDidChangeActiveTextEditor(() => {
@@ -3095,17 +3496,27 @@ See design doc for the full state machine diagram.`;
         .getConfiguration("grok")
         .get<boolean>("includeActiveFileByDefault", true);
       if (!includeActive) return;
-      this.chips = clearImplicitChips(this.chips);
-      this.addActiveEditorChip();
+      // The ambient "currently open in the editor" chip tracks the active editor
+      // for every open chat, not just the visible one — each composer keeps its
+      // own explicit attachments; only the implicit chip is refreshed.
+      for (const session of this.chipSessions()) {
+        session.chips = clearImplicitChips(session.chips);
+        this.addActiveEditorChip(session);
+      }
     });
   }
 
-  private addActiveEditorChip(): void {
+  /** Every session with a composer to show chips in: the open panels. */
+  private chipSessions(): Session[] {
+    return [...this.panels];
+  }
+
+  private addActiveEditorChip(session: Session): void {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.uri.scheme !== "file") return;
     const relPath = vscode.workspace.asRelativePath(editor.document.uri);
-    this.chips.push(makeImplicitChip(editor.document.uri.fsPath, relPath));
-    this.postChips();
+    session.chips.push(makeImplicitChip(editor.document.uri.fsPath, relPath));
+    this.postChips(session);
   }
 
   /** Parse the workspace `.env` into a plain map (no process.env merge). Used by
@@ -3168,9 +3579,8 @@ See design doc for the full state machine diagram.`;
 
   <main id="messages" class="messages">
     <div class="welcome" id="welcome">
-      <span class="welcome-mark" role="img" aria-label="Grok" style="--welcome-mark:url('${resourceUri("grok-icon.svg")}')"></span>
-      <h2>Grok Build (Community)</h2>
-      <p class="welcome-byline muted">by Paweł Huryn (<a href="https://www.productcompass.pm/" class="muted-link">The Product Compass</a>)</p>
+      <span class="welcome-mark" role="img" aria-label="Grok" style="--welcome-mark:url('${resourceUri("blackhole-icon.svg")}')"></span>
+      <h2>Grokbit</h2>
       <p id="welcome-version" class="muted loading-dots">Starting</p>
       <div id="welcome-onboarding"></div>
     </div>
@@ -3178,6 +3588,7 @@ See design doc for the full state machine diagram.`;
 
   <footer class="composer">
     <button id="scroll-bottom-btn" class="scroll-bottom-btn" type="button" title="Scroll to bottom"></button>
+    <div id="changed-files" class="changed-files" hidden></div>
     <div id="attachments" class="attachments"></div>
     <div class="composer-input-wrap">
       <div id="input-highlight" class="input-highlight" aria-hidden="true"></div>
@@ -3195,9 +3606,11 @@ See design doc for the full state machine diagram.`;
           </svg>
           <span id="donut-label" class="small muted">0%</span>
         </div>
+        <button id="model-label" class="toolbar-btn model-label-btn" title="Model & effort" hidden></button>
         <div id="chips"></div>
       </div>
       <div class="toolbar-right">
+        <button id="model-label" class="toolbar-btn model-label" title="Pick model"></button>
         <button id="mode-btn" class="toolbar-btn" title="Pick mode"></button>
         <button id="send-btn" class="send"></button>
       </div>
@@ -3230,6 +3643,39 @@ See design doc for the full state machine diagram.`;
   <script nonce="${nonce}" src="${mediaUri("mermaid/mermaid.min.js")}"></script>
   <script nonce="${nonce}" src="${mediaUri("webview-helpers.js")}"></script>
   <script nonce="${nonce}" src="${mediaUri("chat.js")}"></script>
+</body>
+</html>`;
+  }
+
+  /** The activity-bar launcher: session list + New — no composer, no chat, no
+   *  MathJax/Mermaid. Reuses chat.css for the history-row markup + dots. */
+  private getLauncherHtml(webview: vscode.Webview): string {
+    const nonce = getNonce();
+    const mediaUri = (file: string) =>
+      webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", file));
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';" />
+<link rel="stylesheet" href="${mediaUri("chat.css")}" />
+</head>
+<body class="launcher-body">
+  <div class="launcher">
+    <div class="launcher-head">
+      <button id="launcher-new" class="onb-action" type="button">New session</button>
+    </div>
+    <div id="launcher-onboarding" class="launcher-onboarding" hidden></div>
+    <div class="history-search-wrap"><input id="launcher-search" class="history-search" type="text" placeholder="Search sessions…" /></div>
+    <div id="launcher-list" class="history-list launcher-list"></div>
+    <div id="launcher-footer" class="history-footer" hidden>
+      <button id="launcher-clear-all" class="history-clear-all" type="button"></button>
+    </div>
+  </div>
+  <script nonce="${nonce}" src="${mediaUri("webview-helpers.js")}"></script>
+  <script nonce="${nonce}" src="${mediaUri("launcher.js")}"></script>
 </body>
 </html>`;
   }
