@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.2 — 2026-07-08
+
+### Changed
+
+- **README screenshots refreshed.** Replaced the outdated shots with new ones for the hero (a prompt + rendered response), Plan mode, the multi-session launcher, session history, and the model/effort popover. Broken links to removed screenshots (permission diff, secondary-side-bar tip, tool calls, LaTeX) were dropped. ([README.md](README.md), [docs/screenshots/](docs/screenshots/))
+
 ## 2.0.1 — 2026-07-08
 
 ### Fixed

@@ -12,7 +12,7 @@ You install the `grok` CLI once and sign in — with a **SuperGrok or X Premium+
 
 **Install free from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=grokbit.grokbit) or [Open VSX Registry](https://open-vsx.org/extension/grokbit/grokbit)**
 
-![Grokbit in VS Code — reviewing a proposed edit's inline diff before approving](docs/screenshots/permission_diff.png)
+![Grokbit in VS Code — a prompt and Grok's rendered response, each session in its own editor tab](docs/screenshots/PromptExample.png)
 
 ---
 
@@ -73,8 +73,6 @@ npm install
 Reload VS Code (**Ctrl+Shift+P → Developer: Reload Window**) and click the Grok icon in the activity bar.
 
 > **Tip:** Right-click the Grok icon → **Move To → Secondary Side Bar** to park Grok on the right, next to other AI tools.
->
-> ![Right-click the Grok icon → Move To → Secondary Side Bar](docs/screenshots/side.png)
 
 **Uninstall:** `./scripts/uninstall.sh` (Windows: `pwsh scripts\uninstall.ps1`) or `code --uninstall-extension grokbit.grokbit`.
 
@@ -109,6 +107,8 @@ When Grok proposes an edit, the diff renders **inside the permission card** — 
 | **Agent** (default) | Grok acts directly and **may** ask permission for a write or shell action it judges sensitive — a card appears in chat. |
 | **Plan** | Grok drafts a plan first and **cannot** write to the workspace or run anything outside a read-only allowlist until you approve. Approve / Reject / Cancel from the card, each with an optional comment. Plan Mode is enforced by the extension — see [How it works](#how-it-works). |
 | **Auto accept** (YOLO) | The extension auto-approves every permission request. The CLI session is untouched — no restart, just a flag flip. |
+
+![Plan mode — Grok drafts a plan and blocks workspace writes until you approve](docs/screenshots/PlanningMode.png)
 
 </details>
 
@@ -156,7 +156,7 @@ The green/red dot is an **unread** badge: it appears when a session finishes whi
 
 To keep a pile of background sessions from each pinning a live process, a session left untouched for an hour (or beyond ~8 live) is quietly shut down — never one that's working or waiting on you — and reloads from history on click, losing nothing.
 
-![Session status dots in the history dropdown](docs/screenshots/v1.4.7_visual_status.jpg)
+![Multiple sessions in the launcher with status dots, each session its own editor tab](docs/screenshots/NewSession.png)
 
 </details>
 
@@ -165,7 +165,7 @@ To keep a pile of background sessions from each pinning a live process, a sessio
 
 The clock icon lists this project's sessions, newest first. Click a row to resume — Grok replays the conversation, with inline images, plans, and reasoning intact — or hover to rename or delete it. The list loads the **most recent 100** and pulls in older ones as you **scroll**; the **search box** filters by name across your whole history, so it stays fast even with thousands of sessions. **Clear all history** (bottom of the dropdown) removes every session for this project except the current one, after a confirm. Renames are stored by the extension and never touch Grok's own files.
 
-![Session history dropdown — resume, rename, delete, search, or clear past sessions](docs/screenshots/session_history.png)
+![Session history — resume, rename, delete, search, or clear past sessions](docs/screenshots/SessionHistory.png)
 
 </details>
 
@@ -174,16 +174,12 @@ The clock icon lists this project's sessions, newest first. Click a row to resum
 
 Every action Grok takes appears in chat as a **category-iconed** row — a single line, or a batch summarized by what it did ("Explored 5 items", "Edited 2 files") that expands to the full list on click. A tool that **fails** turns red with the reason inline.
 
-![Tool calls grouped and summarized by category, with icons](docs/screenshots/tool_calls.png)
-
 </details>
 
 <details>
 <summary><strong>Math &amp; LaTeX rendering</strong> — equations render as math, not raw TeX</summary>
 
 When Grok answers with LaTeX — inline `\(…\)`, display `\[…\]`, and environments like matrices, `cases`, integrals, sums, and Greek — the chat renders it as real typeset math via [MathJax](https://www.mathjax.org), bundled so it works **offline**. **Hover a display equation** to copy its LaTeX source or export it as a PNG or transparent SVG. Bare `$…$` is intentionally **not** a delimiter — it would mangle prose like "it costs $5 and then $10".
-
-![LaTeX expressions rendered as typeset math](docs/screenshots/v1.4.5%20LaTeX%20expressions.png)
 
 </details>
 
@@ -200,6 +196,8 @@ When Grok answers with a ` ```mermaid ` block — flowcharts, sequence and state
 <summary><strong>Model picker</strong> — switch models live, no restart</summary>
 
 Click the model name in the gear popover. The model list comes from your CLI; switching is live with no restart in most cases. (A few models belong to a different agent and need a quick session restart — the extension detects that and handles it for you, carrying your context forward.)
+
+![Model and reasoning-effort controls in the gear popover](docs/screenshots/ModelSelection.png)
 
 </details>
 
