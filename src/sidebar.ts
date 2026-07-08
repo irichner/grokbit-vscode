@@ -1836,11 +1836,15 @@ See design doc for the full state machine diagram.`;
     });
     client.on("promptComplete", (meta) => {
       if (gen !== session.gen) return;
-      this.emit(session, { type: "promptComplete", meta });
+      // No meta payload — tokenUsage below is the sole donut channel, and
+      // chat.js reads nothing else off promptComplete.
+      this.emit(session, { type: "promptComplete" });
       // Token usage travels separately from the (suppressible) promptComplete:
       // the hidden primer/summary turns are real context usage the donut should
-      // show, but their promptComplete is dropped by SUPPRESS_TYPES.
-      if (meta?.totalTokens) {
+      // show, but their promptComplete is dropped by SUPPRESS_TYPES. A genuine
+      // zero passes through (the donut must be able to fall back to 0) — only
+      // an absent count is dropped.
+      if (typeof meta?.totalTokens === "number") {
         this.emit(session, { type: "tokenUsage", totalTokens: meta.totalTokens });
       }
       if (session === this.active) this.updateStatusBar(); // refresh context %
@@ -1982,6 +1986,14 @@ See design doc for the full state machine diagram.`;
           session.replaying = false;
           this.emit(session, { type: "historyReplay", active: false });
         }
+        // gen re-check: loadSession awaited above, so a model/effort restart may
+        // have superseded this generation — bail before mutating shared session
+        // state (history flags, plan gate) or seeding a stale client/buffer.
+        if (gen !== session.gen) {
+          client.dispose();
+          if (session.client === client) session.client = undefined;
+          return undefined;
+        }
         session.activeSessionId = resumeId;
         // A resumed session normally has a real conversation — but a lingering
         // primer-only one (opened, primed, never messaged) replays nothing
@@ -2003,9 +2015,7 @@ See design doc for the full state machine diagram.`;
         const usedTokens = readSessionTokenUsage({
           fs: defaultFs, grokHome: resolveGrokHome(process.env), cwd, id: resumeId,
         });
-        // gen re-check: loadSession awaited above, so a model/effort restart may
-        // have superseded this generation — don't seed a stale client/buffer.
-        if (usedTokens && gen === session.gen) {
+        if (usedTokens) {
           client.lastMeta = { totalTokens: usedTokens };
           this.emit(session, { type: "tokenUsage", totalTokens: usedTokens });
           if (session === this.active) this.updateStatusBar();
@@ -2024,7 +2034,13 @@ See design doc for the full state machine diagram.`;
         await client.newSession(defaultModel || undefined);
         session.activeSessionId = client.sessionId;
       }
-      if (gen !== session.gen) { client.dispose(); session.client = undefined; return undefined; }
+      if (gen !== session.gen) {
+        client.dispose();
+        // Only clear our own reference — a superseding startSession may already
+        // have installed the new generation's client on the shared session.
+        if (session.client === client) session.client = undefined;
+        return undefined;
+      }
 
       // Session is live — unlock the composer now. The "system prompt" (primer)
       // that teaches grok the plan-verdict protocol fires here EAGERLY and in the

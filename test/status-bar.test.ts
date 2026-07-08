@@ -74,6 +74,13 @@ describe("computeStatusBar — the native status-bar HUD", () => {
     expect(neg.warning).toBe(false);
   });
 
+  it("shows 0% for a known zero count but hides the % when the count is unknown", () => {
+    const zero = computeStatusBar({ hasActive: true, modelName: "G", usedTokens: 0, contextWindow: 512_000 });
+    expect(zero.text).toContain("0%");
+    const unknown = computeStatusBar({ hasActive: true, modelName: "G", contextWindow: 512_000 });
+    expect(unknown.text).not.toContain("%");
+  });
+
   it("falls back to a neutral model label when the name is blank", () => {
     const v = computeStatusBar({ hasActive: true, modelName: "", mode: "agent" });
     expect(v.text).toContain("Grok");

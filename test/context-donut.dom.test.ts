@@ -9,6 +9,7 @@ import { bootWebview, dispatch } from "./webview-harness";
 
 const MODELS = [
   { modelId: "grok-build", name: "Grok Build", totalContextTokens: 512_000 },
+  { modelId: "composer-1", name: "Composer", totalContextTokens: 200_000 },
 ];
 
 function boot() {
@@ -29,7 +30,7 @@ describe("context donut", () => {
     dispatch(window, { type: "userMessage", text: "hi", chips: [] });
     dispatch(window, { type: "agentStart" });
     dispatch(window, { type: "messageChunk", text: "hello" });
-    dispatch(window, { type: "promptComplete", meta: { totalTokens: 11_536 } });
+    dispatch(window, { type: "promptComplete" });
     dispatch(window, { type: "tokenUsage", totalTokens: 11_536 });
     expect(label.textContent).toBe("12K/512K");
   });
@@ -38,14 +39,29 @@ describe("context donut", () => {
     const { window, label } = boot();
     dispatch(window, { type: "tokenUsage", totalTokens: 11_947 });
     expect(label.textContent).toBe("12K/512K");
-    expect(label.title).toContain("11,947");
+    // The title is built with toLocaleString(), so compute the expected string
+    // the same way — the group separator is machine-locale-dependent.
+    expect(label.title).toContain((11_947).toLocaleString());
+  });
+
+  it("ignores promptComplete meta — tokenUsage is the sole donut channel", () => {
+    const { window, label } = boot();
+    dispatch(window, { type: "promptComplete", meta: { totalTokens: 99_000 } });
+    expect(label.textContent).toBe("0K/512K");
   });
 
   it("keeps the recovered usage when a model change rescales the window", () => {
     const { window, label } = boot();
     dispatch(window, { type: "tokenUsage", totalTokens: 11_947 });
-    dispatch(window, { type: "modelChanged", modelId: "grok-build" });
-    expect(label.textContent).toBe("12K/512K");
+    dispatch(window, { type: "modelChanged", modelId: "composer-1" });
+    expect(label.textContent).toBe("12K/200K");
+  });
+
+  it("returns to zero when a turn reports zero usage", () => {
+    const { window, label } = boot();
+    dispatch(window, { type: "tokenUsage", totalTokens: 11_947 });
+    dispatch(window, { type: "tokenUsage", totalTokens: 0 });
+    expect(label.textContent).toBe("0K/512K");
   });
 
   it("ignores a tokenUsage with no count", () => {

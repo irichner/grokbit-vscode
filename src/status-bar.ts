@@ -66,7 +66,8 @@ function toK(n: number): string {
 }
 
 function contextPct(used?: number, max?: number): number | null {
-  if (!used || !max || max <= 0) return null;
+  // A known zero renders as 0% (matches the donut); only an unknown count hides.
+  if (used == null || !max || max <= 0) return null;
   return Math.min(100, Math.round((used / max) * 100));
 }
 

@@ -4000,8 +4000,9 @@
         // The sole donut channel. The host pairs it with every promptComplete
         // that carries tokens, and it alone survives suppressed turns (the
         // hidden primer) and session resume (recovered from grok's on-disk
-        // signals.json — session/load itself carries no token meta).
-        if (msg.totalTokens) updateDonut(msg.totalTokens);
+        // signals.json — session/load itself carries no token meta). A genuine
+        // zero must pass (the donut can fall back to 0); only absent is dropped.
+        if (typeof msg.totalTokens === "number") updateDonut(msg.totalTokens);
         break;
       case "agentReset": {
         hidePlanProcessing(); // turn is being reset, indicator no longer applies

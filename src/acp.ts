@@ -309,7 +309,12 @@ export class AcpClient extends EventEmitter {
       prompt: [{ type: "text", text }],
     });
     const meta = extractPromptMeta(result);
-    this.lastMeta = meta;
+    // A result without _meta.totalTokens (a metaless primer ack, a cancelled
+    // turn) must not wipe a known count: the webview donut keeps its last
+    // value, so the status bar — which reads lastMeta — would desync from it.
+    this.lastMeta = typeof meta.totalTokens === "number"
+      ? meta
+      : { ...meta, totalTokens: this.lastMeta?.totalTokens };
     this.emit("promptComplete", meta);
     return meta;
   }
