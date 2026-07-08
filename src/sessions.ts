@@ -82,7 +82,8 @@ export interface ListDeps {
   log?: (msg: string) => void;
 }
 
-export interface DeleteDeps {
+/** Locator for one session's on-disk directory — shared by per-session reads and deletes. */
+export interface SessionDirDeps {
   fs: FsLike;
   grokHome: string;
   cwd: string;
@@ -346,8 +347,27 @@ export function isEmptyPrimerSession(
   return isPrimerSummary(`${inp.summary ?? ""} ${inp.generatedTitle ?? ""}`);
 }
 
+/**
+ * Recover a resumed session's context-token usage from grok's on-disk
+ * `signals.json` (`contextTokensUsed`). `session/load` carries no token meta,
+ * so without this every reopened tab (history rows, serializer-restored tabs
+ * after a window reload) shows 0 in the context donut / status bar until the
+ * next turn completes. Returns undefined when the file is missing (older grok
+ * builds), unreadable, or carries no positive count. Pure.
+ */
+export function readSessionTokenUsage(deps: SessionDirDeps): number | undefined {
+  const { fs, grokHome, cwd, id } = deps;
+  const file = path.join(sessionsDirFor(grokHome, cwd), id, "signals.json");
+  try {
+    const used = JSON.parse(fs.readFileSync(file, "utf8"))?.contextTokensUsed;
+    return typeof used === "number" && isFinite(used) && used > 0 ? used : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Remove the on-disk session directory. No-op if missing. */
-export function deleteSessionDir(deps: DeleteDeps): void {
+export function deleteSessionDir(deps: SessionDirDeps): void {
   const { fs, grokHome, cwd, id } = deps;
   const dir = path.join(sessionsDirFor(grokHome, cwd), id);
   if (!fs.existsSync(dir)) return;

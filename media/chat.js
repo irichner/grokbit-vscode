@@ -3988,14 +3988,20 @@
         );
         break;
       case "promptComplete":
-        // Finalize the Thinking block and update the token donut — but DO NOT
-        // clear busy here. agentEnd is now the single authoritative "user can
-        // send again" signal, so that the verdict → afterTurn flow can keep
-        // busy=true across two consecutive client.prompt() calls (the original
-        // turn ends emitting promptComplete; afterTurn's follow-up turn then
-        // runs and emits its own agentEnd at the end, which clears busy).
+        // Finalize the Thinking block — but DO NOT clear busy here. agentEnd
+        // is now the single authoritative "user can send again" signal, so
+        // that the verdict → afterTurn flow can keep busy=true across two
+        // consecutive client.prompt() calls (the original turn ends emitting
+        // promptComplete; afterTurn's follow-up turn then runs and emits its
+        // own agentEnd at the end, which clears busy).
         commitAgentTurn();
-        if (msg.meta?.totalTokens) updateDonut(msg.meta.totalTokens);
+        break;
+      case "tokenUsage":
+        // The sole donut channel. The host pairs it with every promptComplete
+        // that carries tokens, and it alone survives suppressed turns (the
+        // hidden primer) and session resume (recovered from grok's on-disk
+        // signals.json — session/load itself carries no token meta).
+        if (msg.totalTokens) updateDonut(msg.totalTokens);
         break;
       case "agentReset": {
         hidePlanProcessing(); // turn is being reset, indicator no longer applies

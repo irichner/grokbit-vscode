@@ -13,6 +13,7 @@ import {
   isEmptyPrimerSession,
   listSessions,
   readSessionEntries,
+  readSessionTokenUsage,
   sessionsDirFor,
   tabTitleFor,
   NEW_TAB_TITLE,
@@ -449,6 +450,39 @@ describe("deleteSessionDir", () => {
   it("is a no-op when the directory is missing", () => {
     const fs = buildFs({});
     expect(() => deleteSessionDir({ fs, grokHome, cwd, id: "missing" })).not.toThrow();
+  });
+});
+
+describe("readSessionTokenUsage", () => {
+  const signalsPath = (id: string) => path.join(dirFor(id), "signals.json");
+  // Trimmed real shape from grok 0.2.91 — the field the donut needs plus neighbors.
+  const SIGNALS = JSON.stringify({
+    turnCount: 2,
+    contextWindowUsage: 2,
+    contextTokensUsed: 11947,
+    contextWindowTokens: 512000,
+  });
+
+  it("returns contextTokensUsed from signals.json", () => {
+    const fs = buildFs({ [signalsPath("a")]: { isDir: false, content: SIGNALS } });
+    expect(readSessionTokenUsage({ fs, grokHome, cwd, id: "a" })).toBe(11947);
+  });
+
+  it("returns undefined when signals.json is missing (older grok builds)", () => {
+    const fs = buildFs({});
+    expect(readSessionTokenUsage({ fs, grokHome, cwd, id: "a" })).toBeUndefined();
+  });
+
+  it("returns undefined on malformed JSON", () => {
+    const fs = buildFs({ [signalsPath("a")]: { isDir: false, content: "{ not json" } });
+    expect(readSessionTokenUsage({ fs, grokHome, cwd, id: "a" })).toBeUndefined();
+  });
+
+  it("returns undefined when the count is absent, zero, or not a number", () => {
+    for (const body of ["{}", '{"contextTokensUsed":0}', '{"contextTokensUsed":"12"}']) {
+      const fs = buildFs({ [signalsPath("a")]: { isDir: false, content: body } });
+      expect(readSessionTokenUsage({ fs, grokHome, cwd, id: "a" })).toBeUndefined();
+    }
   });
 });
 

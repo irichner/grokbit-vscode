@@ -58,6 +58,7 @@ import {
   indexSessions,
   isEmptyPrimerSession,
   readSessionEntries,
+  readSessionTokenUsage,
   resolveGrokHome,
   sessionsDirFor,
   tabTitleFor,
@@ -1836,6 +1837,12 @@ See design doc for the full state machine diagram.`;
     client.on("promptComplete", (meta) => {
       if (gen !== session.gen) return;
       this.emit(session, { type: "promptComplete", meta });
+      // Token usage travels separately from the (suppressible) promptComplete:
+      // the hidden primer/summary turns are real context usage the donut should
+      // show, but their promptComplete is dropped by SUPPRESS_TYPES.
+      if (meta?.totalTokens) {
+        this.emit(session, { type: "tokenUsage", totalTokens: meta.totalTokens });
+      }
       if (session === this.active) this.updateStatusBar(); // refresh context %
     });
     client.on("xaiNotification", (u) => {
@@ -1988,6 +1995,21 @@ See design doc for the full state machine diagram.`;
         const resumedRealHistory = session.userMessageCount > 0;
         session.hasHistory = resumedRealHistory;
         if (!resumedRealHistory) this.updateTabTitle(session); // not the primer-derived disk name
+
+        // session/load carries no token meta, so a resumed tab's context donut /
+        // status bar would read 0 until the next turn completes. grok persists
+        // the real usage in the session dir's signals.json — seed lastMeta and
+        // the (buffered, replay-safe) webview counter from it.
+        const usedTokens = readSessionTokenUsage({
+          fs: defaultFs, grokHome: resolveGrokHome(process.env), cwd, id: resumeId,
+        });
+        // gen re-check: loadSession awaited above, so a model/effort restart may
+        // have superseded this generation — don't seed a stale client/buffer.
+        if (usedTokens && gen === session.gen) {
+          client.lastMeta = { totalTokens: usedTokens };
+          this.emit(session, { type: "tokenUsage", totalTokens: usedTokens });
+          if (session === this.active) this.updateStatusBar();
+        }
 
         // Plan-gate restoration: the CLI replays its own current_mode_update
         // events during loadSession, which our modeChanged handler honors by
