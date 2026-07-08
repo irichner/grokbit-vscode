@@ -404,7 +404,10 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
     session.panel = panel;
     this.panels.add(session);
     this.router.bind(session, { postMessage: (m) => void panel.webview.postMessage(m) });
-    panel.iconPath = vscode.Uri.joinPath(this.context.extensionUri, "resources", "blackhole-icon.svg");
+    panel.iconPath = {
+      light: vscode.Uri.joinPath(this.context.extensionUri, "resources", "blackhole-icon-black.svg"),
+      dark: vscode.Uri.joinPath(this.context.extensionUri, "resources", "blackhole-icon-white.svg"),
+    };
     panel.webview.html = this.getHtml(panel.webview);
     panel.webview.onDidReceiveMessage((m: WebviewMsg) => void this.onMessage(m, session));
     panel.onDidChangeViewState((e) => {
@@ -3576,6 +3579,11 @@ See design doc for the full state machine diagram.`;
     <button id="new-btn" class="toolbar-btn" title="New session"></button>
     <div id="history-popover" class="toolbar-popover history-popover" hidden></div>
   </header>
+
+  <div id="plan-banner" class="plan-banner" hidden>
+    <span class="plan-banner-dot"></span>
+    <span>Plan mode — Grok proposes a plan; file writes and commands are blocked until you approve it.</span>
+  </div>
 
   <main id="messages" class="messages">
     <div class="welcome" id="welcome">

@@ -365,7 +365,7 @@ code {
   user-select: none;
 }
 .thinking-header:hover { color: var(--vscode-foreground); }
-/* Leading brain icon — mirrors the tool rows' .tool-icon so a thinking row reads
+/* Leading Grok icon (black hole) — mirrors the tool rows' .tool-icon so a thinking row reads
    as a sibling of the tool rows (and matches the "Thinking…" stand-in). */
 .thinking-icon { width: 15px; height: 15px; flex: 0 0 auto; opacity: 0.85; }
 .thinking-icon svg { display: block; width: 100%; height: 100%; }
@@ -1467,6 +1467,30 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   gap: 8px;
 }
 .card.plan { border-left-color: var(--vscode-charts-blue, #569cd6); }
+
+/* Full-width plan-mode banner — pinned above the scrolling chat while plan mode
+   is active. The tinted mode button is easy to miss; this makes the write/command
+   gate unmissable. Sits between the top bar and the messages scroll area, so it
+   stays fixed at the top without any sticky positioning. */
+.plan-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border-bottom: 2px solid var(--vscode-charts-blue, #569cd6);
+}
+.plan-banner[hidden] { display: none; }
+.plan-banner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--vscode-charts-blue, #569cd6);
+}
+
 .card .card-title {
   font-weight: 600;
   font-size: 12px;

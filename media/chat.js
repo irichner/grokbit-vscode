@@ -24,6 +24,7 @@
   const historyPopover = $("history-popover");
   const scrollBottomBtn = $("scroll-bottom-btn");
   const changedFilesEl = $("changed-files");
+  const planBanner = $("plan-banner");
 
   // grok's accepted reasoning-effort values, lowest → highest (matches the CLI;
   // `max` is not a real grok level and is intentionally excluded — see #3/#4).
@@ -218,7 +219,7 @@
     squarePen: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/></svg>`,
     arrowUp: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>`,
     arrowDown: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>`,
-    brain: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4"/><path d="M9 13a4.5 4.5 0 0 0 3-4"/></svg>`,
+    grok: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M 15.04 5.47 A 7.2 7.2 0 0 0 5.47 15.04"/><path d="M 8.96 18.53 A 7.2 7.2 0 0 0 18.53 8.96"/><path d="M 4.6 19.4 L 19.4 4.6"/></svg>`,
     orbit: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.341 6.484A10 10 0 0 1 10.266 21.85"/><path d="M3.659 17.516A10 10 0 0 1 13.74 2.152"/><circle cx="12" cy="12" r="3"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/></svg>`,
     square: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>`,
     spinner: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`,
@@ -300,6 +301,9 @@
     modeBtn.innerHTML = `${meta.icon}<span class="btn-label">${escapeHtml(meta.label)}</span>`;
     modeBtn.classList.toggle("plan-active", modeId === "plan");
     modeBtn.classList.toggle("yolo-active", modeId === "yolo");
+    // Full-width plan-mode banner — the tinted mode button is easy to miss; this
+    // makes the write/command gate unmissable while planning.
+    if (planBanner) planBanner.hidden = modeId !== "plan";
   }
 
   // Compact model + effort chip in the composer toolbar. Both settings live two
@@ -324,6 +328,19 @@
     if (e === "medium") return "med";
     if (e === "xhigh") return "xhi";
     return e.slice(0, 3);
+  }
+
+  // Platform-aware modifier label, for the shortcuts panel + composer placeholder.
+  const IS_MAC = /Mac|iPhone|iPad/.test((typeof navigator !== "undefined" && navigator.platform) || "");
+  const MOD = IS_MAC ? "Cmd" : "Ctrl";
+
+  // Teach the send key in the composer placeholder — it only shows while the input
+  // is empty, so the hint costs no persistent clutter. Tracks the useCtrlEnter setting.
+  function updateComposerPlaceholder() {
+    if (!input) return;
+    input.placeholder = state.useCtrlEnter
+      ? `Ask Grok…   ${MOD}+Enter to send`
+      : "Ask Grok…   Enter to send · Shift+Enter for newline";
   }
 
   newBtn.innerHTML = ICON.squarePen;
@@ -1068,6 +1085,7 @@
     // Collapses the former Config / Account / Debug sections into sub-views
     // (mirrors the Model picker), keeping the main menu short.
     addSection("Other");
+    addGearItem('<span>Keyboard shortcuts</span><span class="popover-chevron">›</span>', () => renderShortcutsPanel());
     addGearItem('<span>Version &amp; about</span><span class="popover-chevron">›</span>', () => renderAboutPanel(true));
     addGearItem('<span>Config &amp; debug</span><span class="popover-chevron">›</span>', () => renderConfigDebugPanel());
     addGearItem("<span>Log out</span>", () => {
@@ -2435,7 +2453,7 @@
       hdr.className = "thinking-header";
       // Chevron on the RIGHT (after the label), same glyph as tool groups; expand
       // state is driven by the `.expanded` class (CSS rotates it), like tools.
-      hdr.innerHTML = `<span class="thinking-icon">${ICON.brain}</span><span class="thinking-label">Thinking</span>${BLINK_DOTS}<span class="thinking-chevron" aria-hidden="true">›</span>`;
+      hdr.innerHTML = `<span class="thinking-icon">${ICON.grok}</span><span class="thinking-label">Thinking</span>${BLINK_DOTS}<span class="thinking-chevron" aria-hidden="true">›</span>`;
       const body = document.createElement("div");
       body.className = "thinking-body";
       body.hidden = true;
@@ -2717,7 +2735,7 @@
   // "Thinking…" — the stand-in shown while thinking traces are hidden (#26, the
   // default). grok's thought stream is suppressed from view, so this lightweight
   // row signals it's reasoning — but only when nothing else already conveys work
-  // (no running tool group, no Grokking). Styled like a tool row: brain icon +
+  // (no running tool group, no Grokking). Styled like a tool row: Grok icon +
   // muted label + animated loading-dots. Stable while thoughts stream; removed
   // the moment a tool, agent message, or turn-end takes over.
   function showThinkingIndicator() {
@@ -2728,7 +2746,7 @@
     clearWelcome();
     const el = document.createElement("div");
     el.className = "thinking-indicator";
-    el.innerHTML = `<span class="thinking-indicator-icon">${ICON.brain}</span><span class="thinking-indicator-label">Thinking</span>${BLINK_DOTS}`;
+    el.innerHTML = `<span class="thinking-indicator-icon">${ICON.grok}</span><span class="thinking-indicator-label">Thinking</span>${BLINK_DOTS}`;
     el.setAttribute("aria-label", "Grok is thinking");
     messagesEl.appendChild(el);
     state.thinkingIndicatorEl = el;

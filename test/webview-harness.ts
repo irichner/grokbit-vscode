@@ -24,6 +24,7 @@ export const BODY = `
     <button id="new-btn"></button>
     <div id="history-popover" hidden></div>
   </header>
+  <div id="plan-banner" class="plan-banner" hidden><span class="plan-banner-dot"></span><span></span></div>
   <main id="messages" class="messages">
     <div class="welcome" id="welcome">
       <p id="welcome-version" class="loading-dots">Starting</p>
