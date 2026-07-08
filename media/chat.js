@@ -1539,6 +1539,7 @@
     state.pendingDiffByToolCallId.clear();
     state.toolItemsByToolCallId.clear();
     state.toolFailuresById.clear();
+    clearChangedFiles(); // switching sessions — the strip belongs to the old view
     state.activeAgentEl = null;
     state.activeAgentRaw = "";
     state.activeUserEl = null;
@@ -2114,8 +2115,83 @@
         const diff = { path: item.path, oldText: item.oldText ?? "", newText: item.newText ?? "" };
         state.pendingDiffByToolCallId.set(call.toolCallId, diff);
         attachDiffPreviewToToolItem(call.toolCallId, diff);
+        recordChangedFile(call.toolCallId, diff);
       }
     }
+  }
+
+  // ---------- changed-files strip (this turn's applied edits, above the composer) ----------
+  // A scannable "N files changed" chip row so you can see a turn's impact without
+  // scrolling the chat. It reflects APPLIED edits only: grok emits the diff when it
+  // performs the write, so a file lands here from applyToolDiffs; a plan-gate-blocked
+  // write later fails (markToolFailed → forgetChangedFile), so it never sticks.
+  // Skipped during replay (restored history isn't "this turn"); cleared on the next
+  // user message. The inline per-file diffs stay the source of truth — this is a
+  // summary, so the chip just opens the file.
+  function baseNameOf(p) {
+    return String(p || "").split(/[\\/]/).filter(Boolean).pop() || String(p || "");
+  }
+
+  function countDiffLines(diff) {
+    let adds = 0, dels = 0;
+    for (const row of computeLineDiff(diff.oldText || "", diff.newText || "")) {
+      if (row.type === "add") adds++;
+      else if (row.type === "del") dels++;
+    }
+    return { adds, dels };
+  }
+
+  function recordChangedFile(toolCallId, diff) {
+    if (!toolCallId || state.replaying || !diff || !diff.path) return;
+    const { adds, dels } = countDiffLines(diff);
+    state.changedFiles.set(toolCallId, { path: diff.path, adds, dels });
+    renderChangedFilesStrip();
+  }
+
+  function forgetChangedFile(toolCallId) {
+    if (toolCallId && state.changedFiles.delete(toolCallId)) renderChangedFilesStrip();
+  }
+
+  function clearChangedFiles() {
+    if (!state.changedFiles.size) return;
+    state.changedFiles.clear();
+    renderChangedFilesStrip();
+  }
+
+  function renderChangedFilesStrip() {
+    if (!changedFilesEl) return;
+    const files = [...state.changedFiles.values()];
+    if (!files.length) { changedFilesEl.hidden = true; changedFilesEl.innerHTML = ""; return; }
+    changedFilesEl.innerHTML = "";
+    const label = document.createElement("span");
+    label.className = "changed-files-label";
+    label.textContent = files.length === 1 ? "1 file changed" : `${files.length} files changed`;
+    changedFilesEl.appendChild(label);
+    for (const f of files) {
+      const chip = document.createElement("button");
+      chip.className = "changed-file-chip";
+      chip.type = "button";
+      chip.title = `${f.path} — open`;
+      const name = document.createElement("span");
+      name.className = "changed-file-name";
+      name.textContent = baseNameOf(f.path);
+      chip.appendChild(name);
+      if (f.adds) {
+        const a = document.createElement("span");
+        a.className = "changed-file-add";
+        a.textContent = `+${f.adds}`;
+        chip.appendChild(a);
+      }
+      if (f.dels) {
+        const d = document.createElement("span");
+        d.className = "changed-file-del";
+        d.textContent = `−${f.dels}`;
+        chip.appendChild(d);
+      }
+      chip.onclick = (e) => { e.stopPropagation(); vscode.postMessage({ type: "openFile", path: f.path }); };
+      changedFilesEl.appendChild(chip);
+    }
+    changedFilesEl.hidden = false;
   }
 
   // Command tool rows summarize as "Ran `npm test`" but drop the stdout/stderr —
@@ -2198,6 +2274,7 @@
 
   function markToolFailed(toolCallId, message) {
     if (!toolCallId) return;
+    forgetChangedFile(toolCallId); // a blocked/failed write didn't land — drop it from the strip
     state.toolFailuresById.set(toolCallId, message); // so a single-call group carries it onto the flat
     const item = state.toolItemsByToolCallId.get(toolCallId);
     if (item) {
@@ -3707,6 +3784,7 @@
       case "userMessage":
         // Live send (or immediate verdict-feedback bubble): render and bump the
         // counter so any plan history queued for this position drains first.
+        clearChangedFiles(); // a new turn starts — the strip shows only its own edits
         drainPlanHistory(state.userMsgCount);
         drainPermissionHistory(state.userMsgCount);
         state.userMsgCount += 1;
