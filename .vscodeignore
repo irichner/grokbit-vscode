@@ -2,6 +2,9 @@
 .gitignore
 .env
 .claude/**
+.github/**
+.grok/**
+.tmp-workflow/**
 mcps/**
 research/**
 test/**
