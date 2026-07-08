@@ -3965,6 +3965,7 @@
         hidePlanProcessing(); // turn is being reset, indicator no longer applies
         hideGrokking();
         hideThinkingIndicator();
+        clearChangedFiles(); // the suppressed turn's edits are being discarded
         // Drop the in-flight agent bubble entirely. Used when the host wants to
         // suppress the rest of the current turn (e.g. after Reject, where
         // grok's false "approved" response would otherwise leak through).
