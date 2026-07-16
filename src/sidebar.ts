@@ -113,7 +113,8 @@ type WebviewMsg =
   | { type: "clearAllSessions" }
   | { type: "pickFile" }
   | { type: "voiceStart" }
-  | { type: "voiceStop" };
+  | { type: "voiceStop" }
+  | { type: "docTypeStarter"; id?: string; prompt?: string };
 
 const SESSION_META_KEY = "grok.sessionMeta";
 /** globalState key for the anonymous per-install telemetry GUID (survives updates). */
@@ -123,6 +124,8 @@ const STATUS_BAR_COMMAND = "grok.revealActiveSession";
 
 // History pagination: rows fetched per "page" (initial open + each load-more / search page).
 const SESSION_PAGE_SIZE = 100;
+/** Activity-bar launcher shows a short recent list only (full history lives in the chat popover). */
+const LAUNCHER_HISTORY_LIMIT = 7;
 
 // Records the extension version at the last grok-CLI auto-update check, so the
 // silent `grok update` fires once per extension upgrade and never on a fresh
@@ -320,13 +323,21 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
         this.postLauncherMeta({ refresh: true });
         break;
       case "listSessions":
-        this.postLauncherSessions({ offset: msg.offset, limit: msg.limit, query: msg.query });
+        // Always hard-cap the activity-bar list (ignore a larger client limit).
+        this.postLauncherSessions({
+          offset: msg.offset,
+          limit: LAUNCHER_HISTORY_LIMIT,
+          query: msg.query,
+        });
         break;
       case "resumeSession":
         await this.openTabForId(msg.id);
         break;
       case "newSession":
         await this.newTab();
+        break;
+      case "docTypeStarter":
+        await this.openDocTypeStarter(msg.prompt);
         break;
       case "renameSession":
         this.renameSession(msg.id, msg.name);
@@ -353,14 +364,39 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
   // ---------- panel (editor tab) lifecycle ----------
 
   /** Open a fresh session in a new editor tab and spawn its grok process. */
-  async newTab(): Promise<void> {
+  async newTab(opts?: { composerSeed?: string }): Promise<void> {
     const session = new Session();
+    if (opts?.composerSeed) session.pendingComposerSeed = opts.composerSeed;
     if (vscode.workspace.getConfiguration("grok").get<boolean>("includeActiveFileByDefault", true)) {
       this.addActiveEditorChip(session); // lands in session.chips; ready's replay paints it
     }
     this.openPanel(session, tabTitleFor(undefined));
     this.maybeWarnLiveCount();
     await this.startSession(session);
+  }
+
+  /**
+   * Activity-bar document-type icon: seed "Create <type>: " into the composer.
+   * Reuses a still-empty active tab when one is open; otherwise opens a new tab.
+   * The seed is applied after the webview's ready/replay so it isn't wiped.
+   */
+  private async openDocTypeStarter(prompt?: string): Promise<void> {
+    // Catalog prompts keep a trailing space ("Create Word document: ").
+    const seed = typeof prompt === "string" ? prompt : "";
+    if (!seed.length) return;
+
+    const active = this.active;
+    if (active?.panel && !active.hasHistory) {
+      active.panel.reveal(undefined, false);
+      this.setActive(active);
+      if (active.ready) {
+        this.postTo(active, { type: "seedComposer", text: seed });
+      } else {
+        active.pendingComposerSeed = seed;
+      }
+      return;
+    }
+    await this.newTab({ composerSeed: seed });
   }
 
   /**
@@ -2224,6 +2260,12 @@ See design doc for the full state machine diagram.`;
         this.router.markReady(session);
         this.postPanelConfig(session);
         this.replayInto(session);
+        // After replay so clearMessages doesn't wipe a just-seeded composer.
+        if (session.pendingComposerSeed) {
+          const seed = session.pendingComposerSeed;
+          session.pendingComposerSeed = undefined;
+          this.postTo(session, { type: "seedComposer", text: seed });
+        }
         if (session.pendingStart !== undefined) {
           // Lazy start (CLI-update respawn / serializer-restored background tab):
           // the first reveal spawns; a tab that's never revealed never spawns.
@@ -2598,10 +2640,15 @@ See design doc for the full state machine diagram.`;
     this.postTo(session, this.buildSessionsMessage(opts));
   }
 
-  /** One page to the launcher view (its own request/refresh). */
+  /** One page to the launcher view (its own request/refresh). Always capped. */
   private postLauncherSessions(opts?: { offset?: number; limit?: number; query?: string }): void {
     if (!this.view) return;
-    void this.view.webview.postMessage(this.buildSessionsMessage(opts));
+    void this.view.webview.postMessage(
+      this.buildSessionsMessage({
+        ...opts,
+        limit: Math.min(opts?.limit ?? LAUNCHER_HISTORY_LIMIT, LAUNCHER_HISTORY_LIMIT),
+      }),
+    );
   }
 
   /** Session-list mutation (new/rename/delete/clear/open/close): refresh every
@@ -2610,7 +2657,8 @@ See design doc for the full state machine diagram.`;
   private broadcastSessionsList(): void {
     const message = this.buildSessionsMessage();
     this.router.broadcast(message);
-    if (this.view) void this.view.webview.postMessage(message);
+    // Launcher stays at its short cap (chat history popover keeps full pages).
+    this.postLauncherSessions();
   }
 
   /** Synthesize a list entry for a live session grok hasn't written a `summary.json` for yet (a
@@ -3937,6 +3985,7 @@ See design doc for the full state machine diagram.`;
     <div id="launcher-footer" class="history-footer" hidden>
       <button id="launcher-clear-all" class="history-clear-all" type="button"></button>
     </div>
+    <div id="launcher-docs" class="launcher-docs"></div>
   </div>
   <script nonce="${nonce}" src="${mediaUri("webview-helpers.js")}"></script>
   <script nonce="${nonce}" src="${mediaUri("launcher.js")}"></script>

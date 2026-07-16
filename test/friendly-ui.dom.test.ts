@@ -5,6 +5,7 @@ import { describe, it, expect } from "vitest";
 import {
   welcomeStarters,
   businessDocTypeStarters,
+  docTypeIcons,
   permissionButtonLabel,
   modeDisplayMeta,
   MODE_DISPLAY,
@@ -40,6 +41,13 @@ describe("welcomeStarters (pure catalog)", () => {
     }
     expect(types.find((t) => t.id === "word")!.prompt).toBe("Create Word document: ");
     expect(types.find((t) => t.id === "excel")!.prompt).toBe("Create Excel spreadsheet: ");
+  });
+
+  it("docTypeIcons covers every businessDocTypeStarters id", () => {
+    const icons = docTypeIcons() as Record<string, string>;
+    for (const t of businessDocTypeStarters() as Array<{ id: string }>) {
+      expect(icons[t.id]).toMatch(/<svg/i);
+    }
   });
 
   it("swaps the voice card for a setup hint when voice is not configured", () => {
@@ -132,19 +140,14 @@ describe("welcome starter cards (real chat.js DOM)", () => {
     expect(buttons.map((b) => b.dataset.starterId)).toContain("plan");
     expect(buttons.map((b) => b.dataset.starterId)).toContain("imagine");
     expect(buttons.map((b) => b.dataset.starterId)).not.toContain("business-doc");
-    const docTypes = [...starters.querySelectorAll(".welcome-doc-type")] as HTMLButtonElement[];
-    expect(docTypes.map((b) => b.dataset.docType)).toEqual([
-      "word", "excel", "powerpoint", "pdf", "csv", "markdown",
-    ]);
+    // Document-type icons moved to the activity-bar launcher (not welcome).
+    expect(starters.querySelectorAll(".welcome-doc-type")).toHaveLength(0);
   });
 
-  it("document-type icon seeds Create <type>: in the composer", () => {
+  it("seedComposer host message fills Create <type>: in the composer", () => {
     const { window, doc } = bootWebview();
     const input = doc.getElementById("input") as HTMLTextAreaElement;
-    const word = doc.querySelector('.welcome-doc-type[data-doc-type="word"]') as HTMLButtonElement;
-    expect(word).not.toBeNull();
-    expect(word.getAttribute("aria-label")).toBe("Create Word");
-    click(window, word);
+    dispatch(window, { type: "seedComposer", text: "Create Word document: " });
     expect(input.value).toBe("Create Word document: ");
   });
 

@@ -55,14 +55,13 @@ describe("document result card", () => {
   });
 });
 
-describe("document-type welcome icons", () => {
-  it("renders six types and PowerPoint seeds the expected prompt", () => {
+describe("document-type seedComposer (from launcher)", () => {
+  it("host seedComposer message fills the composer (PowerPoint prompt)", () => {
     const { window, doc } = bootWebview();
+    // Icons moved to the activity-bar launcher; chat only receives seedComposer.
     const starters = doc.getElementById("welcome-starters") as HTMLElement;
-    const types = [...starters.querySelectorAll(".welcome-doc-type")] as HTMLButtonElement[];
-    expect(types).toHaveLength(6);
-    const ppt = starters.querySelector('.welcome-doc-type[data-doc-type="powerpoint"]') as HTMLButtonElement;
-    click(window, ppt);
+    expect(starters.querySelectorAll(".welcome-doc-type")).toHaveLength(0);
+    dispatch(window, { type: "seedComposer", text: "Create PowerPoint presentation: " });
     const input = doc.getElementById("input") as HTMLTextAreaElement;
     expect(input.value).toBe("Create PowerPoint presentation: ");
   });

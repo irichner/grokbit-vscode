@@ -258,8 +258,6 @@
     || function (opt) { return (opt && opt.name) || "Continue"; };
   const welcomeStarters = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.welcomeStarters)
     || function () { return []; };
-  const businessDocTypeStarters = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.businessDocTypeStarters)
-    || function () { return []; };
 
   // Three blinking dots — the tool rows' in-progress animation, reused by every
   // progress indicator (Grokking / Thinking) so they all pulse the same way
@@ -1616,51 +1614,6 @@
     if (typeof renderInputHighlight === "function") renderInputHighlight();
   }
 
-  // Compact document-type glyphs for the welcome icon row (stroke = currentColor).
-  const DOC_TYPE_ICONS = {
-    word: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="m9 13 1.5 5L12 15l1.5 3L15 13"/></svg>`,
-    excel: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/><path d="M10 13v4"/><path d="M14 13v4"/></svg>`,
-    powerpoint: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 22h8"/><path d="M12 18v4"/><path d="M8 9h4a2 2 0 0 1 0 4H8V9z"/></svg>`,
-    pdf: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M10 12h1a2 2 0 0 1 0 4h-1v-4z"/><path d="M14 16v-4h1.5a1.5 1.5 0 0 1 0 3H14"/><path d="M17 12v4"/></svg>`,
-    csv: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M3 14h18"/><path d="M9 4v16"/><path d="M15 4v16"/></svg>`,
-    markdown: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 16V11l2 2 2-2v5"/><path d="M15 13v3"/><path d="m14 15 1 1 1-1"/></svg>`,
-  };
-
-  function renderWelcomeDocTypes(parent) {
-    const types = businessDocTypeStarters();
-    if (!types.length) return;
-    const section = document.createElement("div");
-    section.className = "welcome-doc-types";
-    const heading = document.createElement("p");
-    heading.className = "welcome-starters-heading";
-    heading.textContent = "Create a document";
-    section.appendChild(heading);
-    const row = document.createElement("div");
-    row.className = "welcome-doc-types-row";
-    row.setAttribute("role", "list");
-    row.setAttribute("aria-label", "Document types");
-    for (const t of types) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "welcome-doc-type";
-      btn.setAttribute("role", "listitem");
-      btn.dataset.docType = t.id;
-      btn.setAttribute("aria-label", `Create ${t.label}`);
-      btn.title = `Create ${t.label}`;
-      btn.innerHTML =
-        `<span class="welcome-doc-type-icon">${DOC_TYPE_ICONS[t.id] || DOC_TYPE_ICONS.word}</span>` +
-        `<span class="welcome-doc-type-label">${escapeHtml(t.label)}</span>`;
-      btn.onclick = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        insertComposerPrompt(t.prompt);
-      };
-      row.appendChild(btn);
-    }
-    section.appendChild(row);
-    parent.appendChild(section);
-  }
-
   function renderWelcomeStarters() {
     const el = $("welcome-starters");
     if (!el) return;
@@ -1698,7 +1651,7 @@
       grid.appendChild(btn);
     }
     el.appendChild(grid);
-    renderWelcomeDocTypes(el);
+    // Document-type icons live on the activity-bar launcher (not the welcome screen).
     el.hidden = false;
   }
 
@@ -3944,6 +3897,11 @@
         applyThinkingVisibility();
         updateModelLabel(); // effort is now known
         updateComposerPlaceholder(); // send-key hint follows useCtrlEnter
+        break;
+      case "seedComposer":
+        // Host-driven seed (activity-bar document-type icon). Applied after
+        // ready/replay so it isn't wiped by clearMessages.
+        insertComposerPrompt(msg.text);
         break;
       case "showThinking":
         // Live toggle (grok.showThinking). Initial value also arrives via

@@ -2,7 +2,7 @@
   "name": "grokbit",
   "displayName": "Grokbit",
   "description": "Grokbit — VS Code client for xAI's Grok Build CLI — each session in its own editor tab, review edits in a diff before approving, @-mention files, resumable history, inline image/video, and voice. Requires the Grok Build CLI plus a SuperGrok or X Premium+ subscription (or an xAI API key). MIT, open-source. Based on grok-build-vscode by Paweł Huryn. Not affiliated with or endorsed by xAI.",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "publisher": "Grokbit",
   "author": {
     "name": "Israel Richner",

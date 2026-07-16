@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.3 — 2026-07-15
+
+### Changed
+
+- **Activity-bar history is capped at 7 recent sessions.** The launcher shows a short recent list only (no load-more); full history stays in the chat history popover. ([media/launcher.js](media/launcher.js), [src/sidebar.ts](src/sidebar.ts))
+- **Office document icons moved to the left menu.** Word / Excel / PowerPoint / PDF / CSV / Markdown sit under the launcher history; a click opens (or reuses an empty) session and seeds the composer with `Create <type>: `. Removed from the chat welcome screen. ([media/launcher.js](media/launcher.js), [media/chat.js](media/chat.js), [src/sidebar.ts](src/sidebar.ts))
+
 ## 2.0.2 — 2026-07-08
 
 ### Changed

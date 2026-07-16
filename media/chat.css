@@ -279,14 +279,11 @@ code {
 }
 
 /* Document-type icon row — Word / Excel / PowerPoint / PDF / CSV / Markdown.
-   Click seeds the composer with "Create <type>: ". */
-.welcome-doc-types {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 4px;
-}
-.welcome-doc-types-row {
+   Lives on the activity-bar launcher (below recent history). Click opens a
+   session and seeds the composer with "Create <type>: ". Shared class names
+   keep the chip look consistent if reused. */
+.welcome-doc-types-row,
+.launcher-docs-row {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -2407,7 +2404,36 @@ mjx-container[display="true"] {
 .launcher-onboarding { padding: 2px; }
 .launcher-list {
   flex: 1;
-  max-height: none; /* fill the view; the popover cap doesn't apply here */
+  min-height: 0; /* allow the list to shrink so docs stay visible */
+  max-height: none; /* fill remaining space; the popover cap doesn't apply here */
+}
+
+/* Document-type starters pinned under recent history (activity bar only). */
+.launcher-docs {
+  flex: 0 0 auto;
+  margin-top: 8px;
+  padding: 8px 2px 4px;
+  border-top: 1px solid var(--vscode-panel-border, var(--vscode-editorWidget-border, #444));
+}
+.launcher-docs[hidden] { display: none; }
+.launcher-docs-heading {
+  margin: 0 0 6px;
+  padding: 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  text-align: center;
+}
+.launcher-docs-row {
+  justify-content: center;
+  gap: 4px;
+}
+/* Narrow activity bar: tighter chips so six types wrap cleanly. */
+.launcher-doc-type {
+  min-width: 44px;
+  padding: 6px 4px;
+  flex: 1 1 44px;
+  max-width: 72px;
 }
 
 /* The black hole logo lives inside the New session button (left of the label).
