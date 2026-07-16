@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TaskBoard sample UI</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="page" data-theme="light">
+      <header class="page__header">
+        <h1 class="page__title">TaskBoard</h1>
+        <p class="page__subtitle">Sample UI for Fixture E / design-gate practice</p>
+      </header>
+
+      <section class="panel" aria-labelledby="filters-label">
+        <h2 id="filters-label" class="panel__title">Filters</h2>
+        <label class="field">
+          <span class="field__label">Tag</span>
+          <input
+            id="tag-filter"
+            class="field__input"
+            type="search"
+            name="tag"
+            placeholder="e.g. backend"
+            autocomplete="off"
+          />
+        </label>
+      </section>
+
+      <section class="panel" aria-labelledby="list-label">
+        <div class="panel__head">
+          <h2 id="list-label" class="panel__title">Tasks</h2>
+          <button type="button" id="refresh-btn" class="btn btn--secondary">
+            Refresh
+          </button>
+        </div>
+
+        <!-- States: empty | loading | error | list -->
+        <div id="state-empty" class="state state--empty" hidden>
+          <p>No tasks yet. Add one to get started.</p>
+        </div>
+        <div id="state-loading" class="state state--loading" hidden>
+          <p role="status">Loading tasks…</p>
+        </div>
+        <div id="state-error" class="state state--error" hidden>
+          <p role="alert">Could not load tasks. Try again.</p>
+          <button type="button" class="btn btn--secondary" id="retry-btn">Retry</button>
+        </div>
+        <ul id="task-list" class="task-list" aria-live="polite"></ul>
+      </section>
+
+      <section class="panel" aria-labelledby="add-label">
+        <h2 id="add-label" class="panel__title">Add task</h2>
+        <form id="add-form" class="form" novalidate>
+          <label class="field">
+            <span class="field__label">Title</span>
+            <input
+              id="title-input"
+              class="field__input"
+              name="title"
+              required
+              maxlength="120"
+              autocomplete="off"
+            />
+          </label>
+          <button type="submit" id="submit-btn" class="btn btn--primary">
+            <span class="btn__label">Add task</span>
+            <span class="btn__pending" hidden>Adding…</span>
+          </button>
+        </form>
+      </section>
+    </main>
+    <script src="app.js" defer></script>
+  </body>
+</html>

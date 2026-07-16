@@ -25,9 +25,9 @@ import * as nodePath from "node:path";
 /** JSON-RPC error code we use when refusing a mutating call during plan mode. */
 export const PLAN_BLOCKED_CODE = -32010;
 export const PLAN_BLOCKED_WRITE_MSG =
-  "Blocked by Plan mode: approve the plan before writing files in the workspace.";
+  "Blocked by Plan first: approve the plan before writing files in the workspace.";
 export const PLAN_BLOCKED_TERMINAL_MSG =
-  "Blocked by Plan mode: approve the plan before running commands that may change the workspace.";
+  "Blocked by Plan first: approve the plan before running commands that may change the workspace.";
 
 /**
  * Strip the Windows extended-length prefix (`\\?\` or `//?/`), normalize all

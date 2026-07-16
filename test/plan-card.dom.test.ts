@@ -211,14 +211,14 @@ describe("plan card (real chat.js in a DOM)", () => {
 
   it("renders a plan-notice for planNotice and the blocked-command/-write variants", () => {
     const { window, doc } = bootWebview();
-    dispatch(window, { type: "planNotice", text: "Staying in Plan mode — nothing was written." });
+    dispatch(window, { type: "planNotice", text: "Staying in Plan first — nothing was written." });
     dispatch(window, { type: "planBlocked", kind: "terminal", target: "npm install" });
     dispatch(window, { type: "planBlocked", kind: "write", target: "src/app.ts" });
 
     const notices = [...doc.querySelectorAll(".plan-notice")].map((n) => n.textContent);
     expect(notices).toHaveLength(3);
-    expect(notices[0]).toContain("Staying in Plan mode");
-    expect(notices[1]).toContain("Plan mode blocked a command: npm install");
-    expect(notices[2]).toContain("Plan mode blocked a write to src/app.ts");
+    expect(notices[0]).toContain("Staying in Plan first");
+    expect(notices[1]).toContain("Plan first blocked a command: npm install");
+    expect(notices[2]).toContain("Plan first blocked a write to src/app.ts");
   });
 });

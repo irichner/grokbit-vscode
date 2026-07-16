@@ -1,0 +1,4 @@
+description = "GrokForge QA: targeted/regression tests, coverage measurement, test accuracy."
+instructions_file = ".grok/personas/instructions/gf-qa.md"
+reasoning_effort = "high"
+default_capability_mode = "all"

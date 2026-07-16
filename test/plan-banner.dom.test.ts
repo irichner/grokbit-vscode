@@ -55,8 +55,8 @@ describe("keyboard-shortcut discoverability", () => {
 
     const gear = openShortcuts(window, doc);
     const text = gear.textContent || "";
-    expect(text).toContain("Send message");
-    expect(text).toContain("New line");
+    expect(text).toContain("Send your message");
+    expect(text).toContain("Start a new line");
     expect(text).toContain("Shift+Enter");
     expect(text).toContain("Open Grokbit");
     expect(text).toContain("Alt+G");

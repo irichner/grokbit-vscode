@@ -46,9 +46,9 @@ describe("computeStatusBar — the native status-bar HUD", () => {
     expect(v.tooltip).not.toContain("Context:");
   });
 
-  it("labels the modes as Agent / Plan / Auto", () => {
+  it("labels the modes as Agent / Plan first / Auto", () => {
     expect(computeStatusBar({ hasActive: true, modelName: "G", mode: "agent" }).text).toContain("Agent");
-    expect(computeStatusBar({ hasActive: true, modelName: "G", mode: "plan" }).text).toContain("Plan");
+    expect(computeStatusBar({ hasActive: true, modelName: "G", mode: "plan" }).text).toContain("Plan first");
     expect(computeStatusBar({ hasActive: true, modelName: "G", mode: "yolo" }).text).toContain("Auto");
   });
 

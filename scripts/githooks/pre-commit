@@ -1,0 +1,29 @@
+#!/bin/sh
+# GrokForge: require VERSION + token ledger update on every commit.
+# Installed via: python scripts/install_git_hooks.py
+set -e
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT" || exit 1
+
+if ! command -v python >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
+  echo "pre-commit: python not found on PATH" >&2
+  exit 1
+fi
+
+PY=python
+command -v python >/dev/null 2>&1 || PY=python3
+
+if [ ! -f scripts/prepare_commit_metrics.py ]; then
+  echo "pre-commit: scripts/prepare_commit_metrics.py missing; skip metrics gate" >&2
+  exit 0
+fi
+
+# Allow bypass only with explicit env (documented escape hatch).
+if [ "${GROK_SKIP_COMMIT_METRICS:-}" = "1" ]; then
+  echo "pre-commit: GROK_SKIP_COMMIT_METRICS=1 - skipping metrics update" >&2
+  exit 0
+fi
+
+# --from-env falls back to unmeasured when GUI commits omit token env vars.
+"$PY" scripts/prepare_commit_metrics.py --from-env --stage
+echo "pre-commit: VERSION + token ledger updated for this commit"

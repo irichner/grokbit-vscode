@@ -24,11 +24,15 @@ export const BODY = `
     <button id="new-btn"></button>
     <div id="history-popover" hidden></div>
   </header>
-  <div id="plan-banner" class="plan-banner" hidden><span class="plan-banner-dot"></span><span></span></div>
+  <div id="plan-banner" class="plan-banner" hidden><span class="plan-banner-dot"></span><span class="plan-banner-text"></span></div>
   <main id="messages" class="messages">
     <div class="welcome" id="welcome">
+      <h2>Grokbit</h2>
+      <p class="welcome-tagline">Your AI coding partner in the editor</p>
       <p id="welcome-version" class="loading-dots">Starting</p>
+      <div id="welcome-starters" class="welcome-starters" hidden></div>
       <div id="welcome-onboarding"></div>
+      <p class="welcome-byline muted"><a href="#" id="welcome-about-link" class="muted-link">About Grokbit</a></p>
     </div>
   </main>
   <footer class="composer">

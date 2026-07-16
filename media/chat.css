@@ -171,7 +171,7 @@ code {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: 32px 12px;
+  padding: 28px 12px 20px;
   gap: 8px;
 }
 .welcome-mark {
@@ -192,9 +192,163 @@ code {
   background-clip: text;
   color: transparent;
 }
-.welcome-byline { margin: 0; font-size: 11px; }
+.welcome-tagline {
+  margin: 0;
+  max-width: 320px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--vscode-descriptionForeground);
+}
+.welcome-byline { margin: 4px 0 0; font-size: 11px; }
 .muted-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .muted-link:hover { opacity: 0.8; }
+.muted-link:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Welcome starter cards — compact, progressive-disclosure entry points for
+   non-technical users. Power users can ignore and type. */
+.welcome-starters {
+  width: 100%;
+  max-width: 360px;
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+.welcome-starters[hidden] { display: none; }
+.welcome-starters-heading {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+  text-align: center;
+}
+.welcome-starters-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.welcome-starter {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  margin: 0;
+  padding: 9px 12px;
+  text-align: left;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--vscode-foreground);
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, #444));
+  border-radius: var(--radius, 6px);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.welcome-starter:hover {
+  background: var(--vscode-list-hoverBackground);
+  border-color: var(--vscode-focusBorder, var(--vscode-editorWidget-border));
+}
+.welcome-starter:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.welcome-starter:active {
+  background: var(--vscode-list-activeSelectionBackground, var(--vscode-list-hoverBackground));
+}
+.welcome-starter:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.welcome-starter-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+.welcome-starter-desc {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Document-type icon row — Word / Excel / PowerPoint / PDF / CSV / Markdown.
+   Click seeds the composer with "Create <type>: ". */
+.welcome-doc-types {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.welcome-doc-types-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+.welcome-doc-type {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 52px;
+  margin: 0;
+  padding: 8px 6px;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--vscode-foreground);
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, #444));
+  border-radius: var(--radius, 6px);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.welcome-doc-type:hover {
+  background: var(--vscode-list-hoverBackground);
+  border-color: var(--vscode-focusBorder, var(--vscode-editorWidget-border));
+}
+.welcome-doc-type:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.welcome-doc-type:active {
+  background: var(--vscode-list-activeSelectionBackground, var(--vscode-list-hoverBackground));
+}
+.welcome-doc-type-icon {
+  display: inline-flex;
+  color: var(--vscode-descriptionForeground);
+}
+.welcome-doc-type:hover .welcome-doc-type-icon,
+.welcome-doc-type:focus-visible .welcome-doc-type-icon {
+  color: var(--vscode-foreground);
+}
+.welcome-doc-type-label {
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+.welcome-doc-type:hover .welcome-doc-type-label,
+.welcome-doc-type:focus-visible .welcome-doc-type-label {
+  color: var(--vscode-foreground);
+}
+
+/* Brief pulse when a starter points at the mic button. */
+.mic-btn.starter-pulse {
+  box-shadow: 0 0 0 2px var(--vscode-focusBorder);
+  border-radius: 50%;
+}
 
 /* Animated trailing ellipsis for transient status text ("Starting", "Thinking",
    "Updating Grok Build CLI", "Summarizing"). The dots are a pseudo-element so the
@@ -559,6 +713,62 @@ body.thinking-hidden .msg.thinking { display: none; }
   color: var(--vscode-foreground);
 }
 .generated-media-btn.copied { color: var(--vscode-charts-green, #4ec9b0); }
+
+/* Business / office document result card (create/edit deliverable) */
+.document-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px var(--pad, 12px);
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+  background: var(--vscode-textBlockQuote-background, var(--vscode-editor-inactiveSelectionBackground));
+  max-width: 100%;
+  min-width: 0;
+}
+.document-card-kind {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.document-card-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.document-card-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+}
+.document-card-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  padding: 5px;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1;
+}
+.document-card-btn:hover,
+.document-card-btn:focus-visible {
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, var(--vscode-editorWidget-background, var(--vscode-editor-background)));
+  color: var(--vscode-foreground);
+  outline: 1px solid var(--vscode-focusBorder, var(--vscode-foreground));
+  outline-offset: 1px;
+}
+.document-card-btn.copied { color: var(--vscode-charts-green, #4ec9b0); }
 
 /* Subagent delegation card */
 .subagent-card {
@@ -1327,6 +1537,17 @@ textarea#input {
   border-radius: 3px;
   padding: 1px 5px;
   white-space: nowrap;
+}
+/* Plain-English helper under gear items / shortcuts. */
+.popover-hint {
+  display: block;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--vscode-descriptionForeground);
+}
+.popover-hint code {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
 }
 .popover-update-avail { color: var(--vscode-textLink-foreground); }
 .popover-warn { color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground)); }
@@ -2168,6 +2389,20 @@ mjx-container[display="true"] {
   box-sizing: border-box;
 }
 .launcher-head { padding: 2px 2px 6px; }
+.launcher-meta {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  opacity: 0.85;
+  text-align: center;
+  padding: 2px 4px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: text;
+  cursor: default;
+}
+.launcher-meta[hidden] { display: none; }
 .launcher-head .onb-action { width: 100%; margin: 0; }
 .launcher-onboarding { padding: 2px; }
 .launcher-list {

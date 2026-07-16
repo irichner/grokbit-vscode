@@ -6,9 +6,9 @@
 >
 > Based on [phuryn/grok-build-vscode](https://github.com/phuryn/grok-build-vscode) by Paweł Huryn, MIT License.
 
-Use Grok Build inside VS Code — **each session in its own editor tab**, drop your open files in as `@`-context, keep **resumable chat history**, generate **images & video inline**, and dictate by **voice**. If you'd rather stay in your editor than a terminal, this brings Grok Build's agent into your editor.
+**Grokbit** is the friendly editor UI for Grok Build — ask questions, plan changes safely, review edits before they land, generate images & video, and dictate by voice. **Each chat is its own editor tab.** You do not need to use a terminal day to day.
 
-You install the `grok` CLI once and sign in — with a **SuperGrok or X Premium+ subscription**, or an **xAI API key** — and the extension is the GUI on top.
+Install the free `grok` CLI once, sign in (subscription or API key), and Grokbit is the GUI on top.
 
 **Install free from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=grokbit.grokbit) or [Open VSX Registry](https://open-vsx.org/extension/grokbit/grokbit)**
 
@@ -16,20 +16,22 @@ You install the `grok` CLI once and sign in — with a **SuperGrok or X Premium+
 
 ---
 
-## Why use this?
+## Who this is for
 
-If you live in your editor, this puts Grok Build right next to your code — a graphical workflow on top of the CLI: an **inline diff** on a proposed edit, right in the chat, before you approve it, **permission cards** (*Allow always / once / Reject*), your **active editor and selection as first-class `@file` context**, **session history** you can resume/rename/delete, **inline images and video** from `/imagine`, **voice dictation**, and **side-by-side** placement next to your other tools. The CLI does the heavy lifting; this is the GUI for when you'd rather not be in a terminal.
+- **Prefer a GUI over the terminal** — chat, approve changes, and manage history without memorizing CLI commands.
+- **Want a safety net** — Plan first mode, permission cards, and inline diffs so you always see what will change.
+- **Work in VS Code / Cursor / similar** — Grok sits next to your files, not in a separate app.
 
-A short tour of how the extension is wired (and the one place it's deliberately *not* thin — Plan Mode) lives in [docs/architecture.md](docs/architecture.md).
+Engineers can still use the CLI; this extension does not remove power features — it wraps them in plain language.
 
 ---
 
 ## Requirements
 
-- **VS Code** 1.90+ (or a compatible editor — Cursor, Windsurf, VSCodium).
-- **The Grok Build CLI** (`grok`) on macOS, Linux, or Windows. The CLI ships a native Windows build, so the extension runs natively on all three — no WSL required (WSL2 + Remote-WSL still works if you prefer it).
-- **A login:** either a **SuperGrok or X Premium+** subscription (`grok /login`) or an xAI API key. Either subscription unlocks **Grok Build**; with an API key you also get the **grok-4.x** models and **grok-imagine**. (Grok's free tier does **not** include the CLI agent.)
-- **For voice control only** (optional): [`ffmpeg`](https://ffmpeg.org) on `PATH`, and a *separate* xAI API key for Speech-to-Text (pay-as-you-go, ~$0.10/hr — your CLI login does **not** cover it). See **Voice control** under [Features & capabilities](#features--capabilities).
+- **VS Code** 1.94+ (or a compatible editor — Cursor, Windsurf, VSCodium).
+- **The Grok Build CLI** (`grok`) on macOS, Linux, or Windows. A native Windows build is supported — no WSL required (WSL2 + Remote-WSL still works if you prefer it).
+- **A login:** either a **SuperGrok or X Premium+** subscription (`grok /login`) or an xAI API key. Subscription unlocks **Grok Build**; an API key can also unlock additional models and **grok-imagine**. (Grok's free tier does **not** include the CLI agent.)
+- **For voice control only** (optional): [`ffmpeg`](https://ffmpeg.org) on `PATH`, and a *separate* xAI API key for Speech-to-Text (pay-as-you-go — your CLI login does **not** cover it). See [Voice control](#voice-control).
 
 ---
 
@@ -51,7 +53,7 @@ irm https://x.ai/cli/install.ps1 | iex
 grok /login
 ```
 
-`grok /login` opens a browser and completes OAuth in one step. Prefer an API key? Get one at [console.x.ai](https://console.x.ai) and set `XAI_API_KEY` in your shell or a workspace `.env` (the extension auto-loads it).
+`grok /login` opens a browser and completes sign-in in one step. Prefer an API key? Get one at [console.x.ai](https://console.x.ai) and set `XAI_API_KEY` in your shell or a workspace `.env` (the extension auto-loads it).
 
 **2. Install the extension.**
 
@@ -80,11 +82,12 @@ Reload VS Code (**Ctrl+Shift+P → Developer: Reload Window**) and click the Gro
 
 ## Quick start
 
-1. **Open** the Grok sidebar (activity bar icon, or `Ctrl/Cmd+;`).
-2. **Type a prompt** and press **Enter**. Grok streams its answer, showing a *Thinking…* line while it reasons. Want the full reasoning inline? Turn on **Show thinking traces** in the gear menu → *Config & debug*.
-3. **Approve actions.** When Grok wants to write a file or run a command it may raise a permission card — review the edit's **inline diff** right in the card, then *Allow once / always / Reject*.
-4. **Pick your mode** (Agent / Plan / Auto accept), **model**, and **reasoning effort** from the bottom toolbar and gear menu.
-5. **Resume anytime** — the clock icon lists past sessions for this project.
+1. **Open** Grokbit (activity bar icon, or `Ctrl/Cmd+;`). The **launcher** lists sessions; **New session** opens a chat tab.
+2. **Pick a starter** on the welcome screen (or just type). Examples: *Explain this project*, *Plan a change safely*, *Create an image*.
+3. **Press Enter** to send. Grok streams an answer. While it works you may see *Thinking…* (turn on full thinking details in the gear menu if you want them).
+4. **Approve actions.** When Grok wants to edit a file or run a command, a **permission card** appears — review the **inline diff**, then *Allow this change*, *Allow always*, or *Don't allow*.
+5. **Choose a mode** (Agent / Plan first / Auto accept), **model**, and **thinking depth** from the bottom toolbar and gear menu.
+6. **Come back later** — history and launcher list past chats for this project so you can resume anytime.
 
 ---
 
@@ -93,138 +96,211 @@ Reload VS Code (**Ctrl+Shift+P → Developer: Reload Window**) and click the Gro
 _Click any feature to expand._
 
 <details>
-<summary><strong>Permission cards with inline diff</strong> — see every edit right in the chat before you approve</summary>
+<summary><strong>Native session tabs + activity-bar launcher</strong></summary>
 
-When Grok proposes an edit, the diff renders **inside the permission card** — additions and deletions in your theme's diff colors, with long unchanged stretches collapsed behind a click. Review it, then *Allow once / always* or *Reject*. The file is written only **after** you approve — no surprise changes to your files, and no diff tab stealing your editor focus. Past edits stay reviewable too: every edit row keeps a **view diff** toggle, live and after a session restore.
+Each chat lives in its **own editor tab** (like a document). The left activity bar is a **launcher**: session list, status dots, search, rename/delete, and **New session**. You can keep several chats open and switch between them like any other tabs.
 
-</details>
-
-<details>
-<summary><strong>Modes — Agent, Plan & Auto accept</strong></summary>
-
-| Mode | Behaviour |
-|---|---|
-| **Agent** (default) | Grok acts directly and **may** ask permission for a write or shell action it judges sensitive — a card appears in chat. |
-| **Plan** | Grok drafts a plan first and **cannot** write to the workspace or run anything outside a read-only allowlist until you approve. Approve / Reject / Cancel from the card, each with an optional comment. Plan Mode is enforced by the extension — see [How it works](#how-it-works). |
-| **Auto accept** (YOLO) | The extension auto-approves every permission request. The CLI session is untouched — no restart, just a flag flip. |
-
-![Plan mode — Grok drafts a plan and blocks workspace writes until you approve](docs/screenshots/PlanningMode.png)
-
-</details>
-
-<details>
-<summary><strong>Image & video generation</strong> — <code>/imagine</code> renders right in the chat</summary>
-
-Type `/imagine <prompt>` (or `/imagine-video <prompt>`) and the result renders **inline** — images as a compact thumbnail (capped at 320px; click to open the source file), videos with native playback controls. Hover either for **Copy path** / **Open in VS Code** icons. Both are **subscription-only** Grok features, both survive a session resume, and even a multi-MB video plays. Editing a reference photo with `/imagine` works too. Wire-format details, for the curious: [research/image-generation.md](research/image-generation.md).
-
-</details>
-
-<details>
-<summary><strong>Voice control</strong> — hands-free dictation with live transcription</summary>
-
-The **microphone button** in the composer dictates speech, transcribed by [xAI's Speech-to-Text API](https://docs.x.ai/developers/model-capabilities/audio/voice). Click it, wait for the blue listening waves, and speak — words appear live as you talk. Say **"grok send"** to submit hands-free and keep listening for the next message (dictate while Grok responds; those messages queue and flush when it finishes). Click the mic to stop and keep any in-progress text.
-
-The two-word send phrase is deliberate (it won't fire on a message that merely ends in "send") and is configurable via `grok.voiceSendPhrase`. Streaming is the default; set `grok.voiceStreaming: false` for one-shot batch mode.
-
-> **Cost:** Speech-to-Text is a *separate*, pay-as-you-go xAI product — **$0.10/hr** batch, **$0.20/hr** streaming, billed by audio duration. In practice ~500 words ≈ ½–1¢; a heavy 10,000-word day ≈ 10¢. It needs its own [console.x.ai](https://console.x.ai) key (`grok.voiceApiKey` / `GROK_VOICE_API_KEY` / `XAI_API_KEY`) — a SuperGrok subscription grants no API credit. Why it bypasses the CLI, and how the cost was measured end-to-end: [research/voice-input.md](research/voice-input.md).
-
-</details>
-
-<details>
-<summary><strong>File chips</strong> — your editor and selection as <code>@file</code> context</summary>
-
-The active editor is added as an **implicit** chip automatically (toggle with `grok.includeActiveFileByDefault`). Drag from the Explorer, right-click → **Grok: Send File**, press **Alt+G**, or use the **+** toolbar button to add **explicit** chips. Chips are sent as `@/path/to/file` references — the CLI resolves them, so content stays current and doesn't bloat chat history. Hold **Shift** while dragging to embed the file's contents inline as a fenced code block instead.
-
-</details>
-
-<details>
-<summary><strong>Agent Dashboard</strong> — run several sessions at once, switch instantly, see which need you</summary>
-
-Keep more than one session **alive at the same time**. Start a new session with **+** while another is mid-turn, and switch between them from the history dropdown — the one you leave keeps running in the background (mid-turn, mid-approval, anything), and switching back replays its exact state with **no reload**. Picking a session that isn't live anymore loads it from history as before.
-
-Each row in the dropdown shows a **status dot** so you can see what every session is doing without opening it. It's **gray** at rest and only lights up when there's something to know:
-
-| Dot | Meaning |
-|---|---|
-| 🔵 Blue | Working — a turn is in flight |
-| 🟡 Yellow | Needs you — a permission, question, or plan is waiting |
-| 🟢 Green | Finished, with output you **haven't opened yet** |
-| 🔴 Red | Finished with an error you haven't opened |
-| ⚪ Gray | At rest — idle, already read, or not loaded |
-
-The green/red dot is an **unread** badge: it appears when a session finishes while you're looking at *another* one, and clears the moment you open it. It's persisted, so it survives idle cleanup **and** a VS Code restart — fire off a few agents, walk away, and the green dots are exactly the sessions with results waiting.
-
-To keep a pile of background sessions from each pinning a live process, a session left untouched for an hour (or beyond ~8 live) is quietly shut down — never one that's working or waiting on you — and reloads from history on click, losing nothing.
+Closing a tab stops that chat’s live process but keeps history on disk (unless it was an empty “new session” you never used). After a VS Code reload, tabs can restore; the visible tab reconnects first.
 
 ![Multiple sessions in the launcher with status dots, each session its own editor tab](docs/screenshots/NewSession.png)
 
 </details>
 
 <details>
-<summary><strong>Session history</strong> — resume, rename, delete, or clear past sessions</summary>
+<summary><strong>Welcome starters</strong> — start without a blank page</summary>
 
-The clock icon lists this project's sessions, newest first. Click a row to resume — Grok replays the conversation, with inline images, plans, and reasoning intact — or hover to rename or delete it. The list loads the **most recent 100** and pulls in older ones as you **scroll**; the **search box** filters by name across your whole history, so it stays fast even with thousands of sessions. **Clear all history** (bottom of the dropdown) removes every session for this project except the current one, after a confirm. Renames are stored by the extension and never touch Grok's own files.
+A new empty session shows a short value prop and **starter cards**, for example:
+
+| Starter | What it does |
+|---|---|
+| **Explain this project** | Fills a plain-English “overview this codebase” prompt you can edit and send |
+| **Write or fix something** | Seeds a helper prompt so you can describe the change |
+| **Plan a change safely** | Switches to **Plan first** and seeds a planning prompt |
+| **Create an image** | Starts with `/imagine ` for image generation |
+| **Dictate instead of type** | Points you at the microphone (or notes setup if voice isn’t configured yet) |
+
+Below the cards, a **Create a document** row shows icons for **Word**, **Excel**, **PowerPoint**, **PDF**, **CSV**, and **Markdown**. Click one to fill the composer with `Create <type>: ` — finish the sentence and send.
+
+Power users can ignore the cards and type immediately.
+
+</details>
+
+<details>
+<summary><strong>Business documents</strong> — Word, Excel, PowerPoint, PDF, CSV, Markdown</summary>
+
+On a new session, pick a document-type icon (or ask in plain language / use `/docx`, `/pptx`, `/xlsx` from autocomplete). When a tool result includes a document path, Grokbit shows a **document card** with **Copy path**, **Open** (editor for Markdown/CSV/text; system default app for Office/PDF), and **Reveal in file explorer**.
+
+This is not a built-in Office suite: generation uses Grok’s skills and tools on your machine (some skills need local deps such as Node’s `docx` package). Attach an existing file as a chip to edit it.
+
+</details>
+
+<details>
+<summary><strong>Modes — Agent, Plan first & Auto accept</strong></summary>
+
+| Mode | In plain English |
+|---|---|
+| **Agent** (default) | Grok can help right away. It **may ask** before editing files or running commands. |
+| **Plan first** | Grok drafts a plan first. **Nothing changes** in your project until you approve the plan. |
+| **Auto accept** | Grok acts **without asking** for permission on each change. Use when you trust the session. |
+
+Your last non-plan mode (Agent or Auto accept) is remembered for **new** sessions. Plan first is always a deliberate choice for the task at hand.
+
+![Plan mode — Grok drafts a plan and blocks workspace writes until you approve](docs/screenshots/PlanningMode.png)
+
+</details>
+
+<details>
+<summary><strong>Permission cards with inline diff</strong> — see every edit before you approve</summary>
+
+When Grok proposes an edit, the **diff is shown inside the chat card** — green additions, red deletions, long unchanged stretches collapsed. Buttons use plain language:
+
+- **Allow this change** — approve once
+- **Allow always** — approve this kind of action for the rest of the session (when the CLI offers it)
+- **Don't allow** — reject
+
+The file is written only **after** you approve. Past edits stay reviewable via **view diff** on the tool row. Diffs never open a separate editor tab (so focus stays on chat).
+
+</details>
+
+<details>
+<summary><strong>Questions from Grok</strong></summary>
+
+Sometimes Grok needs a choice from you (multiple options). An **inline question card** appears; pick an option (and Submit if there are several questions). After you answer, the card collapses to a green “✓ your choice” summary. On resume, past answers replay as read-only cards.
+
+</details>
+
+<details>
+<summary><strong>File context chips</strong> — point Grok at the right files</summary>
+
+- The **active editor** can be included automatically as context (setting: `grok.includeActiveFileByDefault`).
+- **Drag** files from the Explorer, right-click → **Grokbit: Send File**, press **Alt+G**, or use the **+** button to attach files.
+- Explicit attachments are stronger than the ambient “currently open” file.
+- Hold **Shift** while dragging to embed file contents as a fenced block instead of a path reference.
+
+</details>
+
+<details>
+<summary><strong>Session history — resume, rename, delete, clear all</strong></summary>
+
+The **clock** icon (and the launcher) lists this project’s sessions, newest first:
+
+- Click a row to **resume** (conversation, images, plans, and tools replay).
+- Hover to **rename** or **delete**.
+- **Search** filters by name across your whole history.
+- The list loads **100 at a time** and loads more as you scroll (stays fast with thousands of sessions).
+- **Clear all history** removes every session for this project **except** ones that still have an open tab.
 
 ![Session history — resume, rename, delete, search, or clear past sessions](docs/screenshots/SessionHistory.png)
 
 </details>
 
 <details>
-<summary><strong>Tool calls</strong> — every read, edit & command, inline</summary>
+<summary><strong>Status dots</strong> — see which chats need you</summary>
 
-Every action Grok takes appears in chat as a **category-iconed** row — a single line, or a batch summarized by what it did ("Explored 5 items", "Edited 2 files") that expands to the full list on click. A tool that **fails** turns red with the reason inline.
+| Dot | Meaning |
+|---|---|
+| 🔵 Blue | Working on it |
+| 🟡 Yellow | Needs your OK (permission, question, or plan) |
+| 🟢 Green | Finished — not opened yet |
+| 🔴 Red | Finished with an error — not opened yet |
+| ⚪ Gray | At rest / already seen |
 
-</details>
-
-<details>
-<summary><strong>Math &amp; LaTeX rendering</strong> — equations render as math, not raw TeX</summary>
-
-When Grok answers with LaTeX — inline `\(…\)`, display `\[…\]`, and environments like matrices, `cases`, integrals, sums, and Greek — the chat renders it as real typeset math via [MathJax](https://www.mathjax.org), bundled so it works **offline**. **Hover a display equation** to copy its LaTeX source or export it as a PNG or transparent SVG. Bare `$…$` is intentionally **not** a delimiter — it would mangle prose like "it costs $5 and then $10".
-
-</details>
-
-<details>
-<summary><strong>Mermaid diagrams</strong> — flowcharts and sequence diagrams render as diagrams</summary>
-
-When Grok answers with a ` ```mermaid ` block — flowcharts, sequence and state diagrams, git graphs, class and ER diagrams — the chat renders it as a real diagram via [Mermaid](https://mermaid.js.org), bundled so it works **offline**, themed to your light/dark mode. **Hover a diagram** to copy its source or export it as a PNG or transparent SVG. While it's still streaming or if it's malformed, the readable source is shown instead — you never lose the content.
-
-![Mermaid diagram rendered inline in the chat](docs/screenshots/v1.4.6%20Mermaid%20diagrams.png)
+Unread green/red badges persist across reloads until you open that session.
 
 </details>
 
 <details>
-<summary><strong>Model picker</strong> — switch models live, no restart</summary>
+<summary><strong>Status-bar HUD + optional notifications</strong></summary>
 
-Click the model name in the gear popover. The model list comes from your CLI; switching is live with no restart in most cases. (A few models belong to a different agent and need a quick session restart — the extension detects that and handles it for you, carrying your context forward.)
+A native **status bar** item (bottom of VS Code) mirrors the active chat: model, thinking depth, mode, context %, working spinner, and a **bell** count when any session needs you. Click it to jump back to chat.
+
+Optional setting **`grok.notifyWhenWaiting`** (off by default): a passive notification when a **background** tab needs you — it never steals focus; you choose *Go to session*.
+
+</details>
+
+<details>
+<summary><strong>Image & video generation</strong> — <code>/imagine</code> in chat</summary>
+
+Type `/imagine <description>` (or `/imagine-video <description>`) and results render **inline** in the chat. Hover for **Copy path** / **Open in VS Code**. Subscription-only Grok features; they survive session resume. Editing a reference photo with `/imagine` is supported when the CLI offers it.
+
+</details>
+
+<details>
+<summary><strong id="voice-control">Voice control</strong> — speak instead of type</summary>
+
+The **microphone** in the composer records speech via [xAI Speech-to-Text](https://docs.x.ai/developers/model-capabilities/audio/voice). Words appear live as you talk. Say your send phrase (default **“grok send”**) to submit hands-free.
+
+**Needs:** `ffmpeg` on PATH + a separate API key (`grok.voiceApiKey` or env). **Cost:** pay-as-you-go STT (~$0.10/hr batch, ~$0.20/hr streaming) — not covered by SuperGrok alone. Details: [research/voice-input.md](research/voice-input.md).
+
+</details>
+
+<details>
+<summary><strong>Tool activity</strong> — what Grok did, in plain language</summary>
+
+Actions appear as compact rows or groups, e.g. *Explored 5 items*, *Edited 2 files*, *Ran 1 command*. Expand for detail. Commands can show **output**. Failed tools turn red with a short reason. A **files changed** strip above the composer summarizes applied edits this turn.
+
+</details>
+
+<details>
+<summary><strong>Model & thinking depth</strong></summary>
+
+Pick the **model** and **reasoning effort** (none → xhigh) from the gear menu or the small model chip in the toolbar. Effort is how deeply Grok “thinks” (more depth = more tokens/time). Changing effort restarts the session (optional summarize-and-restart). Some model switches restart when the CLI requires a different agent type — the extension handles that.
 
 ![Model and reasoning-effort controls in the gear popover](docs/screenshots/ModelSelection.png)
 
 </details>
 
 <details>
-<summary><strong>Reasoning effort</strong> — trade tokens for depth</summary>
+<summary><strong>Show / hide thinking & chat size</strong></summary>
 
-Gear icon → effort dots pick a level (`none` → `xhigh`), forwarded to the CLI as `--reasoning-effort`. Changing it restarts the session, with an optional *Summarize & Restart* to carry context forward. (Some subscription tiers may reject effort at the backend.)
-
-</details>
-
-<details>
-<summary><strong>Cost control</strong> — token donut, <code>/compact</code> & effort</summary>
-
-Stay on top of spend without leaving the sidebar: the bottom-toolbar **context donut** shows `usedK/maxK` tokens after each prompt; **`/compact`** (gear → Compact) compresses the conversation when it fills, or **+** starts fresh. **Reasoning effort** trades tokens for depth, and voice STT cost is called out above.
+- **`grok.showThinking`** (default off) — when off, a short *Thinking…* stand-in is shown instead of full reasoning traces. Toggle live under gear → **Config & debug → Show thinking details**.
+- **`grok.chatFontScale`** — zoom only the Grok chat (60–300%), not the whole editor.
 
 </details>
 
 <details>
-<summary><strong>MCP servers</strong> — whatever the CLI loads</summary>
+<summary><strong>Math, diagrams & markdown</strong></summary>
 
-MCP servers are configured in the CLI (`~/.grok/config.toml` global, `.grok/config.toml` project) — the extension picks up whatever the CLI loads:
+- **LaTeX** math renders via MathJax (offline). Hover a display equation to copy or export PNG/SVG.
+- **Mermaid** diagrams render inline (offline, theme-aware). Hover to copy source or export.
+- Normal markdown (code, lists, tables) is fully supported.
 
-```bash
-grok mcp add playwright --command npx --args @playwright/mcp@latest
-```
+![Mermaid diagram rendered inline in the chat](docs/screenshots/v1.4.6%20Mermaid%20diagrams.png)
 
-Or edit the config via gear → *Open global / project config*, then click **+** to reload.
+</details>
+
+<details>
+<summary><strong>Slash commands</strong></summary>
+
+Type `/` in the composer for autocomplete from your installed CLI (e.g. `/imagine`, `/compact`, …). Snapshot: [docs/SLASH-COMMANDS.md](docs/SLASH-COMMANDS.md).
+
+</details>
+
+<details>
+<summary><strong>Cost awareness</strong></summary>
+
+The **context donut** shows how full the conversation window is. Use **`/compact`** (gear → Compact) to compress history, or start a **new session**. Lower **thinking depth** for cheaper/faster turns.
+
+</details>
+
+<details>
+<summary><strong>MCP tools</strong></summary>
+
+Extra tools (browser automation, etc.) are configured in the **CLI** (`~/.grok/config.toml` or project `.grok/config.toml`). Gear → **Connected tools (MCP)** / open config files, then start a new session to reload.
+
+</details>
+
+<details>
+<summary><strong>Sign out</strong></summary>
+
+Gear → **Log out**, or command **Grokbit: Log Out** — runs `grok logout`, closes live session tabs, and shows the signed-out launcher. History stays on disk; sign in again to resume.
+
+</details>
+
+<details>
+<summary><strong>Telemetry (opt-out)</strong></summary>
+
+Anonymous usage only: one `session_start` per real conversation with install id + mode/model/effort — **never** message content, code, or paths. Off with `grok.telemetry.enabled: false` or VS Code’s global telemetry setting. See [docs/privacy.md](docs/privacy.md).
 
 </details>
 
@@ -233,54 +309,57 @@ Or edit the config via gear → *Open global / project config*, then click **+**
 ## Configuration
 
 <details>
-<summary><strong>All <code>grok.*</code> settings</strong> (VS Code Settings → search "grok")</summary>
+<summary><strong>All <code>grok.*</code> settings</strong> (VS Code Settings → search "Grokbit" or "grok")</summary>
 
 | Setting | Default | Notes |
 |---|---|---|
-| `grok.cliPath` | `""` | Path to the `grok` binary. Empty = auto-discover (`~/.grok/bin/grok` → PATH). |
+| `grok.cliPath` | `""` | Path to the `grok` binary. Empty = auto-discover. |
 | `grok.defaultModel` | `""` | Model ID for new sessions. Empty = CLI default. |
-| `grok.defaultEffort` | `""` | Reasoning effort forwarded as `--reasoning-effort` (`none` / `minimal` / `low` / `medium` / `high` / `xhigh`). Empty = CLI default. Changing it restarts the session. |
-| `grok.defaultMode` | `""` | Mode for new sessions, remembered automatically from your last Agent / Auto accept switch (Plan is never remembered). Empty = Agent. |
+| `grok.defaultEffort` | `""` | Thinking depth (`none` / `minimal` / `low` / `medium` / `high` / `xhigh`). Changing it restarts the session. |
+| `grok.defaultMode` | `""` | Mode for new sessions: Agent or Auto accept (Plan first is never remembered). Empty = Agent. |
 | `grok.includeActiveFileByDefault` | `true` | Auto-add the active editor as a context chip. |
 | `grok.useCtrlEnterToSend` | `false` | When true, Enter inserts a newline and Ctrl/Cmd+Enter sends. |
-| `grok.showThinking` | `false` | Show Grok's reasoning (thinking) traces in chat. Off shows a *Thinking…* stand-in. Also toggleable live from gear → Config & debug. |
-| `grok.telemetry.enabled` | `true` | Send anonymous, privacy-first usage telemetry (see [Privacy](#privacy)). Also honors VS Code's global `telemetry.telemetryLevel`. |
-| `grok.chatFontScale` | `100` | Zoom for the chat panel only, as a percent (`150`, `200`, …). Scales the whole chat UI without rescaling the rest of VS Code (unlike `Ctrl/Cmd+Shift+=`). Applies live; supports User (global) and Workspace (local) scope. |
-| `grok.voiceApiKey` | `""` | xAI API key for voice Speech-to-Text — a separate [console.x.ai](https://console.x.ai) developer key, not the CLI login. Empty = fall back to `GROK_VOICE_API_KEY` / `XAI_API_KEY` in the workspace `.env`. |
-| `grok.ffmpegPath` | `""` | Path to `ffmpeg` for microphone recording. Empty = use `ffmpeg` from `PATH`. |
-| `grok.voiceInputDevice` | `""` | Microphone device override. Empty = system default (Windows auto-detects the first DirectShow audio device). |
-| `grok.voiceSendPhrase` | `"grok send"` | Spoken phrase that auto-submits when it ends a transcription. Empty = disable hands-free sending. |
-| `grok.voiceStreaming` | `true` | Stream transcription live as you speak. `false` = one-shot batch mode. Streaming costs $0.20/hr vs $0.10/hr batch. |
+| `grok.showThinking` | `false` | Show full thinking details in chat. |
+| `grok.notifyWhenWaiting` | `false` | Passive notification when a background tab needs you. |
+| `grok.telemetry.enabled` | `true` | Anonymous usage telemetry (see Privacy). |
+| `grok.chatFontScale` | `100` | Chat-only zoom percent (60–300). |
+| `grok.voiceApiKey` | `""` | xAI API key for voice STT (separate from CLI login). |
+| `grok.ffmpegPath` | `""` | Path to `ffmpeg`. Empty = PATH. |
+| `grok.voiceInputDevice` | `""` | Microphone override. Empty = system default. |
+| `grok.voiceSendPhrase` | `"grok send"` | Spoken phrase to auto-submit. Empty = disable. |
+| `grok.voiceStreaming` | `true` | Live streaming STT (`false` = cheaper batch). |
 
 </details>
 
 ---
 
-## Commands & keybindings
+## Commands & keyboard shortcuts
 
 <details>
-<summary><strong>VS Code commands & keys</strong> (Ctrl/Cmd+Shift+P → "Grok")</summary>
-
-VS Code commands (not Grok slash commands):
+<summary><strong>VS Code commands & keys</strong> (Ctrl/Cmd+Shift+P → "Grokbit")</summary>
 
 | Command | What it does |
 |---|---|
-| `Grok: Open` | Open the Grok sidebar |
-| `Grok: New Session` | Start a fresh session |
-| `Grok: Pick Model` | Open the model picker |
-| `Grok: Toggle Plan / Agent Mode` | Open the mode picker (Agent / Plan / Auto accept) |
-| `Grok: Send File` | Add the selected file to context |
-| `Grok: Send Selection` | Send the current text selection to Grok |
-| `Grok: Insert @-Mention` | Insert an `@`-mention for the active file into the composer |
-| `Grok: Show Logs` | Open the Grok output channel (ACP messages, errors) |
-| `Grok: Log Out` | Sign out of the Grok CLI (`grok logout`) and return to the sign-in screen |
+| `Grokbit: Open` | Open the Grokbit launcher / focus chat |
+| `Grokbit: New Session` | Start a fresh session tab |
+| `Grokbit: Compact Conversation` | Compress conversation context |
+| `Grokbit: Pick Model` | Open the model picker |
+| `Grokbit: Toggle Plan / Agent Mode` | Open the mode picker |
+| `Grokbit: Send File` | Attach the selected file as context |
+| `Grokbit: Send Selection` | Send the current text selection |
+| `Grokbit: Insert @-Mention` | Attach the active file from the editor |
+| `Grokbit: Show Logs` | Open troubleshooting logs |
+| `Grokbit: Log Out` | Sign out of the Grok CLI |
 
 | Key | Action |
 |---|---|
-| `Ctrl+;` / `Cmd+;` | Open Grok sidebar |
-| `Alt+G` | Insert `@`-mention for the active file (when the editor is focused) |
+| `Ctrl+;` / `Cmd+;` | Open Grokbit |
+| `Alt+G` | Attach the current file (when the editor is focused) |
+| `Enter` | Send message (default) |
+| `Shift+Enter` | New line (default) |
+| `Ctrl/Cmd+Enter` | Send, if you enabled “Ctrl+Enter to send” |
 
-Grok's own **slash commands** (`/imagine`, `/compact`, …) autocomplete in the composer when you type `/`, sourced live from your installed CLI version. Reference snapshot: [docs/SLASH-COMMANDS.md](docs/SLASH-COMMANDS.md).
+Also listed in-app: gear → **Keyboard shortcuts**.
 
 </details>
 
@@ -288,11 +367,11 @@ Grok's own **slash commands** (`/imagine`, `/compact`, …) autocomplete in the 
 
 ## How it works
 
-The extension is intentionally **thin**: it speaks JSON-RPC over `grok agent stdio` and renders the results. Grok owns sessions, memory, MCP, models, and tool execution; the extension mediates file reads/writes, terminal requests, diff previews, the webview UI — and **Plan Mode**.
+The extension is intentionally **thin**: it talks to `grok agent stdio` and renders the results. Grok owns sessions, memory, tools, and models; Grokbit mediates file access, terminals, permissions, and the UI.
 
-Plan Mode is the one place the extension is *not* thin. The CLI's `exit_plan_mode` is unreliable (it reports "approved" to any reply), so the extension enforces planning itself: a **gate** blocks workspace writes and non-read-only commands until you approve, and a hidden **primer** message teaches Grok to read your real verdict (`[Plan approved]` / `[Plan rejected]` / `[Plan cancelled]`) from your next message. The primer is fired **eagerly and silently** the instant a session goes live (not in front of your first prompt), and is kept lean so it doesn't add a startup pause — your first real message simply waits, in code, for the silent primer turn to finish (Grok runs one turn at a time) and is released the moment it does.
+**Plan first** is the one place the extension adds a safety layer: it blocks workspace writes and non-read-only commands until you approve a plan, using clear follow-up messages Grok understands.
 
-Full diagram, message flow, module map, and design notes: **[docs/architecture.md](docs/architecture.md)**.
+Full architecture notes: **[docs/architecture.md](docs/architecture.md)**.
 
 ---
 
@@ -303,13 +382,11 @@ Full diagram, message flow, module map, and design notes: **[docs/architecture.m
 
 ```bash
 npm install
-npm test         # grok-free unit/DOM/integration suite — exactly what CI runs
+npm test         # grok-free unit/DOM/integration suite — same as CI
 npm run package  # → grokbit-<version>.vsix
 ```
 
-`npm test` is grok-free, so **local ≡ CI** — it never spawns the real binary. A separate, on-demand `npm run test:live` drives the actual `grok` end-to-end (handshake, restore, plan-mode, image/video gen) and is run **before a release**, not on every commit. Full test taxonomy and what's deferred to a future `@vscode/test-electron` suite: **[TESTS.md](TESTS.md)**. Architecture and module map: **[docs/architecture.md](docs/architecture.md)**.
-
-**Repo conventions:** direct-to-`main`, no feature branches; commits explain the *why*; no speculative abstractions; the grok-free suite is the floor — every change keeps it green.
+`npm test` never spawns the real `grok` binary. A separate `npm run test:live` exercises the real CLI before releases. See **[TESTS.md](TESTS.md)** and **[docs/architecture.md](docs/architecture.md)**.
 
 </details>
 
@@ -317,15 +394,16 @@ npm run package  # → grokbit-<version>.vsix
 
 ## Known limits
 
-- **Diff preview semantics.** The inline diff compares the proposed old vs. new text against each other, not against the file on disk at preview time. The write happens via `fs/write_text_file` after approval. This is an ACP constraint — `tool_call_update` carries the diff before the file is touched.
-- **No worktree UI.** `Grok: New Worktree Session` is planned but not yet implemented.
-- **View placement.** The view defaults to the left activity bar; drag it to the secondary side bar manually if you want it on the right.
+- **Diff preview** compares proposed old vs new text (not necessarily disk at preview time); the write happens after you approve.
+- **No worktree UI** yet.
+- **Subagent inspector** is not shipped (the CLI does not expose nested subagent cards over ACP in current builds).
+- The launcher defaults to the **left** activity bar; move it to the secondary side bar manually if you want it on the right.
 
 ---
 
 ## Privacy
 
-**Privacy by design** — no message content, no code, no file paths, and no account/email/login identity ever leave your machine. The only thing sent is an anonymous, opt-out usage count. Turn it off anytime with `grok.telemetry.enabled: false` or VS Code's global `telemetry.telemetryLevel`.
+**Privacy by design** — no message content, no code, no file paths, and no account identity leave your machine via telemetry. Turn telemetry off anytime with `grok.telemetry.enabled: false` or VS Code's global telemetry setting.
 
 More: [docs/privacy.md](docs/privacy.md).
 

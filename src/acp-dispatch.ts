@@ -209,6 +209,142 @@ export function extractGeneratedMediaPaths(payload: any): MediaRef[] {
   return out;
 }
 
+/**
+ * Business / office document kinds the chat can surface as result cards.
+ * Frozen v1 allowlist — see docs/plans/business-documents.md.
+ */
+export type BusinessDocKind =
+  | "word"
+  | "excel"
+  | "powerpoint"
+  | "pdf"
+  | "csv"
+  | "markdown"
+  | "text";
+
+export type BusinessDocRef = {
+  kind: BusinessDocKind;
+  path: string;
+  name: string;
+};
+
+/** How the host should open this kind: in-editor text vs OS default app. */
+export type DocumentOpenStrategy = "text" | "external";
+
+const BUSINESS_DOC_EXT: Record<string, BusinessDocKind> = {
+  ".docx": "word",
+  ".xlsx": "excel",
+  ".pptx": "powerpoint",
+  ".pdf": "pdf",
+  ".csv": "csv",
+  ".md": "markdown",
+  ".markdown": "markdown",
+  ".txt": "text",
+  ".rtf": "text",
+};
+
+const BUSINESS_EXT_ALT = "docx|xlsx|pptx|pdf|csv|markdown|md|txt|rtf";
+
+// Absolute (Windows / POSIX / UNC) or relative workspace-ish paths ending in a
+// known business-doc extension. Trailing sentence punctuation is excluded via
+// lookahead (same idea as MEDIA_PATH_IN_TEXT_RE).
+const BUSINESS_PATH_IN_TEXT_RE = new RegExp(
+  String.raw`(?:\\\\\?\\)?(?:[A-Za-z]:[\\/]|\/|\\\\|\.{0,2}[\\/])[^\r\n"'<>|?*]*?\.(?:${BUSINESS_EXT_ALT})(?=$|[\s.,;:)"'\]])`,
+  "gi",
+);
+
+/** Classify a path as a business document by extension, or null. */
+export function businessDocKindForPath(p: string): BusinessDocKind | null {
+  if (!p || typeof p !== "string") return null;
+  const base = p.replace(/\\/g, "/");
+  const slash = base.lastIndexOf("/");
+  const file = slash >= 0 ? base.slice(slash + 1) : base;
+  const dot = file.lastIndexOf(".");
+  if (dot < 0) return null;
+  return BUSINESS_DOC_EXT[file.slice(dot).toLowerCase()] ?? null;
+}
+
+export function businessDocLabel(kind: BusinessDocKind): string {
+  switch (kind) {
+    case "word": return "Word";
+    case "excel": return "Excel";
+    case "powerpoint": return "PowerPoint";
+    case "pdf": return "PDF";
+    case "csv": return "CSV";
+    case "markdown": return "Markdown";
+    case "text": return "Text";
+  }
+}
+
+/** Markdown/CSV/plain text open in the editor; Office/PDF use the OS default app. */
+export function openStrategyForKind(kind: BusinessDocKind): DocumentOpenStrategy {
+  return kind === "markdown" || kind === "csv" || kind === "text" ? "text" : "external";
+}
+
+function businessDocBasename(p: string): string {
+  const norm = p.replace(/\\/g, "/");
+  const i = norm.lastIndexOf("/");
+  return i >= 0 ? norm.slice(i + 1) : p;
+}
+
+/**
+ * Pull business-document paths out of a completed tool result's text content.
+ * Same JSON-vs-prose shapes as `extractGeneratedMediaPaths`, but for office /
+ * business extensions only (never images/videos or source code).
+ *
+ * Only scans `payload.content` text blocks — not free-form agent prose — to
+ * limit false-positive cards when Grok merely *mentions* a file.
+ */
+export function extractBusinessDocumentPaths(payload: any): BusinessDocRef[] {
+  const arr = payload?.content;
+  if (!Array.isArray(arr)) return [];
+  const out: BusinessDocRef[] = [];
+  const seen = new Set<string>();
+  const add = (raw: string) => {
+    const p = cleanMediaPath(String(raw).trim());
+    if (!p) return;
+    const kind = businessDocKindForPath(p);
+    if (!kind || seen.has(p)) return;
+    seen.add(p);
+    out.push({ kind, path: p, name: businessDocBasename(p) });
+  };
+  for (const item of arr) {
+    const block = item?.type === "content" ? item.content : item;
+    if (block?.type !== "text" || typeof block.text !== "string") continue;
+    let parsed: any;
+    try { parsed = JSON.parse(block.text); } catch { /* prose */ }
+    if (parsed && typeof parsed === "object") {
+      if (typeof parsed.path === "string") add(parsed.path);
+      // Some skill scripts report { output: "…/file.docx" } or { file: "…" }.
+      if (typeof parsed.output === "string") add(parsed.output);
+      if (typeof parsed.file === "string") add(parsed.file);
+      if (Array.isArray(parsed.paths)) {
+        for (const x of parsed.paths) if (typeof x === "string") add(x);
+      }
+    } else if (parsed === undefined) {
+      for (const m of block.text.matchAll(BUSINESS_PATH_IN_TEXT_RE)) add(m[0]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Whether a tool payload is far enough along that its content may carry a
+ * finished document path. Completed updates and single-shot replayed tool_calls
+ * (no status) are accepted; in-flight partial updates are skipped.
+ */
+export function isCompletedToolPayload(payload: any): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const s = payload.status;
+  if (s == null || s === "") return true;
+  if (typeof s === "string") return s === "completed" || s === "Completed";
+  if (typeof s === "object" && s !== null) {
+    const t = (s as any).type ?? (s as any).status;
+    return t === "completed" || t === "Completed";
+  }
+  return false;
+}
+
 export function routeSessionUpdate(u: any): UpdateRoute | null {
   if (!u) return null;
   switch (u.sessionUpdate) {

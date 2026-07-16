@@ -1,0 +1,4 @@
+description = "GrokForge backend specialist. Stack-adaptive. Correctness and tests first."
+instructions_file = ".grok/personas/instructions/gf-backend.md"
+reasoning_effort = "high"
+default_capability_mode = "all"

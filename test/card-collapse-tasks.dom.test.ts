@@ -41,7 +41,7 @@ describe("permission card ordering + collapse", () => {
     const { window, posted, doc } = bootWebview();
     dispatch(window, permReq);
     const allow = [...doc.querySelectorAll(".card.permission .card-actions button")]
-      .find((b) => b.textContent === "Allow")!;
+      .find((b) => b.textContent === "Allow this change")!;
     click(window, allow);
 
     const card = doc.querySelector(".card.permission")!;
@@ -58,7 +58,7 @@ describe("permission card ordering + collapse", () => {
     const { window, doc } = bootWebview();
     dispatch(window, permReq);
     const reject = [...doc.querySelectorAll(".card.permission .card-actions button")]
-      .find((b) => b.textContent === "Reject")!;
+      .find((b) => b.textContent === "Don't allow")!;
     click(window, reject);
     const line = doc.querySelector(".card.permission .perm-resolved-line")!;
     expect(line.classList.contains("perm-rejected")).toBe(true);

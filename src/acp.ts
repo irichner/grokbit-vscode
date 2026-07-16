@@ -3,7 +3,9 @@ import { createInterface, Interface } from "node:readline";
 import { EventEmitter } from "node:events";
 import {
   collectToolImages,
+  extractBusinessDocumentPaths,
   extractGeneratedMediaPaths,
+  isCompletedToolPayload,
   isMediaGenToolCall,
   extractPromptMeta,
   makeAckResponse,
@@ -150,6 +152,13 @@ export class AcpClient extends EventEmitter {
    * research/image-generation.md.
    */
   private mediaGenCallIds = new Set<string>();
+
+  /**
+   * Business-doc paths already emitted for a given toolCallId (completed tool
+   * updates can re-send the same content; de-dupe per call, not per session, so
+   * a second create of the same name later can still surface a card).
+   */
+  private emittedBusinessDocsByToolCall = new Map<string, Set<string>>();
 
   /**
    * Client-enforced plan gate. While true, workspace file writes and mutating
@@ -507,9 +516,11 @@ export class AcpClient extends EventEmitter {
     else if (r.event === "toolCall") {
       this.emit("toolCall", r.payload);
       this.emitToolMedia(r.payload);
+      this.emitToolBusinessDocs(r.payload);
     } else if (r.event === "toolCallUpdate") {
       this.emit("toolCallUpdate", r.payload);
       this.emitToolMedia(r.payload);
+      this.emitToolBusinessDocs(r.payload);
     } else if (r.event === "plan") this.emit("plan", r.payload);
     else this.emit("update", r.payload);
   }
@@ -527,6 +538,27 @@ export class AcpClient extends EventEmitter {
       media.push(...extractGeneratedMediaPaths(payload));
     }
     for (const m of media) this.emit("mediaContent", m);
+  }
+
+  /**
+   * Surface business/office document paths found in completed tool results as
+   * `documentContent` events (host → webview document cards). Extension-based —
+   * not limited to a named media tool — so `/docx` / `/xlsx` / shell skill
+   * scripts all work. See docs/plans/business-documents.md.
+   */
+  private emitToolBusinessDocs(payload: any): void {
+    if (!isCompletedToolPayload(payload)) return;
+    const id = typeof payload?.toolCallId === "string" ? payload.toolCallId : "_";
+    let seen = this.emittedBusinessDocsByToolCall.get(id);
+    if (!seen) {
+      seen = new Set();
+      this.emittedBusinessDocsByToolCall.set(id, seen);
+    }
+    for (const ref of extractBusinessDocumentPaths(payload)) {
+      if (seen.has(ref.path)) continue;
+      seen.add(ref.path);
+      this.emit("documentContent", ref);
+    }
   }
 
   private async handleServerRequest(msg: any): Promise<void> {

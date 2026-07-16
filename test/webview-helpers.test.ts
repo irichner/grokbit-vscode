@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain JS module, no types
-import { looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, parseAttachmentContext } from "../media/webview-helpers.js";
+import { looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta } from "../media/webview-helpers.js";
 import { buildPrompt } from "../src/prompt-builder";
 import { makeExplicitChip, makeImplicitChip } from "../src/chips";
 
@@ -485,5 +485,66 @@ describe("stripUnsupportedTex", () => {
   it("coerces null/undefined to an empty string", () => {
     expect(stripUnsupportedTex(null)).toBe("");
     expect(stripUnsupportedTex(undefined)).toBe("");
+  });
+});
+
+describe("formatTokenCount", () => {
+  it("keeps small counts as plain integers", () => {
+    expect(formatTokenCount(0)).toBe("0");
+    expect(formatTokenCount(42)).toBe("42");
+    expect(formatTokenCount(999)).toBe("999");
+  });
+
+  it("uses one decimal for all K values", () => {
+    expect(formatTokenCount(1000)).toBe("1.0K");
+    expect(formatTokenCount(12500)).toBe("12.5K");
+    expect(formatTokenCount(11947)).toBe("11.9K");
+    expect(formatTokenCount(100_000)).toBe("100.0K");
+    expect(formatTokenCount(512_345)).toBe("512.3K");
+  });
+
+  it("uses one decimal for millions", () => {
+    expect(formatTokenCount(1_000_000)).toBe("1.0M");
+    expect(formatTokenCount(1_503_035)).toBe("1.5M");
+  });
+
+  it("rejects non-finite / negative inputs", () => {
+    expect(formatTokenCount(NaN)).toBe("");
+    expect(formatTokenCount(-1)).toBe("");
+    expect(formatTokenCount(undefined as unknown as number)).toBe("");
+  });
+});
+
+describe("formatLauncherMeta", () => {
+  it("shows version alone when tokens are unknown", () => {
+    expect(formatLauncherMeta({ extVersion: "2.0.2" })).toBe("v2.0.2");
+  });
+
+  it("does not double-prefix a version that already starts with v", () => {
+    expect(formatLauncherMeta({ extVersion: "v1.4.0" })).toBe("v1.4.0");
+  });
+
+  it("joins version and compact token count (1 decimal)", () => {
+    expect(formatLauncherMeta({ extVersion: "2.0.2", totalTokens: 12_500 })).toBe(
+      "v2.0.2 · 12.5K tokens",
+    );
+    expect(formatLauncherMeta({ extVersion: "2.0.2", totalTokens: 1000 })).toBe(
+      "v2.0.2 · 1.0K tokens",
+    );
+  });
+
+  it("shows tokens alone when version is missing", () => {
+    expect(formatLauncherMeta({ totalTokens: 42 })).toBe("42 tokens");
+  });
+
+  it("returns empty when neither version nor tokens are known", () => {
+    expect(formatLauncherMeta({})).toBe("");
+    expect(formatLauncherMeta(undefined as unknown as { extVersion?: string })).toBe("");
+  });
+
+  it("treats zero tokens as a known count (not hidden)", () => {
+    expect(formatLauncherMeta({ extVersion: "2.0.2", totalTokens: 0 })).toBe(
+      "v2.0.2 · 0 tokens",
+    );
   });
 });

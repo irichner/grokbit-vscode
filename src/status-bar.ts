@@ -42,16 +42,18 @@ export interface StatusBarView {
   warning: boolean;
 }
 
+// Compact status-bar text only — keep "Auto" short so model · effort · mode · %
+// still fits. Full name "Auto accept" lives in MODE_TOOLTIP / mode picker.
 const MODE_LABEL: Record<StatusMode, string> = {
   agent: "Agent",
-  plan: "Plan",
+  plan: "Plan first",
   yolo: "Auto",
 };
 
 const MODE_TOOLTIP: Record<StatusMode, string> = {
-  agent: "Agent",
-  plan: "Plan — writes and commands blocked until you approve a plan",
-  yolo: "Auto accept — every permission auto-approved",
+  agent: "Agent — Grok may ask before editing files or running commands",
+  plan: "Plan first — files and commands blocked until you approve a plan",
+  yolo: "Auto accept — changes go through without asking each time",
 };
 
 function capitalize(s: string): string {

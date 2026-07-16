@@ -35,6 +35,30 @@ export class Session {
    */
   afterTurn?: () => Promise<void>;
 
+  /**
+   * True while handleSend owns the CLI turn lane (an in-flight session/prompt
+   * and any chained afterTurn / queued follow-ups). A second user send while
+   * this is set is acked immediately and queued (see pendingUserSends) rather
+   * than overlapping client.prompt.
+   */
+  promptInFlight = false;
+
+  /**
+   * User messages submitted while a turn was already running. Each entry was
+   * already shown in the webview (user bubble + Grokking) at queue time; the
+   * host cancels the current turn and drains this FIFO without flashing idle
+   * (no agentEnd between turns).
+   */
+  pendingUserSends: { text: string; finalPrompt: string }[] = [];
+
+  /**
+   * Drop remaining stream content from the turn being cancelled to make room
+   * for a follow-up send — same content set as plan-reject suppress, so
+   * lifecycle (promptComplete) still finalizes the partial reply. Cleared
+   * when the next prompt actually starts.
+   */
+  suppressTurnTail = false;
+
   /** This session has conversational history (vs. a fresh, empty one). */
   hasHistory = false;
 

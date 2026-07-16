@@ -1,0 +1,4 @@
+description = "GrokForge frontend specialist. Stack-adaptive. Design standards, UX states, a11y, tests."
+instructions_file = ".grok/personas/instructions/gf-frontend.md"
+reasoning_effort = "high"
+default_capability_mode = "all"

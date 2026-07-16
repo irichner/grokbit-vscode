@@ -95,7 +95,7 @@ describe("permission card inline diff (real chat.js in a DOM)", () => {
     seedDiffAndCard(window, 11);
 
     const allow = [...doc.querySelectorAll(".card.permission .card-actions button")]
-      .find((b) => b.textContent === "Allow once") as HTMLButtonElement;
+      .find((b) => b.textContent === "Allow this change") as HTMLButtonElement;
     click(window, allow);
 
     const answer = posted.find((m: any) => m.type === "permissionAnswer");

@@ -366,6 +366,93 @@ export function readSessionTokenUsage(deps: SessionDirDeps): number | undefined 
   }
 }
 
+/**
+ * Best on-disk estimate of tokens a single session has used for this project:
+ * current context (`contextTokensUsed`) plus tokens dropped by compaction
+ * (`totalTokensBeforeCompaction`). Grok does not persist a full billable
+ * input+output lifetime counter — this is the closest durable signal. Pure.
+ */
+export function sessionTokenEstimate(signals: {
+  contextTokensUsed?: unknown;
+  totalTokensBeforeCompaction?: unknown;
+}): number {
+  const ctx =
+    typeof signals.contextTokensUsed === "number" && isFinite(signals.contextTokensUsed)
+      ? Math.max(0, signals.contextTokensUsed)
+      : 0;
+  const compacted =
+    typeof signals.totalTokensBeforeCompaction === "number" &&
+    isFinite(signals.totalTokensBeforeCompaction)
+      ? Math.max(0, signals.totalTokensBeforeCompaction)
+      : 0;
+  return ctx + compacted;
+}
+
+export interface WorkspaceTokenUsage {
+  /** Sum of per-session estimates for every on-disk session under this cwd. */
+  total: number;
+  /** Per-session estimates (id → tokens) for live lift-up. */
+  byId: Record<string, number>;
+}
+
+/**
+ * Project lifetime token estimate: sum of every session's on-disk
+ * `signals.json` estimate for this workspace cwd. Pure — no network, no
+ * vscode. Missing/unreadable dirs contribute 0.
+ */
+export function readWorkspaceTokenUsage(deps: ListDeps | Omit<ListDeps, "overrides" | "now">): WorkspaceTokenUsage {
+  const { fs, grokHome, cwd } = deps;
+  const root = sessionsDirFor(grokHome, cwd);
+  const byId: Record<string, number> = {};
+  let total = 0;
+  if (!fs.existsSync(root)) return { total: 0, byId };
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(root);
+  } catch {
+    return { total: 0, byId };
+  }
+  for (const id of names) {
+    const dir = path.join(root, id);
+    try {
+      if (!fs.statSync(dir).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    const file = path.join(dir, "signals.json");
+    try {
+      if (!fs.existsSync(file)) continue;
+      const n = sessionTokenEstimate(JSON.parse(fs.readFileSync(file, "utf8")) ?? {});
+      if (n > 0) {
+        byId[id] = n;
+        total += n;
+      }
+    } catch {
+      // skip unreadable / malformed
+    }
+  }
+  return { total, byId };
+}
+
+/**
+ * Lift the disk total with in-memory session context so a live turn that has
+ * not flushed `signals.json` yet still counts. Pure.
+ */
+export function mergeWorkspaceTokenUsage(
+  disk: WorkspaceTokenUsage,
+  live: Iterable<{ id?: string | null; tokens?: number | null }>,
+): number {
+  let sum = disk.total;
+  for (const s of live) {
+    const id = s.id || undefined;
+    const tokens = s.tokens;
+    if (!id || typeof tokens !== "number" || !isFinite(tokens) || tokens < 0) continue;
+    const prev = disk.byId[id] ?? 0;
+    if (tokens > prev) sum += tokens - prev;
+  }
+  return sum;
+}
+
 /** Remove the on-disk session directory. No-op if missing. */
 export function deleteSessionDir(deps: SessionDirDeps): void {
   const { fs, grokHome, cwd, id } = deps;

@@ -4,7 +4,7 @@
 // Rows mirror the chat panel's history-popover markup so chat.css styles both.
 (function () {
   const vscode = acquireVsCodeApi();
-  const { formatRelativeTime } = globalThis.GrokWebviewHelpers;
+  const { formatRelativeTime, formatLauncherMeta } = globalThis.GrokWebviewHelpers;
 
   const $ = (id) => document.getElementById(id);
   const listEl = $("launcher-list");
@@ -13,17 +13,20 @@
   const newBtn = $("launcher-new");
   const searchEl = $("launcher-search");
   const onboardingEl = $("launcher-onboarding");
+  const metaEl = $("launcher-meta");
 
   const ICON = {
     pencil: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>',
     trash: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>',
   };
 
-  const DOT_LABEL = {
-    working: "Working",
-    "needs-you": "Needs you",
-    unread: "Finished — unopened",
-    error: "Finished with an error — unopened",
+  // Shared with chat history popover (GrokWebviewHelpers.SESSION_DOT_LABELS) so
+  // launcher + chat never show different wording for the same dots.
+  const DOT_LABEL = (globalThis.GrokWebviewHelpers && globalThis.GrokWebviewHelpers.SESSION_DOT_LABELS) || {
+    working: "Working on it",
+    "needs-you": "Needs your OK",
+    unread: "Done — not opened yet",
+    error: "Finished with an error — not opened yet",
   };
 
   const state = {
@@ -36,8 +39,30 @@
     hasMore: false,
     loading: false,
     renamingId: null,
+    extVersion: "",
+    totalTokens: undefined,
   };
   let searchTimer = null;
+
+  function renderMeta() {
+    if (!metaEl) return;
+    const text = formatLauncherMeta({
+      extVersion: state.extVersion,
+      totalTokens: state.totalTokens,
+    });
+    metaEl.textContent = text;
+    metaEl.hidden = !text;
+    if (typeof state.totalTokens === "number") {
+      metaEl.title =
+        (state.extVersion ? "Extension v" + state.extVersion + " · " : "") +
+        state.totalTokens.toLocaleString() +
+        " tokens used (project lifetime estimate)";
+    } else if (state.extVersion) {
+      metaEl.title = "Extension v" + state.extVersion;
+    } else {
+      metaEl.title = "";
+    }
+  }
 
   function requestSessions(offset) {
     state.loading = true;
@@ -263,6 +288,12 @@
         break;
       case "onboarding":
         showOnboarding(msg.state, { platform: msg.platform });
+        break;
+      case "launcherMeta":
+        state.extVersion = msg.extVersion || "";
+        state.totalTokens =
+          typeof msg.totalTokens === "number" ? msg.totalTokens : undefined;
+        renderMeta();
         break;
       // Chat-panel broadcasts (fontScale, cliUpdating, …) don't apply here.
     }

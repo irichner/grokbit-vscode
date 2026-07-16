@@ -1,0 +1,20 @@
+{
+  "//": "MCP servers give Claude Code external tools and data. Uncomment what you need,",
+  "//1": "fill in env vars (use ${ENV_VAR} so secrets stay out of source), then restart.",
+  "//2": "Docs: https://code.claude.com/docs (search 'MCP').",
+  "mcpServers": {
+    "//github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}" }
+    },
+    "//filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "${PWD}"]
+    },
+    "//postgres": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres", "${DATABASE_URL}"]
+    }
+  }
+}

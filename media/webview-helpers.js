@@ -326,7 +326,180 @@
     return { files, body };
   }
 
-  const api = { FILE_EXTS, looksLikeFileRef, formatRelativeTime, modelDisplayName, MIC_STATES, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext };
+  // Friendly mode labels + short helper text for non-technical users. Internal
+  // mode ids stay agent/plan/yolo (protocol + host); only the chrome wording lives
+  // here so tests and the mode picker can share one map.
+  const MODE_DISPLAY = {
+    agent: {
+      label: "Agent",
+      desc: "Grok can help right away. It may ask before editing files or running commands.",
+    },
+    plan: {
+      label: "Plan first",
+      desc: "Grok drafts a plan first. Nothing changes until you approve it.",
+    },
+    yolo: {
+      label: "Auto accept",
+      desc: "Grok makes changes without asking for permission each time.",
+    },
+  };
+  function modeDisplayMeta(modeId) {
+    return MODE_DISPLAY[modeId] || MODE_DISPLAY.agent;
+  }
+
+  // Map ACP permission option kinds to plain-language button labels. Protocol
+  // optionId/kind stay unchanged — only the text the user sees is friendlier.
+  // Falls back to the CLI-provided name when the kind is unknown.
+  const PERMISSION_LABELS = {
+    allow_once: "Allow this change",
+    allow_always: "Allow always",
+    reject_once: "Don't allow",
+    reject_always: "Don't allow",
+    deny_once: "Don't allow",
+    deny_always: "Don't allow",
+  };
+  function permissionButtonLabel(opt) {
+    if (!opt) return "Continue";
+    const kind = String(opt.kind || "").toLowerCase();
+    if (PERMISSION_LABELS[kind]) return PERMISSION_LABELS[kind];
+    if (/^allow/.test(kind)) return kind.indexOf("always") >= 0 ? "Allow always" : "Allow this change";
+    if (/^(reject|deny)/.test(kind)) return "Don't allow";
+    return opt.name || "Continue";
+  }
+
+  // True when a permission option kind is a rejection (mirrors permissionOutcomeFor
+  // in acp-dispatch: reject_* / deny_* → rejected). Used for button danger styling
+  // and the collapsed-card verb/colour so deny_* never paints as green "Answered".
+  function isRejectedPermissionKind(kind) {
+    return /reject|deny/i.test(String(kind || ""));
+  }
+  function permissionCollapseVerb(kind) {
+    if (isRejectedPermissionKind(kind)) return "Rejected";
+    if (/allow/i.test(String(kind || ""))) return "Allowed";
+    return "Answered";
+  }
+
+  // Status-dot tooltips for chat history + activity-bar launcher (shared so the
+  // two surfaces cannot drift). Keys match computeDot values.
+  const SESSION_DOT_LABELS = {
+    working: "Working on it",
+    "needs-you": "Needs your OK",
+    unread: "Done — not opened yet",
+    error: "Finished with an error — not opened yet",
+  };
+  function sessionDotLabel(value) {
+    return SESSION_DOT_LABELS[value] || "";
+  }
+
+  // Starter action cards for the empty-session welcome screen. Pure so unit tests
+  // can assert the catalog without booting the webview. `voiceConfigured` swaps
+  // the dictate card for a setup hint when the STT key is missing.
+  function welcomeStarters(opts) {
+    opts = opts || {};
+    const voiceConfigured = opts.voiceConfigured !== false;
+    const cards = [
+      {
+        id: "explain",
+        title: "Explain this project",
+        desc: "A plain-English overview of what you're looking at",
+        prompt: "Explain this project to me in plain English — what it does, how it's organized, and where I should start.",
+        action: "insert",
+      },
+      {
+        id: "write-fix",
+        title: "Write or fix something",
+        desc: "Describe a change and Grok will help implement it",
+        prompt: "Help me write or fix something: ",
+        action: "insert",
+      },
+      {
+        id: "plan",
+        title: "Plan a change safely",
+        desc: "Draft a plan first — nothing changes until you approve",
+        prompt: "Help me plan a change carefully before making any edits: ",
+        action: "plan",
+      },
+      {
+        id: "imagine",
+        title: "Create an image",
+        desc: "Generate a picture from a description",
+        prompt: "/imagine ",
+        action: "insert",
+      },
+    ];
+    if (voiceConfigured) {
+      cards.push({
+        id: "voice",
+        title: "Dictate instead of type",
+        desc: "Click the microphone and speak your request",
+        prompt: "",
+        action: "focus-mic",
+      });
+    } else {
+      cards.push({
+        id: "voice-setup",
+        title: "Dictate instead of type",
+        desc: "Voice needs a free setup step (API key + ffmpeg)",
+        prompt: "",
+        action: "voice-hint",
+      });
+    }
+    return cards;
+  }
+
+  /**
+   * Office / business document type chips for the welcome screen.
+   * Each icon click inserts `Create <label>: ` into the composer (user finishes the prompt).
+   * Pure catalog so unit tests can assert labels + prompts without the webview.
+   */
+  function businessDocTypeStarters() {
+    return [
+      { id: "word", label: "Word", prompt: "Create Word document: " },
+      { id: "excel", label: "Excel", prompt: "Create Excel spreadsheet: " },
+      { id: "powerpoint", label: "PowerPoint", prompt: "Create PowerPoint presentation: " },
+      { id: "pdf", label: "PDF", prompt: "Create PDF: " },
+      { id: "csv", label: "CSV", prompt: "Create CSV: " },
+      { id: "markdown", label: "Markdown", prompt: "Create Markdown document: " },
+    ];
+  }
+
+  /**
+   * Compact token count for launcher meta / tooltips.
+   * Always one decimal for K/M units ("12.5K", "1.0K", "1.5M"); plain integers below 1K.
+   */
+  function formatTokenCount(n) {
+    if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return "";
+    if (n < 1000) return String(Math.round(n));
+    if (n < 1_000_000) return (n / 1000).toFixed(1) + "K";
+    return (n / 1_000_000).toFixed(1) + "M";
+  }
+
+  /**
+   * Launcher header line above "New session": extension version + active-session
+   * tokens when known. Pure so unit tests pin the format without the webview.
+   * e.g. "v2.0.2 · 12.5K tokens" or just "v2.0.2" when no session tokens yet.
+   */
+  function formatLauncherMeta(opts) {
+    opts = opts || {};
+    const raw = String(opts.extVersion || "").trim();
+    const verLabel = raw ? (raw.charAt(0) === "v" || raw.charAt(0) === "V" ? raw : "v" + raw) : "";
+    const tokens =
+      typeof opts.totalTokens === "number" && Number.isFinite(opts.totalTokens)
+        ? formatTokenCount(opts.totalTokens) + " tokens"
+        : "";
+    return [verLabel, tokens].filter(Boolean).join(" · ");
+  }
+
+  const api = {
+    FILE_EXTS, looksLikeFileRef, formatRelativeTime, modelDisplayName,
+    MIC_STATES, nextMicState, trailingSendPhrase, buildQuestionAnswers,
+    isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath,
+    stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext,
+    MODE_DISPLAY, modeDisplayMeta, permissionButtonLabel, welcomeStarters,
+    businessDocTypeStarters, formatTokenCount, formatLauncherMeta,
+    isRejectedPermissionKind, permissionCollapseVerb,
+    SESSION_DOT_LABELS, sessionDotLabel,
+  };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;
   } else {

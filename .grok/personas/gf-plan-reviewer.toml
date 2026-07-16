@@ -1,0 +1,4 @@
+description = "GrokForge plan reviewer. Adversarial. No implementation."
+instructions_file = ".grok/personas/instructions/gf-plan-reviewer.md"
+reasoning_effort = "high"
+default_capability_mode = "read-only"

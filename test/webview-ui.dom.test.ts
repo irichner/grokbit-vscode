@@ -343,7 +343,7 @@ describe("session status dots (Agent Dashboard)", () => {
 
   it("keeps the dot's tooltip in sync with its state", () => {
     const { doc } = openWithDots({ s1: "working" });
-    expect(dotOf(doc, "s1").title).toBe("Working");
+    expect(dotOf(doc, "s1").title).toBe("Working on it");
   });
 });
 
@@ -355,10 +355,10 @@ describe("mode picker (the plan-gate entry path)", () => {
     click(window, $(doc, "mode-btn"));
     expect((pop as any).hidden).toBe(false);
     const labels = [...pop.querySelectorAll(".mode-item-label")].map((l) => l.textContent);
-    expect(labels).toEqual(["Agent mode", "Plan mode", "Auto accept"]);
+    expect(labels).toEqual(["Agent", "Plan first", "Auto accept"]);
 
     const planItem = [...pop.querySelectorAll(".mode-popover-item")]
-      .find((el) => el.querySelector(".mode-item-label")!.textContent === "Plan mode") as HTMLElement;
+      .find((el) => el.querySelector(".mode-item-label")!.textContent === "Plan first") as HTMLElement;
     click(window, planItem);
 
     expect(posted).toContainEqual({ type: "setMode", modeId: "plan" });
@@ -729,6 +729,72 @@ describe("send button startup state (spinner by default until the session is rea
   });
 });
 
+describe("mid-turn follow-up send (no interrupted flash)", () => {
+  const sendBtn = (doc: Document) => $(doc, "send-btn") as HTMLButtonElement;
+  const input = (doc: Document) => $(doc, "input") as HTMLTextAreaElement;
+
+  function bootBusyWithPartialReply() {
+    const h = bootWebview();
+    // First turn in flight: host marks busy (stoppable) and streams a partial reply.
+    dispatch(h.window, { type: "userMessage", text: "first prompt", chips: [] });
+    dispatch(h.window, { type: "agentStart" });
+    dispatch(h.window, { type: "messageChunk", text: "partial answer so far" });
+    h.posted.length = 0;
+    return h;
+  }
+
+  it("Enter with text while busy posts send (follow-up), not cancel", () => {
+    const { window, posted, doc } = bootBusyWithPartialReply();
+    input(doc).value = "second prompt";
+    input(doc).dispatchEvent(
+      new (window as any).KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+
+    expect(types(posted)).toContain("send");
+    expect(types(posted)).not.toContain("cancel");
+    const send = posted.find((p) => p.type === "send") as Posted & { text?: string };
+    expect(send.text).toBe("second prompt");
+    expect(input(doc).value).toBe(""); // composer cleared on ack
+    // Stay busy (Stop) — no idle flash while the host chains the follow-up.
+    expect(sendBtn(doc).classList.contains("stop")).toBe(true);
+  });
+
+  it("Stop button while busy posts cancel only (even if composer has text)", () => {
+    const { window, posted, doc } = bootBusyWithPartialReply();
+    input(doc).value = "should not be sent by stop";
+    click(window, sendBtn(doc));
+
+    expect(types(posted)).toEqual(["cancel"]);
+    expect(input(doc).value).toBe("should not be sent by stop");
+  });
+
+  it("follow-up userMessage seals the partial reply and keeps busy continuous", () => {
+    const { window, doc } = bootBusyWithPartialReply();
+
+    // Host acks the queued follow-up (no agentEnd between turns). userMessage
+    // commits the in-flight agent bubble (flushAgent), so the partial stays on
+    // screen under the new user message instead of looking interrupted.
+    dispatch(window, { type: "userMessage", text: "second prompt", chips: [] });
+    dispatch(window, { type: "agentStart" });
+
+    const text = $(doc, "messages").textContent || "";
+    expect(text).toContain("partial answer so far"); // prior reply kept, not wiped
+    expect(text).toContain("second prompt");
+    expect(text).toMatch(/Grokking/i); // progress under the new request
+    expect(sendBtn(doc).classList.contains("stop")).toBe(true); // still busy
+    expect(sendBtn(doc).classList.contains("initializing")).toBe(false);
+  });
+
+  it("empty Enter while busy does not cancel or send", () => {
+    const { window, posted, doc } = bootBusyWithPartialReply();
+    input(doc).value = "   ";
+    input(doc).dispatchEvent(
+      new (window as any).KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+    expect(posted).toEqual([]);
+  });
+});
+
 describe("gear menu — Other group + About / Config & debug sub-views", () => {
   function boot() {
     const h = bootWebview();
@@ -822,18 +888,18 @@ describe("gear menu — Other group + About / Config & debug sub-views", () => {
     click(h.window, itemByText(h.doc, "Config & debug"));
 
     const labels = items(h.doc).map((el) => el.textContent || "");
-    expect(labels.some((l) => l.includes("Open global config"))).toBe(true);
-    expect(labels.some((l) => l.includes("Open project config"))).toBe(true);
-    expect(labels.some((l) => l.includes("MCP servers"))).toBe(true);
-    expect(labels.some((l) => l.includes("Show extension logs"))).toBe(true);
+    expect(labels.some((l) => l.includes("Open global settings file"))).toBe(true);
+    expect(labels.some((l) => l.includes("Open project settings file"))).toBe(true);
+    expect(labels.some((l) => l.includes("Connected tools (MCP)"))).toBe(true);
+    expect(labels.some((l) => l.includes("Show troubleshooting logs"))).toBe(true);
 
-    click(h.window, itemByText(h.doc, "Show extension logs"));
+    click(h.window, itemByText(h.doc, "Show troubleshooting logs"));
     expect(types(h.posted)).toContain("showLogs");
   });
 });
 
 describe("Auto accept mode label (#25 rename)", () => {
-  it("labels the auto-approve mode 'Auto accept' and keeps YOLO only in the description", () => {
+  it("labels the auto-approve mode 'Auto accept' with plain-language description (no YOLO jargon)", () => {
     const { window, doc } = bootWebview();
     click(window, $(doc, "mode-btn"));
     const pop = $(doc, "mode-popover");
@@ -841,7 +907,9 @@ describe("Auto accept mode label (#25 rename)", () => {
       (el) => el.querySelector(".mode-item-label")?.textContent === "Auto accept",
     ) as HTMLElement;
     expect(yolo).toBeTruthy();
-    expect(yolo.querySelector(".mode-item-desc")?.textContent).toContain("YOLO");
+    const desc = yolo.querySelector(".mode-item-desc")?.textContent || "";
+    expect(desc.toLowerCase()).toMatch(/without asking|auto/);
+    expect(desc).not.toContain("YOLO");
   });
 });
 
@@ -888,7 +956,7 @@ describe("thinking traces toggle (#26)", () => {
     expect(doc.querySelector(".thinking-indicator")).toBeNull();
   });
 
-  it("exposes a Show thinking traces switch in Config & debug that posts setShowThinking and flips the class", () => {
+  it("exposes a Show thinking details switch in Config & debug that posts setShowThinking and flips the class", () => {
     const { window, posted, doc } = bootWebview();
     dispatch(window, { type: "showThinking", value: false });
     expect(doc.body.classList.contains("thinking-hidden")).toBe(true);
@@ -898,7 +966,7 @@ describe("thinking traces toggle (#26)", () => {
     ) as HTMLElement;
     click(window, cfg);
     const toggle = [...doc.querySelectorAll("#gear-popover .toolbar-popover-item")].find(
-      (el) => el.textContent?.includes("Show thinking traces"),
+      (el) => el.textContent?.includes("Show thinking details"),
     ) as HTMLElement;
     expect(toggle).toBeTruthy();
     expect(toggle.querySelector(".popover-switch")).not.toBeNull();

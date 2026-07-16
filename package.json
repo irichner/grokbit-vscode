@@ -159,7 +159,11 @@
         },
         "grok.defaultMode": {
           "type": "string",
-          "enum": ["", "agent", "yolo"],
+          "enum": [
+            "",
+            "agent",
+            "yolo"
+          ],
           "enumDescriptions": [
             "Agent mode (CLI default)",
             "Agent mode",
@@ -270,7 +274,7 @@
     "@types/ws": "^8.18.1",
     "happy-dom": "^20.9.0",
     "typescript": "^5.4.0",
-    "vitest": "^1.6.0"
+    "vitest": "^2.1.9"
   },
   "dependencies": {
     "ws": "^8.21.0"

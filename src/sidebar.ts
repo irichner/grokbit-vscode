@@ -11,7 +11,16 @@ import { PanelRouter } from "./panel-router";
 import { resolveVoiceKey, parseVoiceCommand, DEFAULT_SEND_PHRASE } from "./voice";
 import { VoiceRecorder, transcribeAudio, resolveWindowsAudioDevice } from "./voice-recorder";
 import { VoiceStreamer } from "./voice-streamer";
-import { MediaRef, isIncompatibleAgentError, permissionOutcomeFor, resolveModelId, summarizeBackgroundCommand } from "./acp-dispatch";
+import {
+  BusinessDocRef,
+  MediaRef,
+  businessDocKindForPath,
+  isIncompatibleAgentError,
+  openStrategyForKind,
+  permissionOutcomeFor,
+  resolveModelId,
+  summarizeBackgroundCommand,
+} from "./acp-dispatch";
 import { modeToRemember, startsInYolo } from "./mode-prefs";
 import { computeStatusBar } from "./status-bar";
 import {
@@ -57,8 +66,10 @@ import {
   fallbackName,
   indexSessions,
   isEmptyPrimerSession,
+  mergeWorkspaceTokenUsage,
   readSessionEntries,
   readSessionTokenUsage,
+  readWorkspaceTokenUsage,
   resolveGrokHome,
   sessionsDirFor,
   tabTitleFor,
@@ -74,6 +85,7 @@ type WebviewMsg =
   | { type: "removeChip"; id: string }
   | { type: "toggleChip"; id: string }
   | { type: "openFile"; path: string }
+  | { type: "revealInOs"; path: string }
   | { type: "openUrl"; url: string }
   | { type: "exportExpr"; action: string; kind: string; current?: string; svg?: string; png?: string; svgDark?: string; svgLight?: string }
   | { type: "setEffort"; level: string }
@@ -180,6 +192,11 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
    * (it's just a read cache, never a source of truth).
    */
   private sessionCache = new Map<string, { mtimeMs: number; entry: SessionListEntry }>();
+  /**
+   * Cached project-lifetime token estimate for the launcher header. Refreshed
+   * on launcher ready / turn complete / session delete — not on every status-bar tick.
+   */
+  private lifetimeTokensCache?: number;
   /**
    * Soft bound on live `grok agent stdio` processes. An open tab is a visible,
    * user-owned thing, so nothing is ever silently killed (the old time/LRU
@@ -300,6 +317,7 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
     switch (msg.type) {
       case "ready":
         this.postLauncherSessions();
+        this.postLauncherMeta({ refresh: true });
         break;
       case "listSessions":
         this.postLauncherSessions({ offset: msg.offset, limit: msg.limit, query: msg.query });
@@ -539,6 +557,39 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
     let n = 0;
     for (const s of this.pool) if (s.status === "needs-you") n++;
     return n;
+  }
+
+  /**
+   * Extension version + **project lifetime** token estimate for the launcher
+   * header (above "New session"). Lifetime = sum of every on-disk session's
+   * signals.json estimate for this workspace, lifted by any live session's
+   * in-memory context that has not flushed yet. Not the active-session donut.
+   */
+  private postLauncherMeta(opts?: { refresh?: boolean }): void {
+    if (!this.view) return;
+    if (opts?.refresh || this.lifetimeTokensCache === undefined) {
+      this.lifetimeTokensCache = this.computeLifetimeTokens();
+    }
+    void this.view.webview.postMessage({
+      type: "launcherMeta",
+      extVersion: (this.context.extension.packageJSON as { version?: string })?.version ?? "",
+      totalTokens: this.lifetimeTokensCache,
+    });
+  }
+
+  /** Sum disk session estimates + live in-memory context lifts. */
+  private computeLifetimeTokens(): number {
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    const grokHome = resolveGrokHome(process.env);
+    const disk = readWorkspaceTokenUsage({ fs: defaultFs, grokHome, cwd });
+    const live: { id?: string | null; tokens?: number | null }[] = [];
+    for (const s of this.pool) {
+      live.push({
+        id: s.activeSessionId,
+        tokens: s.client?.lastMeta?.totalTokens,
+      });
+    }
+    return mergeWorkspaceTokenUsage(disk, live);
   }
 
   /** Recompute the status-bar HUD from current active-session state. Cheap and
@@ -932,7 +983,7 @@ See design doc for the full state machine diagram.`;
       if (!feedback) {
         this.emit(session, {
           type: "planNotice",
-          text: "Plan rejected — staying in Plan mode. Grok is processing the rejection…",
+          text: "Plan rejected — staying in Plan first. Grok is processing the rejection…",
         });
         this.emit(session, { type: "planProcessing" });
       }
@@ -1129,6 +1180,42 @@ See design doc for the full state machine diagram.`;
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Forward a business/office document path to the webview as a buffered
+   * document card (replay-safe via `emit`). Resolves workspace-relative paths;
+   * skips unresolved relative paths that aren't on disk (avoids ghost cards).
+   */
+  private postBusinessDocument(ref: BusinessDocRef, session: Session): void {
+    const resolved = this.resolveBusinessDocPath(ref.path);
+    if (!resolved) {
+      this.output.appendLine(`[document] skip unresolved path: ${ref.path}`);
+      return;
+    }
+    const kind = businessDocKindForPath(resolved) ?? ref.kind;
+    const name = path.basename(resolved) || ref.name;
+    this.emit(session, { type: "document", kind, path: resolved, name });
+  }
+
+  /** Absolute path that exists, or absolute path as reported; else undefined. */
+  private resolveBusinessDocPath(raw: string): string | undefined {
+    const clean = raw.replace(/^\\\\\?\\/, "").trim();
+    if (!clean) return undefined;
+    if (path.isAbsolute(clean)) {
+      try {
+        if (fs.existsSync(clean)) return clean;
+      } catch { /* fall through — still surface absolute paths */ }
+      return clean;
+    }
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (root) {
+      const joined = path.resolve(root, clean);
+      try {
+        if (fs.existsSync(joined)) return joined;
+      } catch { /* skip */ }
+    }
+    return undefined;
   }
 
   /**
@@ -1616,6 +1703,9 @@ See design doc for the full state machine diagram.`;
     session.autoApprove = rememberedYolo;
     session.planActive = false;
     session.afterTurn = undefined;
+    session.promptInFlight = false;
+    session.pendingUserSends = [];
+    session.suppressTurnTail = false;
     session.hasHistory = false;
     session.primed = false;
     session.primingPromise = undefined;
@@ -1791,6 +1881,10 @@ See design doc for the full state machine diagram.`;
       if (gen !== session.gen) return;
       void this.postGeneratedMedia(m, session, gen);
     });
+    client.on("documentContent", (ref: BusinessDocRef) => {
+      if (gen !== session.gen) return;
+      this.postBusinessDocument(ref, session);
+    });
     client.on("taskBackgrounded", (u: any) => {
       if (gen !== session.gen) return;
       const cmd = typeof u?.command === "string" ? u.command : "";
@@ -1847,6 +1941,8 @@ See design doc for the full state machine diagram.`;
       if (typeof meta?.totalTokens === "number") {
         this.emit(session, { type: "tokenUsage", totalTokens: meta.totalTokens });
       }
+      // Lifetime total for the launcher may have moved with this turn.
+      this.postLauncherMeta({ refresh: true });
       if (session === this.active) this.updateStatusBar(); // refresh context %
     });
     client.on("xaiNotification", (u) => {
@@ -1868,7 +1964,7 @@ See design doc for the full state machine diagram.`;
           client.respondPermission(req.id, rejectId);
           this.emit(session, {
             type: "planNotice",
-            text: `Plan mode declined a ${req.toolCall?.kind ?? "tool"} request — approve the plan first.`,
+            text: `Plan first declined a ${req.toolCall?.kind ?? "tool"} request — approve the plan first.`,
           });
           return;
         }
@@ -2168,6 +2264,12 @@ See design doc for the full state machine diagram.`;
           if (root) p = path.join(root, p);
         }
         const uri = vscode.Uri.file(p);
+        // Office/PDF binaries open with the OS default app; text-like docs use the editor.
+        const docKind = businessDocKindForPath(p);
+        if (docKind && openStrategyForKind(docKind) === "external" && ref.startLine == null) {
+          void vscode.env.openExternal(uri);
+          break;
+        }
         if (ref.startLine != null) {
           const startLine = Math.max(0, ref.startLine - 1);
           const endLine = ref.endLine != null ? Math.max(startLine, ref.endLine - 1) : startLine;
@@ -2181,6 +2283,20 @@ See design doc for the full state machine diagram.`;
           }
         } else {
           void vscode.commands.executeCommand("vscode.open", uri);
+        }
+        break;
+      }
+      case "revealInOs": {
+        let p = msg.path;
+        if (!path.isAbsolute(p)) {
+          const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+          if (root) p = path.join(root, p);
+        }
+        try {
+          await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(p));
+        } catch (e) {
+          this.output.appendLine(`[document] revealInOs failed: ${(e as Error).message}`);
+          void vscode.window.showInformationMessage(`File path: ${p}`);
         }
         break;
       }
@@ -2612,6 +2728,7 @@ See design doc for the full state machine diagram.`;
       if (live) this.disposeSession(live);
     }
     this.broadcastSessionsList();
+    this.postLauncherMeta({ refresh: true });
   }
 
   /** Delete every session in this workspace's history except EVERY open panel's
@@ -2670,6 +2787,7 @@ See design doc for the full state machine diagram.`;
       }
     }
     this.broadcastSessionsList();
+    this.postLauncherMeta({ refresh: true });
   }
 
   private async pickFileFromComputer(session: Session): Promise<void> {
@@ -3137,11 +3255,14 @@ See design doc for the full state machine diagram.`;
     this.postChips(session);
   }
 
-  private async handleSend(session: Session, text: string, chips: FileChip[]): Promise<void> {
-    const client = await this.ensureClient(session);
-    if (!client) return;
-    const gen = session.gen;
-
+  /**
+   * User hit send while a turn is already running. Acknowledge immediately
+   * (bubble + Grokking, title/history), suppress the rest of the current stream
+   * so it doesn't paint under the new message, cancel the in-flight prompt, and
+   * queue the real session/prompt for after the current turn lane frees up.
+   * Skipping agentEnd between turns keeps the UI from flashing idle/interrupted.
+   */
+  private queueFollowUpSend(session: Session, text: string, chips: FileChip[]): void {
     const finalPrompt = buildPrompt(text, chips, {
       readFile: (p) => fs.readFileSync(p, "utf8"),
       extName: (p) => path.extname(p),
@@ -3152,26 +3273,110 @@ See design doc for the full state machine diagram.`;
 
     const isFirstSend = !session.hasHistory;
     session.hasHistory = true;
-
     const sentChips = chips.filter((c) => !c.hidden);
     session.userMessageCount += 1;
-
-    // Always track the latest user prompt so the tab title and history rows
-    // update immediately for every prompt (not just the first).
     session.latestUserMessageForTitle = text;
     this.updateTabTitle(session);
     this.touch(session);
     this.broadcastSessionsList();
+    if (isFirstSend) this.reportSessionStart(session);
 
-    if (isFirstSend) {
-      // One `session_start` per session, on the first real user message — never
-      // the primer (that takes a separate prompt path that doesn't set hasHistory).
-      this.reportSessionStart(session);
-    }
-    session.inUserMessage = false; // live send isn't part of the streamed-chunk count path
+    session.inUserMessage = false;
     this.emit(session, { type: "userMessage", text, chips: sentChips });
     this.emit(session, { type: "agentStart" });
     this.setStatus(session, "working");
+
+    // Stop painting the cancelled turn under the new user bubble; keep the
+    // partial reply already on screen (no agentReset).
+    session.suppressTurnTail = true;
+    session.pendingUserSends.push({ text, finalPrompt });
+    void session.client?.cancel();
+  }
+
+  private async handleSend(session: Session, text: string, chips: FileChip[]): Promise<void> {
+    // Mid-turn follow-up: ack + queue, don't overlap client.prompt.
+    if (session.promptInFlight) {
+      this.queueFollowUpSend(session, text, chips);
+      return;
+    }
+
+    const client = await this.ensureClient(session);
+    if (!client) return;
+    const gen = session.gen;
+
+    session.promptInFlight = true;
+    try {
+      await this.executeUserSend(session, client, gen, { text, chips, alreadyAcked: false });
+      // Drain follow-ups without releasing the turn lane (no idle flash).
+      while (session.pendingUserSends.length > 0 && gen === session.gen) {
+        const next = session.pendingUserSends.shift()!;
+        const c = session.client;
+        if (!c) break;
+        await this.executeUserSend(session, c, gen, {
+          text: next.text,
+          chips: [],
+          alreadyAcked: true,
+          finalPrompt: next.finalPrompt,
+        });
+      }
+    } finally {
+      if (gen === session.gen) {
+        session.promptInFlight = false;
+        session.suppressTurnTail = false;
+      }
+    }
+  }
+
+  /**
+   * Run one user→agent prompt. When `alreadyAcked`, the user bubble / Grokking
+   * were posted at queue time — only the wire prompt remains.
+   */
+  private async executeUserSend(
+    session: Session,
+    client: AcpClient,
+    gen: number,
+    opts:
+      | { text: string; chips: FileChip[]; alreadyAcked: false }
+      | { text: string; chips: FileChip[]; alreadyAcked: true; finalPrompt: string },
+  ): Promise<void> {
+    let finalPrompt: string;
+    if (!opts.alreadyAcked) {
+      finalPrompt = buildPrompt(opts.text, opts.chips, {
+        readFile: (p) => fs.readFileSync(p, "utf8"),
+        extName: (p) => path.extname(p),
+      });
+
+      session.chips = [];
+      this.postChips(session);
+
+      const isFirstSend = !session.hasHistory;
+      session.hasHistory = true;
+
+      const sentChips = opts.chips.filter((c) => !c.hidden);
+      session.userMessageCount += 1;
+
+      // Always track the latest user prompt so the tab title and history rows
+      // update immediately for every prompt (not just the first).
+      session.latestUserMessageForTitle = opts.text;
+      this.updateTabTitle(session);
+      this.touch(session);
+      this.broadcastSessionsList();
+
+      if (isFirstSend) {
+        // One `session_start` per session, on the first real user message — never
+        // the primer (that takes a separate prompt path that doesn't set hasHistory).
+        this.reportSessionStart(session);
+      }
+      session.inUserMessage = false; // live send isn't part of the streamed-chunk count path
+      this.emit(session, { type: "userMessage", text: opts.text, chips: sentChips });
+      this.emit(session, { type: "agentStart" });
+      this.setStatus(session, "working");
+    } else {
+      finalPrompt = opts.finalPrompt;
+      // New turn's stream may paint again; the cancelled tail is done.
+      session.suppressTurnTail = false;
+      this.setStatus(session, "working");
+    }
 
     try {
       // The hidden primer was kicked off eagerly when the session went live, so
@@ -3183,11 +3388,12 @@ See design doc for the full state machine diagram.`;
       if (gen !== session.gen) return;
       const meta = await client.prompt(finalPrompt);
       if (gen !== session.gen) return; // session was switched mid-turn
-      // Skip agentEnd if a verdict was clicked mid-turn (afterTurn is queued).
-      // Otherwise busy clears here, then the user could send during the brief
-      // gap before afterTurn's own client.prompt starts. afterTurn emits its
-      // own agentEnd at the end of its prompt, so busy stays true throughout.
-      if (!session.afterTurn) {
+      // Skip agentEnd if a verdict was clicked mid-turn (afterTurn is queued) or
+      // a follow-up send is waiting — otherwise busy clears here and the UI
+      // flashes idle/interrupted before the next prompt starts. Those paths emit
+      // their own agentEnd when the lane is truly free.
+      const moreWork = !!session.afterTurn || session.pendingUserSends.length > 0;
+      if (!moreWork) {
         this.emit(session, { type: "agentEnd", meta });
         this.setStatus(session, "done");
       }
@@ -3196,6 +3402,9 @@ See design doc for the full state machine diagram.`;
       //  from prompts — explicit renames and grok's on-disk summary own names.)
     } catch (err) {
       if (gen !== session.gen) return; // prompt rejected because we disposed the old client — don't leak the error into the new session
+      // Cancel-to-make-room for a queued follow-up (or plan afterTurn) is not an
+      // error — keep busy continuous and let the finally path chain the next turn.
+      if (session.pendingUserSends.length > 0 || session.afterTurn) return;
       const e = err as any;
       const message = e?.data?.message ?? e?.message ?? String(err);
       this.emit(session, { type: "agentError", text: message });
@@ -3271,6 +3480,9 @@ See design doc for the full state machine diagram.`;
   private emit(session: Session, message: any): void {
     if (session.suppressContent && GrokSidebar.SUPPRESS_TYPES.has(message.type)) return;
     if (session.suppressPlanReject && GrokSidebar.PLAN_REJECT_SUPPRESS.has(message.type)) return;
+    // Follow-up send cancelled the prior turn: drop its remaining stream so it
+    // doesn't paint under the new user bubble. Lifecycle still flows (promptComplete).
+    if (session.suppressTurnTail && GrokSidebar.PLAN_REJECT_SUPPRESS.has(message.type)) return;
     this.router.emit(session, message);
   }
 
@@ -3620,15 +3832,18 @@ See design doc for the full state machine diagram.`;
 
   <div id="plan-banner" class="plan-banner" hidden>
     <span class="plan-banner-dot"></span>
-    <span>Plan mode — Grok proposes a plan; file writes and commands are blocked until you approve it.</span>
+    <span class="plan-banner-text">Plan first — Grok drafts a plan; files and commands stay blocked until you approve.</span>
   </div>
 
   <main id="messages" class="messages">
     <div class="welcome" id="welcome">
       <span class="welcome-mark" role="img" aria-label="Grok" style="--welcome-mark:url('${resourceUri("blackhole-icon.svg")}')"></span>
       <h2>Grokbit</h2>
+      <p class="welcome-tagline">Your AI coding partner in the editor — ask questions, plan safely, edit files, create images, and produce business documents without the terminal.</p>
       <p id="welcome-version" class="muted loading-dots">Starting</p>
+      <div id="welcome-starters" class="welcome-starters" hidden></div>
       <div id="welcome-onboarding"></div>
+      <p class="welcome-byline muted"><a href="#" id="welcome-about-link" class="muted-link">About Grokbit</a></p>
     </div>
   </main>
 
@@ -3638,7 +3853,7 @@ See design doc for the full state machine diagram.`;
     <div id="attachments" class="attachments"></div>
     <div class="composer-input-wrap">
       <div id="input-highlight" class="input-highlight" aria-hidden="true"></div>
-      <textarea id="input" placeholder="Ask Grok..." rows="3"></textarea>
+      <textarea id="input" placeholder="Ask Grok anything…" rows="3"></textarea>
       <button id="mic-btn" class="mic-btn" title="Voice control"></button>
     </div>
     <div class="composer-toolbar">
@@ -3713,6 +3928,7 @@ See design doc for the full state machine diagram.`;
 <body class="launcher-body">
   <div class="launcher">
     <div class="launcher-head">
+      <div id="launcher-meta" class="launcher-meta" hidden></div>
       <button id="launcher-new" class="onb-action launcher-new-btn" type="button"><span class="launcher-logo" style="--logo:url('${resourceUri("blackhole-icon.svg")}')"></span>New session</button>
     </div>
     <div id="launcher-onboarding" class="launcher-onboarding" hidden></div>

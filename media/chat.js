@@ -215,6 +215,7 @@
     eye: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>`,
     eyeOff: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>`,
     file: `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>`,
+    folderOpen: `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>`,
     cpu: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/></svg>`,
     squarePen: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/></svg>`,
     arrowUp: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>`,
@@ -241,23 +242,24 @@
     micWaves: `<span class="mic-waves" aria-hidden="true"><i></i><i></i><i></i><i></i></span>`,
   };
 
-  const MODE_META = {
-    agent: {
-      icon: ICON.bot,
-      label: "Agent mode",
-      desc: "Grok acts directly, asking approval only for changes it judges sensitive",
-    },
-    plan: {
-      icon: ICON.listTree,
-      label: "Plan mode",
-      desc: "Grok explores and proposes a plan; file writes and commands are blocked until you approve it",
-    },
-    yolo: {
-      icon: ICON.zap,
-      label: "Auto accept",
-      desc: "Grok automatically approves all permission requests (YOLO)",
-    },
+  // Plain-language mode chrome. Labels/descs come from the pure helper so unit
+  // tests can assert them without booting the webview; icons stay local.
+  const _modeDisplay = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.MODE_DISPLAY) || {
+    agent: { label: "Agent", desc: "Grok can help right away. It may ask before editing files or running commands." },
+    plan: { label: "Plan first", desc: "Grok drafts a plan first. Nothing changes until you approve it." },
+    yolo: { label: "Auto accept", desc: "Grok makes changes without asking for permission each time." },
   };
+  const MODE_META = {
+    agent: { icon: ICON.bot, label: _modeDisplay.agent.label, desc: _modeDisplay.agent.desc },
+    plan: { icon: ICON.listTree, label: _modeDisplay.plan.label, desc: _modeDisplay.plan.desc },
+    yolo: { icon: ICON.zap, label: _modeDisplay.yolo.label, desc: _modeDisplay.yolo.desc },
+  };
+  const permissionButtonLabel = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.permissionButtonLabel)
+    || function (opt) { return (opt && opt.name) || "Continue"; };
+  const welcomeStarters = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.welcomeStarters)
+    || function () { return []; };
+  const businessDocTypeStarters = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.businessDocTypeStarters)
+    || function () { return []; };
 
   // Three blinking dots — the tool rows' in-progress animation, reused by every
   // progress indicator (Grokking / Thinking) so they all pulse the same way
@@ -299,11 +301,20 @@
   function updateModeBtn(modeId) {
     const meta = MODE_META[modeId] || MODE_META.agent;
     modeBtn.innerHTML = `${meta.icon}<span class="btn-label">${escapeHtml(meta.label)}</span>`;
+    modeBtn.title = state.busy
+      ? "Mode — available once the session is ready"
+      : `${meta.label} — ${meta.desc}`;
     modeBtn.classList.toggle("plan-active", modeId === "plan");
     modeBtn.classList.toggle("yolo-active", modeId === "yolo");
     // Full-width plan-mode banner — the tinted mode button is easy to miss; this
     // makes the write/command gate unmissable while planning.
-    if (planBanner) planBanner.hidden = modeId !== "plan";
+    if (planBanner) {
+      planBanner.hidden = modeId !== "plan";
+      const label = planBanner.querySelector(".plan-banner-text");
+      if (label) {
+        label.textContent = "Plan first — Grok drafts a plan; files and commands stay blocked until you approve.";
+      }
+    }
   }
 
   // Compact model + effort chip in the composer toolbar. Both settings live two
@@ -339,8 +350,8 @@
   function updateComposerPlaceholder() {
     if (!input) return;
     input.placeholder = state.useCtrlEnter
-      ? `Ask Grok…   ${MOD}+Enter to send`
-      : "Ask Grok…   Enter to send · Shift+Enter for newline";
+      ? `Ask Grok anything…   ${MOD}+Enter to send`
+      : "Ask Grok anything…   Enter to send · Shift+Enter for newline";
   }
 
   newBtn.innerHTML = ICON.squarePen;
@@ -1027,7 +1038,7 @@
     // ── Model + effort header ─────────────────────────────────────────────
     const modelEffortSection = document.createElement("div");
     modelEffortSection.className = "popover-section popover-section-first";
-    modelEffortSection.textContent = "Model and Effort";
+    modelEffortSection.textContent = "Model & thinking depth";
     gearPopover.appendChild(modelEffortSection);
 
     // ── Model + effort row ────────────────────────────────────────────────
@@ -1188,7 +1199,7 @@
     // Show thinking traces (#26) — a switcher; off by default keeps grok's
     // reasoning out of the way, on reveals it (incl. on already-loaded sessions).
     addGearItem(
-      `<span>Show thinking traces</span><span class="popover-switch${state.showThinking ? " on" : ""}" role="switch" aria-checked="${state.showThinking}"><span class="popover-switch-knob"></span></span>`,
+      `<span>Show thinking details</span><span class="popover-switch${state.showThinking ? " on" : ""}" role="switch" aria-checked="${state.showThinking}"><span class="popover-switch-knob"></span></span>`,
       () => {
         state.showThinking = !state.showThinking;
         applyThinkingVisibility();
@@ -1196,20 +1207,21 @@
         renderConfigDebugPanel(); // re-render so the switch reflects the new state
       },
     );
+    addGearInfo('<span class="popover-hint">When off, you only see a short “Thinking…” line while Grok works.</span>');
     addGearSep();
-    addGearItem('<span>Open global config</span><span class="popover-external">↗</span>', () => {
+    addGearItem('<span>Open global settings file</span><span class="popover-external">↗</span>', () => {
       vscode.postMessage({ type: "openGlobalConfig" });
       closePopovers();
     });
-    addGearItem('<span>Open project config</span><span class="popover-external">↗</span>', () => {
+    addGearItem('<span>Open project settings file</span><span class="popover-external">↗</span>', () => {
       vscode.postMessage({ type: "openProjectConfig" });
       closePopovers();
     });
-    addGearItem('<span>MCP servers</span><span class="popover-external">↗</span>', () => {
+    addGearItem('<span>Connected tools (MCP)</span><span class="popover-external">↗</span>', () => {
       vscode.postMessage({ type: "runMcpList" });
       closePopovers();
     });
-    addGearItem("<span>Show extension logs</span>", () => {
+    addGearItem("<span>Show troubleshooting logs</span>", () => {
       vscode.postMessage({ type: "showLogs" });
       closePopovers();
     });
@@ -1217,19 +1229,22 @@
 
   // Keyboard-shortcuts reference. The commands + keybindings exist (package.json),
   // but nothing in the chat advertised them. The send/newline rows track the
-  // useCtrlEnter setting so they always describe THIS user's keys.
+  // useCtrlEnter setting so they always describe THIS user's keys. Descriptions
+  // stay plain-English for non-technical users.
   function renderShortcutsPanel() {
     state.gearView = "shortcuts";
     gearPopover.innerHTML = "";
     addGearItem('<span class="popover-back">← Keyboard shortcuts</span>', renderGearMain);
     const rows = state.useCtrlEnter
-      ? [[`${MOD}+Enter`, "Send message"], ["Enter", "New line"]]
-      : [["Enter", "Send message"], ["Shift+Enter", "New line"]];
-    rows.push([`${MOD}+;`, "Open Grokbit"]);
-    rows.push(["Alt+G", "Insert @-mention from an editor"]);
+      ? [[`${MOD}+Enter`, "Send your message"], ["Enter", "Start a new line"]]
+      : [["Enter", "Send your message"], ["Shift+Enter", "Start a new line"]];
+    rows.push([`${MOD}+;`, "Open Grokbit sidebar"]);
+    rows.push(["Alt+G", "Attach the current file as context"]);
     for (const [keys, desc] of rows) {
       addGearInfo(`<span>${escapeHtml(desc)}</span><span class="popover-kbd">${escapeHtml(keys)}</span>`);
     }
+    addGearSep();
+    addGearInfo('<span class="popover-hint">Tip: type <code>/</code> in the box for built-in commands like image generation.</span>');
   }
 
   function renderModelPicker() {
@@ -1319,12 +1334,13 @@
   }
 
   // Dashboard dot in the history dropdown. Gray (the `none` default) at rest; the
-  // labels double as the dot's tooltip (none → no tooltip).
-  const DOT_LABEL = {
-    working: "Working",
-    "needs-you": "Needs you",
-    unread: "Finished — unopened",
-    error: "Finished with an error — unopened",
+  // labels double as the dot's tooltip (none → no tooltip). Shared with launcher
+  // via GrokWebviewHelpers.SESSION_DOT_LABELS so the two surfaces cannot drift.
+  const DOT_LABEL = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.SESSION_DOT_LABELS) || {
+    working: "Working on it",
+    "needs-you": "Needs your OK",
+    unread: "Done — not opened yet",
+    error: "Finished with an error — not opened yet",
   };
 
   function applySessionDot(dot, value) {
@@ -1556,6 +1572,134 @@
     const welcome = $("welcome");
     if (welcome) welcome.hidden = true;
     state.welcomeVisible = false;
+    hideWelcomeStarters();
+  }
+
+  // Empty-session starter cards — insert a ready-to-edit prompt (or nudge plan
+  // mode / the mic). Hidden during onboarding, startup, and once chat begins.
+  function hideWelcomeStarters() {
+    const el = $("welcome-starters");
+    if (el) { el.hidden = true; el.innerHTML = ""; }
+  }
+
+  function applyWelcomeStarter(card) {
+    if (!card) return;
+    if (card.action === "plan") {
+      vscode.postMessage({ type: "setMode", modeId: "plan" });
+    }
+    // Dictate starters only highlight the mic — never start capture from here.
+    // Host remains the authority on voiceStart / API-key checks. Welcome stays up
+    // so the user can pick another card after the nudge.
+    if (card.action === "focus-mic" || card.action === "voice-hint") {
+      if (micBtn) {
+        micBtn.focus();
+        micBtn.classList.add("starter-pulse");
+        setTimeout(() => micBtn.classList.remove("starter-pulse"), 1200);
+      }
+      return;
+    }
+    if (typeof card.prompt === "string" && card.prompt.length) {
+      insertComposerPrompt(card.prompt);
+    }
+  }
+
+  /** Seed the composer with a ready-to-edit prompt and place the caret at the end. */
+  function insertComposerPrompt(prompt) {
+    if (typeof prompt !== "string" || !prompt.length) return;
+    input.value = prompt;
+    input.focus();
+    try {
+      const len = input.value.length;
+      input.setSelectionRange(len, len);
+    } catch { /* happy-dom / older hosts may not implement setSelectionRange */ }
+    if (typeof updateSlash === "function") updateSlash();
+    if (typeof renderInputHighlight === "function") renderInputHighlight();
+  }
+
+  // Compact document-type glyphs for the welcome icon row (stroke = currentColor).
+  const DOC_TYPE_ICONS = {
+    word: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="m9 13 1.5 5L12 15l1.5 3L15 13"/></svg>`,
+    excel: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/><path d="M10 13v4"/><path d="M14 13v4"/></svg>`,
+    powerpoint: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 22h8"/><path d="M12 18v4"/><path d="M8 9h4a2 2 0 0 1 0 4H8V9z"/></svg>`,
+    pdf: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M10 12h1a2 2 0 0 1 0 4h-1v-4z"/><path d="M14 16v-4h1.5a1.5 1.5 0 0 1 0 3H14"/><path d="M17 12v4"/></svg>`,
+    csv: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M3 14h18"/><path d="M9 4v16"/><path d="M15 4v16"/></svg>`,
+    markdown: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 16V11l2 2 2-2v5"/><path d="M15 13v3"/><path d="m14 15 1 1 1-1"/></svg>`,
+  };
+
+  function renderWelcomeDocTypes(parent) {
+    const types = businessDocTypeStarters();
+    if (!types.length) return;
+    const section = document.createElement("div");
+    section.className = "welcome-doc-types";
+    const heading = document.createElement("p");
+    heading.className = "welcome-starters-heading";
+    heading.textContent = "Create a document";
+    section.appendChild(heading);
+    const row = document.createElement("div");
+    row.className = "welcome-doc-types-row";
+    row.setAttribute("role", "list");
+    row.setAttribute("aria-label", "Document types");
+    for (const t of types) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "welcome-doc-type";
+      btn.setAttribute("role", "listitem");
+      btn.dataset.docType = t.id;
+      btn.setAttribute("aria-label", `Create ${t.label}`);
+      btn.title = `Create ${t.label}`;
+      btn.innerHTML =
+        `<span class="welcome-doc-type-icon">${DOC_TYPE_ICONS[t.id] || DOC_TYPE_ICONS.word}</span>` +
+        `<span class="welcome-doc-type-label">${escapeHtml(t.label)}</span>`;
+      btn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        insertComposerPrompt(t.prompt);
+      };
+      row.appendChild(btn);
+    }
+    section.appendChild(row);
+    parent.appendChild(section);
+  }
+
+  function renderWelcomeStarters() {
+    const el = $("welcome-starters");
+    if (!el) return;
+    const onb = $("welcome-onboarding");
+    const onboardingActive = !!(onb && onb.innerHTML && onb.innerHTML.trim());
+    // Only when the empty session is truly ready for the user to type.
+    if (!state.welcomeVisible || onboardingActive || state.startingPhase) {
+      hideWelcomeStarters();
+      return;
+    }
+    const cards = welcomeStarters({ voiceConfigured: state.voiceConfigured });
+    el.innerHTML = "";
+    const heading = document.createElement("p");
+    heading.className = "welcome-starters-heading";
+    heading.textContent = "Try one of these";
+    el.appendChild(heading);
+    const grid = document.createElement("div");
+    grid.className = "welcome-starters-grid";
+    grid.setAttribute("role", "list");
+    for (const card of cards) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "welcome-starter";
+      btn.setAttribute("role", "listitem");
+      btn.dataset.starterId = card.id;
+      btn.innerHTML =
+        `<span class="welcome-starter-title">${escapeHtml(card.title)}</span>` +
+        `<span class="welcome-starter-desc">${escapeHtml(card.desc)}</span>`;
+      btn.title = card.desc;
+      btn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        applyWelcomeStarter(card);
+      };
+      grid.appendChild(btn);
+    }
+    el.appendChild(grid);
+    renderWelcomeDocTypes(el);
+    el.hidden = false;
   }
 
   function resetForNewSession() {
@@ -1569,6 +1713,7 @@
       if (onb) onb.innerHTML = "";
       const ver = $("welcome-version");
       if (ver) { ver.hidden = false; ver.classList.add("loading-dots"); ver.textContent = "Starting"; }
+      hideWelcomeStarters();
     }
     state.welcomeVisible = true;
     state.pendingDiffByToolCallId.clear();
@@ -1605,6 +1750,7 @@
     const ver = $("welcome-version");
     if (!onb) return;
     if (mode === "missing-cli") {
+      hideWelcomeStarters(); // install flow replaces the starter cards
       if (ver) { ver.hidden = false; ver.classList.remove("loading-dots"); ver.textContent = "CLI not installed"; }
       const installCmd = info.platform === "win32"
         ? "irm https://x.ai/cli/install.ps1 | iex"
@@ -1620,6 +1766,7 @@
           `<button class="onb-action onb-secondary" type="button" data-act="recheck">Re-check connection</button>` +
         `</div>`;
     } else if (mode === "auth-required") {
+      hideWelcomeStarters();
       if (ver) { ver.hidden = false; ver.classList.remove("loading-dots"); ver.textContent = "Authentication required"; }
       onb.innerHTML =
         `<div class="onb">` +
@@ -1636,6 +1783,7 @@
         `</div>`;
     } else {
       onb.innerHTML = "";
+      renderWelcomeStarters();
     }
   }
 
@@ -2377,6 +2525,98 @@
     return actions;
   }
 
+  // Labels for business-document result cards (host sends pure kind strings).
+  const BUSINESS_DOC_LABELS = {
+    word: "Word",
+    excel: "Excel",
+    powerpoint: "PowerPoint",
+    pdf: "PDF",
+    csv: "CSV",
+    markdown: "Markdown",
+    text: "Text",
+  };
+
+  /**
+   * Result card when Grok produces a business/office file (.docx, .xlsx, …).
+   * Not a preview — filename + kind + Copy / Open / Reveal actions (mirrors
+   * media action affordances, tool-row chrome). Buffered via host `emit`.
+   */
+  function addDocumentCard(msg) {
+    if (state.suppressReplayTurn) return;
+    closeToolGroup();
+    clearWelcome();
+    hideGrokking();
+    const kind = msg.kind || "text";
+    const label = BUSINESS_DOC_LABELS[kind] || "Document";
+    const name = msg.name || (msg.path ? String(msg.path).replace(/^.*[\\/]/, "") : "document");
+    const filePath = msg.path || "";
+
+    const el = document.createElement("div");
+    el.className = "document-card";
+    el.setAttribute("role", "group");
+    el.setAttribute("aria-label", `${label} document ${name}`);
+    el.title = filePath;
+
+    const kindEl = document.createElement("span");
+    kindEl.className = "document-card-kind";
+    kindEl.textContent = label;
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "document-card-name";
+    nameEl.textContent = name;
+
+    const actions = document.createElement("div");
+    actions.className = "document-card-actions";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "document-card-btn";
+    copyBtn.setAttribute("aria-label", "Copy path");
+    copyBtn.title = "Copy path";
+    copyBtn.innerHTML = ICON.copy;
+    copyBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (!filePath) return;
+      navigator.clipboard.writeText(filePath).then(() => {
+        copyBtn.innerHTML = ICON.check;
+        copyBtn.classList.add("copied");
+        setTimeout(() => { copyBtn.innerHTML = ICON.copy; copyBtn.classList.remove("copied"); }, 1500);
+      });
+    };
+
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "document-card-btn";
+    openBtn.setAttribute("aria-label", "Open document");
+    openBtn.title = "Open";
+    openBtn.innerHTML = ICON.file;
+    openBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (filePath) vscode.postMessage({ type: "openFile", path: filePath });
+    };
+
+    const revealBtn = document.createElement("button");
+    revealBtn.type = "button";
+    revealBtn.className = "document-card-btn";
+    revealBtn.setAttribute("aria-label", "Reveal in file explorer");
+    revealBtn.title = "Reveal in file explorer";
+    revealBtn.innerHTML = ICON.folderOpen;
+    revealBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (filePath) vscode.postMessage({ type: "revealInOs", path: filePath });
+    };
+
+    actions.appendChild(copyBtn);
+    actions.appendChild(openBtn);
+    actions.appendChild(revealBtn);
+
+    el.appendChild(kindEl);
+    el.appendChild(nameEl);
+    el.appendChild(actions);
+    messagesEl.appendChild(el);
+    scrollToBottom();
+  }
+
   // Render generated media (grok `/imagine` image or `/imagine-video` video).
   // `src` is a renderable source the host resolved for a generated file — a
   // webview URI streamed from disk (big videos) or a base64 data: URI; `url` is
@@ -2863,12 +3103,16 @@
 
   // ---------- permission card ----------
 
-  // Verb shown on a resolved (minimized) permission card.
-  const PERM_VERB = {
-    allow_always: "Allowed",
-    allow_once: "Allowed",
-    reject_once: "Rejected",
-  };
+  // Collapse verb/class — shared pure helpers so deny_* / reject_always match
+  // reject_once (red "Rejected"), not green "Answered".
+  const isRejectedPermissionKind = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.isRejectedPermissionKind)
+    || function (kind) { return /reject|deny/i.test(String(kind || "")); };
+  const permissionCollapseVerb = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.permissionCollapseVerb)
+    || function (kind) {
+      if (isRejectedPermissionKind(kind)) return "Rejected";
+      if (/allow/i.test(String(kind || ""))) return "Allowed";
+      return "Answered";
+    };
 
   // Replace a permission card with a single muted, non-interactive line once the
   // user answers — same minimized treatment as a resolved question/plan card.
@@ -2877,10 +3121,11 @@
     el.className = "card permission resolved perm-resolved";
     el.innerHTML = "";
     const line = document.createElement("div");
-    line.className = "perm-resolved-line perm-" + (kind === "reject_once" ? "rejected" : "allowed");
+    const rejected = isRejectedPermissionKind(kind);
+    line.className = "perm-resolved-line perm-" + (rejected ? "rejected" : "allowed");
     const verb = document.createElement("span");
     verb.className = "perm-resolved-verb";
-    verb.textContent = PERM_VERB[kind] || "Answered";
+    verb.textContent = permissionCollapseVerb(kind);
     line.appendChild(verb);
     const what = document.createElement("span");
     what.className = "perm-resolved-what";
@@ -2931,9 +3176,12 @@
     actions.className = "card-actions";
     for (const opt of req.options || []) {
       const btn = document.createElement("button");
-      btn.textContent = opt.name;
+      // Plain-language labels for non-engineers; optionId/kind stay protocol-true.
+      btn.textContent = permissionButtonLabel(opt);
       if (opt.kind === "allow_once") btn.classList.add("primary");
-      if (opt.kind === "reject_once") btn.classList.add("danger");
+      if (opt.kind === "reject_once" || opt.kind === "reject_always" || /^deny/.test(String(opt.kind || ""))) {
+        btn.classList.add("danger");
+      }
       btn.onclick = () => {
         vscode.postMessage({
           type: "permissionAnswer",
@@ -3484,7 +3732,13 @@
     // readiness flag, `busy` always clears, so the control can never get stuck.
     modeBtn.disabled = state.busy;
     modeBtn.classList.toggle("disabled", state.busy);
-    modeBtn.title = state.busy ? "Mode — available once the session is ready" : "Pick mode";
+    // Prefer the mode's plain-language title when idle; busy gets a short ready-hint.
+    if (state.busy) {
+      modeBtn.title = "Mode — available once the session is ready";
+    } else {
+      const meta = MODE_META[state.currentModeId] || MODE_META.agent;
+      modeBtn.title = `${meta.label} — ${meta.desc}`;
+    }
     if (!state.busy) {
       sendBtn.innerHTML = ICON.arrowUp;
       sendBtn.title = "Send";
@@ -3502,29 +3756,57 @@
     }
   }
 
-  function sendOrStop() {
-    if (state.busy) {
-      // Stop mode: ask the host to cancel grok's in-flight turn. We do NOT
-      // clear state.busy here — that happens when the cancelled turn actually
-      // ends (agentEnd / agentError), so the button stays as "Stop" until the
-      // CLI confirms.
-      vscode.postMessage({ type: "cancel" });
-      return;
-    }
-    const text = input.value.trim();
-    if (!text && state.chips.every((c) => c.hidden)) return;
+  /**
+   * Submit a user message to the host. Works while idle *or* mid-turn: a
+   * follow-up while busy is acked immediately (host queues + cancels the prior
+   * turn without flashing idle). Finalizes any in-flight agent bubble in place
+   * so the new message lands below it instead of looking interrupted.
+   */
+  function submitMessage(text) {
     state.busy = true;
+    state.busyLocked = false; // a real send is always stoppable
     updateSendButton();
-    state.activeAgentEl = null;
-    state.activeAgentRaw = "";
-    state.activeThoughtEl = null;
-    state.activeThoughtHdrEl = null;
-    state.thoughtStartTime = null;
-    state.activeToolGroupEl = null;
+    // Seal the prior partial reply in the DOM (don't remove it) so the next
+    // turn's stream opens a fresh bubble under the new user message.
+    if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl) {
+      commitAgentTurn();
+    } else {
+      state.activeAgentEl = null;
+      state.activeAgentRaw = "";
+      state.activeThoughtEl = null;
+      state.activeThoughtHdrEl = null;
+      state.thoughtStartTime = null;
+      state.activeToolGroupEl = null;
+    }
     vscode.postMessage({ type: "send", text, chips: state.chips });
     input.value = "";
     renderInputHighlight();
     slashPopover.hidden = true;
+  }
+
+  function sendOrStop() {
+    if (state.busy) {
+      // Mid-turn Enter with content → follow-up send (host keeps busy continuous).
+      // Empty Enter while busy is a no-op; the Stop button handles cancel.
+      const text = input.value.trim();
+      if (text || state.chips.some((c) => !c.hidden)) {
+        submitMessage(text);
+        return;
+      }
+      return;
+    }
+    const text = input.value.trim();
+    if (!text && state.chips.every((c) => c.hidden)) return;
+    submitMessage(text);
+  }
+
+  /** Stop button: cancel the in-flight turn only (never posts a follow-up). */
+  function stopGeneration() {
+    if (!state.busy || state.busyLocked) return;
+    // Do NOT clear state.busy here — that happens when the cancelled turn
+    // actually ends (agentEnd / agentError), so the button stays "Stop" until
+    // the CLI confirms.
+    vscode.postMessage({ type: "cancel" });
   }
 
   // ---------- voice control ----------
@@ -3630,15 +3912,8 @@
   function submitVoiceMessage(text) {
     const t = (text || "").trim();
     if (!t) return;
-    state.busy = true;
-    updateSendButton();
-    state.activeAgentEl = null;
-    state.activeAgentRaw = "";
-    state.activeThoughtEl = null;
-    state.activeThoughtHdrEl = null;
-    state.thoughtStartTime = null;
-    state.activeToolGroupEl = null;
-    vscode.postMessage({ type: "send", text: t, chips: state.chips });
+    // Same path as typed send — including mid-turn follow-ups (host queues).
+    submitMessage(t);
   }
 
   // Send the next message dictated while Grok was busy (so you can keep talking
@@ -3708,6 +3983,7 @@
         if (verEl) { verEl.hidden = false; verEl.classList.add("loading-dots"); verEl.textContent = "Starting"; }
         const onb = $("welcome-onboarding");
         if (onb) onb.innerHTML = "";
+        hideWelcomeStarters(); // don't offer starters while the session is still priming
         break;
       }
       case "cliUpdating": {
@@ -3768,6 +4044,8 @@
         if (typeof msg.sendPhrase === "string") state.voiceSendPhrase = msg.sendPhrase;
         renderMic();
         renderInputHighlight();
+        // Voice card wording depends on setup state — refresh if welcome is up.
+        if (state.welcomeVisible) renderWelcomeStarters();
         break;
       case "voicePartial":
         // Live streaming update: replace the tail after the pre-dictation base.
@@ -3776,17 +4054,14 @@
         renderInputHighlight();
         break;
       case "voiceSubmit": {
-        // Continuous "grok send": submit now (or queue if Grok is mid-response),
-        // clear the composer, and keep the mic listening for the next utterance.
+        // Continuous "grok send": submit now (host queues mid-turn with immediate
+        // ack — no interrupted flash), clear the composer, keep mic listening.
         const t = (msg.text || "").trim();
         state.voiceBase = "";
         state.voiceLive = false;
         input.value = "";
         renderInputHighlight();
-        if (t) {
-          if (state.busy) state.voiceQueue.push(t);
-          else submitVoiceMessage(t);
-        }
+        if (t) submitVoiceMessage(t);
         break;
       }
       case "voiceTranscript":
@@ -3801,9 +4076,9 @@
         }
         state.voiceLive = false;
         setMic("transcript");
-        // "grok send" detected: submit hands-free — but only when idle, so it
-        // never doubles as a "stop" on an in-flight turn.
-        if (msg.send && !state.busy) sendOrStop();
+        // "grok send" detected: submit hands-free. Mid-turn follow-ups post
+        // send (host queues); Stop is the send-button only, not this path.
+        if (msg.send) sendOrStop();
         break;
       case "voiceError":
         // Setup/record/transcribe failed (the host already showed the reason).
@@ -3820,11 +4095,20 @@
       case "userMessage":
         // Live send (or immediate verdict-feedback bubble): render and bump the
         // counter so any plan history queued for this position drains first.
+        // Seal any in-flight agent bubble first so a mid-turn follow-up lands
+        // *below* the partial reply instead of looking interrupted.
+        if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl) {
+          commitAgentTurn();
+        }
         clearChangedFiles(); // a new turn starts — the strip shows only its own edits
         drainPlanHistory(state.userMsgCount);
         drainPermissionHistory(state.userMsgCount);
         state.userMsgCount += 1;
         addMessage("user", msg.text, msg.chips || []);
+        // Keep busy across a follow-up ack (host skips agentEnd between turns).
+        state.busy = true;
+        state.busyLocked = false;
+        updateSendButton();
         forceScrollToBottom(); // jump back to the bottom on the user's own send (#16)
         // If the indicator is showing and a NEW (live-send) user message comes
         // in, hide it. (When the host posts a userMessage as part of the verdict
@@ -3836,6 +4120,13 @@
         // A user-initiated turn just began (live send, or a plan-verdict
         // follow-up). Show "Grokking…" until the first real content replaces it.
         // The silent primer never emits agentStart, so it never shows here.
+        // Mid-turn follow-up: seal the prior partial so the next stream is fresh.
+        if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl) {
+          commitAgentTurn();
+        }
+        state.busy = true;
+        state.busyLocked = false;
+        updateSendButton();
         showGrokking();
         break;
       case "thoughtChunk":
@@ -3846,6 +4137,9 @@
         break;
       case "media":
         addGeneratedMedia(msg);
+        break;
+      case "document":
+        addDocumentCard(msg);
         break;
       case "userMessageChunk":
         appendUserChunk(msg.text);
@@ -3983,8 +4277,8 @@
       case "planBlocked":
         addPlanNotice(
           msg.kind === "terminal"
-            ? `Plan mode blocked a command: ${msg.target}`
-            : `Plan mode blocked a write to ${msg.target}`,
+            ? `Plan first blocked a command: ${msg.target}`
+            : `Plan first blocked a write to ${msg.target}`,
         );
         break;
       case "promptComplete":
@@ -4077,6 +4371,8 @@
               verEl.hidden = true;
             }
           }
+          // Session is ready — show starter cards on an empty welcome screen.
+          renderWelcomeStarters();
         }
         // Refresh the gear popover's model/effort lock state if it's open.
         if (!gearPopover.hidden) renderGearMain();
@@ -4156,7 +4452,13 @@
 
   // ---------- wire ----------
 
-  sendBtn.onclick = sendOrStop;
+  // While busy the button is Stop (cancel only). Enter with text still sends a
+  // follow-up via sendOrStop — that path must not share this click handler or a
+  // Stop click would also try to submit leftover composer text.
+  sendBtn.onclick = () => {
+    if (state.busy) stopGeneration();
+    else sendOrStop();
+  };
   updateSendButton();
   if (micBtn) {
     micBtn.onclick = (e) => { e.stopPropagation(); toggleMic(); };

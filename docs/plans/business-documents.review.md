@@ -1,0 +1,20 @@
+# Review Report
+- Target: plan
+- Paths: docs/plans/business-documents.md
+- Pass: 1
+- Overall: Approve
+- Hard gates:
+  - 1 Goal + acceptance: PASS (A1–A7 measurable)
+  - 2 Non-goals: PASS
+  - 3 Risk / blast radius: PASS (false-positive + binary-open called out)
+  - 4 Ordered steps + per-step verification: PASS (phases 1–5)
+  - 5 Testing strategy: PASS (unit + edge/negative + DOM + NO COVERAGE TOOL waiver)
+  - 6 Failure modes: PASS
+  - 7 Observable verification: PASS (commands + checklist)
+  - 8 UI/UX design: PASS (state inventory, media/starter design ref, a11y, D1–D4)
+- Required Changes: none blocking
+- Soft nits addressed in plan: frozen extension allowlist (docx/xlsx/pptx/pdf/csv/md/markdown/txt/rtf); legacy office binary exts excluded
+- Test/coverage gaps: none vs plan; live probe optional
+- Questions: none
+- Risk if implemented as-is: residual false positives if extractor is later widened to agent prose — plan forbids that
+- Next: implement

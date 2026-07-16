@@ -14,6 +14,9 @@ import {
   listSessions,
   readSessionEntries,
   readSessionTokenUsage,
+  readWorkspaceTokenUsage,
+  sessionTokenEstimate,
+  mergeWorkspaceTokenUsage,
   sessionsDirFor,
   tabTitleFor,
   NEW_TAB_TITLE,
@@ -483,6 +486,95 @@ describe("readSessionTokenUsage", () => {
       const fs = buildFs({ [signalsPath("a")]: { isDir: false, content: body } });
       expect(readSessionTokenUsage({ fs, grokHome, cwd, id: "a" })).toBeUndefined();
     }
+  });
+});
+
+describe("sessionTokenEstimate", () => {
+  it("sums context + compaction tokens", () => {
+    expect(
+      sessionTokenEstimate({ contextTokensUsed: 1000, totalTokensBeforeCompaction: 500 }),
+    ).toBe(1500);
+  });
+
+  it("treats missing fields as zero", () => {
+    expect(sessionTokenEstimate({})).toBe(0);
+    expect(sessionTokenEstimate({ contextTokensUsed: 42 })).toBe(42);
+  });
+
+  it("ignores non-numeric values", () => {
+    expect(sessionTokenEstimate({ contextTokensUsed: "12" as unknown as number })).toBe(0);
+  });
+});
+
+describe("readWorkspaceTokenUsage", () => {
+  const root = sessionsDirFor(grokHome, cwd);
+
+  it("sums every session's signals estimate for the workspace", () => {
+    const fs = buildFs({
+      [root]: { isDir: true },
+      [dirFor("a")]: { isDir: true },
+      [dirFor("b")]: { isDir: true },
+      [path.join(dirFor("a"), "signals.json")]: {
+        isDir: false,
+        content: JSON.stringify({ contextTokensUsed: 1000, totalTokensBeforeCompaction: 200 }),
+      },
+      [path.join(dirFor("b"), "signals.json")]: {
+        isDir: false,
+        content: JSON.stringify({ contextTokensUsed: 500 }),
+      },
+    });
+    const u = readWorkspaceTokenUsage({ fs, grokHome, cwd });
+    expect(u.total).toBe(1700);
+    expect(u.byId).toEqual({ a: 1200, b: 500 });
+  });
+
+  it("returns zero when the sessions root is missing", () => {
+    expect(readWorkspaceTokenUsage({ fs: buildFs({}), grokHome, cwd })).toEqual({
+      total: 0,
+      byId: {},
+    });
+  });
+
+  it("skips sessions without signals or with unreadable JSON", () => {
+    const fs = buildFs({
+      [root]: { isDir: true },
+      [dirFor("ok")]: { isDir: true },
+      [dirFor("bad")]: { isDir: true },
+      [dirFor("empty")]: { isDir: true },
+      [path.join(dirFor("ok"), "signals.json")]: {
+        isDir: false,
+        content: JSON.stringify({ contextTokensUsed: 10 }),
+      },
+      [path.join(dirFor("bad"), "signals.json")]: { isDir: false, content: "{not json" },
+    });
+    expect(readWorkspaceTokenUsage({ fs, grokHome, cwd })).toEqual({
+      total: 10,
+      byId: { ok: 10 },
+    });
+  });
+});
+
+describe("mergeWorkspaceTokenUsage", () => {
+  it("lifts the total when a live session exceeds its disk estimate", () => {
+    const disk = { total: 1000, byId: { a: 1000 } };
+    expect(mergeWorkspaceTokenUsage(disk, [{ id: "a", tokens: 1500 }])).toBe(1500);
+  });
+
+  it("adds live-only sessions not yet on disk", () => {
+    const disk = { total: 1000, byId: { a: 1000 } };
+    expect(mergeWorkspaceTokenUsage(disk, [{ id: "new", tokens: 250 }])).toBe(1250);
+  });
+
+  it("ignores lower live values and invalid entries", () => {
+    const disk = { total: 1000, byId: { a: 1000 } };
+    expect(
+      mergeWorkspaceTokenUsage(disk, [
+        { id: "a", tokens: 500 },
+        { id: null, tokens: 99 },
+        { tokens: 99 },
+        { id: "b", tokens: NaN },
+      ]),
+    ).toBe(1000);
   });
 });
 
