@@ -222,15 +222,15 @@ describe("voice control: continuous listening + queue (hands-free)", () => {
     expect(mic.classList.contains("listening")).toBe(true);   // mic stays on — no click needed
   });
 
-  it("voiceSubmit while Grok is busy posts send immediately (host queues; no cancel)", () => {
+  it("voiceSubmit while Grok is busy posts send immediately (host queues additive; no cancel)", () => {
     const { window, posted, doc } = bootWebview();
     const mic = $(doc, "mic-btn");
     click(window, mic);
     dispatch(window, { type: "setBusy", value: true });       // Grok is responding
     dispatch(window, { type: "voiceSubmit", text: "second message" });
 
-    // Mid-turn follow-up: post send right away so the host can ack without an
-    // idle flash (web-side voiceQueue no longer defers the wire send).
+    // Mid-turn follow-up: post send right away; host queues FIFO without
+    // cancelling the in-flight turn (additive, not last-wins).
     const sent = posted.find((p) => p.type === "send");
     expect((sent as Posted)?.text).toBe("second message");
     expect(types(posted)).not.toContain("cancel");

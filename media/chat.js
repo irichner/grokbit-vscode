@@ -9,6 +9,7 @@
   const inputHighlight = $("input-highlight");
   const newBtn = $("new-btn");
   const historyBtn = $("history-btn");
+  const docsBtn = $("docs-btn");
   const modeBtn = $("mode-btn");
   const modelLabel = $("model-label");
   const gearBtn = $("gear-btn");
@@ -22,6 +23,7 @@
   const gearPopover = $("gear-popover");
   const addPopover = $("add-popover");
   const historyPopover = $("history-popover");
+  const docsPopover = $("docs-popover");
   const scrollBottomBtn = $("scroll-bottom-btn");
   const changedFilesEl = $("changed-files");
   const planBanner = $("plan-banner");
@@ -50,6 +52,9 @@
     useCtrlEnter: false,
     commands: [],
     chips: [],
+    // Studio E2 workspace-docs popover state (ephemeral — not buffered).
+    // Templates live in the activity-bar launcher (E4), not this chat top bar.
+    workspaceDocs: { entries: [], loading: false, error: null, total: 0, capped: false },
     // Start busy+locked: opening the view immediately spins up a session
     // (ready → startSession), so the send button shows the spinner from the
     // first paint until the host posts setBusy:false once the session is live.
@@ -256,6 +261,16 @@
   };
   const permissionButtonLabel = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.permissionButtonLabel)
     || function (opt) { return (opt && opt.name) || "Continue"; };
+  const applyComposerSeed = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.applyComposerSeed)
+    ? window.GrokWebviewHelpers.applyComposerSeed
+    : function (cur, seed) {
+        if (!seed) return cur || "";
+        if (!(cur || "").trim()) return seed;
+        return String(cur).replace(/\s+$/, "") + "\n" + seed;
+      };
+  const taskQuickActions = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.taskQuickActions)
+    ? window.GrokWebviewHelpers.taskQuickActions
+    : function () { return []; };
   const welcomeStarters = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.welcomeStarters)
     || function () { return []; };
 
@@ -958,6 +973,92 @@
     gearPopover.hidden = true;
     addPopover.hidden = true;
     historyPopover.hidden = true;
+    if (docsPopover) docsPopover.hidden = true;
+  }
+
+  function renderDocsPopover() {
+    if (!docsPopover) return;
+    docsPopover.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "studio-popover-head";
+    head.textContent = "Workspace documents";
+    docsPopover.appendChild(head);
+    const body = document.createElement("div");
+    body.className = "studio-popover-body history-list";
+    const wd = state.workspaceDocs || {};
+    if (wd.loading) {
+      const p = document.createElement("p");
+      p.className = "studio-popover-empty muted";
+      p.textContent = "Scanning…";
+      body.appendChild(p);
+    } else if (wd.error === "no-workspace") {
+      const p = document.createElement("p");
+      p.className = "studio-popover-empty muted";
+      p.textContent = "Open a folder to browse business documents.";
+      body.appendChild(p);
+    } else if (wd.error) {
+      const p = document.createElement("p");
+      p.className = "studio-popover-empty muted";
+      p.textContent = "Couldn't scan workspace";
+      body.appendChild(p);
+    } else if (!wd.entries || !wd.entries.length) {
+      const p = document.createElement("p");
+      p.className = "studio-popover-empty muted";
+      p.textContent = "No business documents found in this workspace.";
+      body.appendChild(p);
+    } else {
+      for (const entry of wd.entries) {
+        const row = document.createElement("div");
+        row.className = "studio-doc-row";
+        const title = document.createElement("button");
+        title.type = "button";
+        title.className = "studio-doc-name toolbar-popover-item";
+        title.textContent = entry.name || entry.path;
+        title.title = entry.path;
+        title.onclick = (e) => {
+          e.stopPropagation();
+          vscode.postMessage({ type: "openFile", path: entry.path });
+        };
+        row.appendChild(title);
+        const actions = document.createElement("div");
+        actions.className = "studio-doc-actions";
+        const mkAct = (label, fn) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "studio-doc-act";
+          b.textContent = label;
+          b.onclick = (e) => { e.stopPropagation(); fn(); };
+          actions.appendChild(b);
+        };
+        mkAct("Open", () => vscode.postMessage({ type: "openFile", path: entry.path }));
+        mkAct("Reveal", () => vscode.postMessage({ type: "revealInOs", path: entry.path }));
+        mkAct("Attach", () => vscode.postMessage({ type: "dropFile", path: entry.path, shift: false }));
+        mkAct("Use", () => {
+          insertComposerPrompt("Use this document in our work: " + entry.path + "\n\n");
+          closePopovers();
+        });
+        row.appendChild(actions);
+        body.appendChild(row);
+      }
+      if (wd.capped) {
+        const note = document.createElement("p");
+        note.className = "studio-popover-empty muted";
+        note.textContent = "Showing newest " + (wd.entries.length) + " of " + (wd.total || wd.entries.length);
+        body.appendChild(note);
+      }
+    }
+    docsPopover.appendChild(body);
+  }
+
+  function openDocsPopover() {
+    if (!docsPopover || !docsBtn) return;
+    if (!docsPopover.hidden) { closePopovers(); return; }
+    closePopovers();
+    state.workspaceDocs = { entries: [], loading: true, error: null, total: 0, capped: false };
+    renderDocsPopover();
+    positionDropdownPopover(docsPopover, docsBtn);
+    docsPopover.hidden = false;
+    vscode.postMessage({ type: "listWorkspaceDocs" });
   }
 
   function positionPopover(popover, btn) {
@@ -1604,7 +1705,7 @@
   /** Seed the composer with a ready-to-edit prompt and place the caret at the end. */
   function insertComposerPrompt(prompt) {
     if (typeof prompt !== "string" || !prompt.length) return;
-    input.value = prompt;
+    input.value = applyComposerSeed(input.value, prompt);
     input.focus();
     try {
       const len = input.value.length;
@@ -1651,6 +1752,33 @@
       grid.appendChild(btn);
     }
     el.appendChild(grid);
+    // Studio E1: task chips (invoice / receipt / …) — not format icons (launcher).
+    const tasks = typeof taskQuickActions === "function" ? taskQuickActions() : [];
+    if (tasks.length) {
+      const taskHead = document.createElement("p");
+      taskHead.className = "welcome-starters-heading welcome-tasks-heading";
+      taskHead.textContent = "Business tasks";
+      el.appendChild(taskHead);
+      const taskRow = document.createElement("div");
+      taskRow.className = "welcome-task-chips";
+      taskRow.setAttribute("role", "list");
+      for (const task of tasks) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "welcome-task-chip";
+        chip.setAttribute("role", "listitem");
+        chip.dataset.taskId = task.id;
+        chip.textContent = task.label;
+        chip.title = task.label;
+        chip.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (task.prompt) insertComposerPrompt(task.prompt);
+        };
+        taskRow.appendChild(chip);
+      }
+      el.appendChild(taskRow);
+    }
     // Document-type icons live on the activity-bar launcher (not the welcome screen).
     el.hidden = false;
   }
@@ -3711,25 +3839,29 @@
 
   /**
    * Submit a user message to the host. Works while idle *or* mid-turn: a
-   * follow-up while busy is acked immediately (host queues + cancels the prior
-   * turn without flashing idle). Finalizes any in-flight agent bubble in place
-   * so the new message lands below it instead of looking interrupted.
+   * follow-up while busy is posted as send (host queues FIFO without cancelling
+   * the in-flight turn; UI ack is deferred until that turn runs). Mid-turn
+   * submit does not seal the streaming agent reply — it keeps painting until
+   * the current turn finishes. Stop still posts cancel only.
    */
   function submitMessage(text) {
+    const wasBusy = state.busy;
     state.busy = true;
     state.busyLocked = false; // a real send is always stoppable
     updateSendButton();
-    // Seal the prior partial reply in the DOM (don't remove it) so the next
-    // turn's stream opens a fresh bubble under the new user message.
-    if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl) {
-      commitAgentTurn();
-    } else {
-      state.activeAgentEl = null;
-      state.activeAgentRaw = "";
-      state.activeThoughtEl = null;
-      state.activeThoughtHdrEl = null;
-      state.thoughtStartTime = null;
-      state.activeToolGroupEl = null;
+    // Idle send: seal any residual agent UI so the next stream is clean.
+    // Mid-turn queue: leave the active stream alone (host does not cancel).
+    if (!wasBusy) {
+      if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl) {
+        commitAgentTurn();
+      } else {
+        state.activeAgentEl = null;
+        state.activeAgentRaw = "";
+        state.activeThoughtEl = null;
+        state.activeThoughtHdrEl = null;
+        state.thoughtStartTime = null;
+        state.activeToolGroupEl = null;
+      }
     }
     vscode.postMessage({ type: "send", text, chips: state.chips });
     input.value = "";
@@ -3903,6 +4035,16 @@
         // ready/replay so it isn't wiped by clearMessages.
         insertComposerPrompt(msg.text);
         break;
+      case "workspaceDocs":
+        state.workspaceDocs = {
+          entries: Array.isArray(msg.entries) ? msg.entries : [],
+          loading: false,
+          error: msg.error || null,
+          total: typeof msg.total === "number" ? msg.total : (msg.entries || []).length,
+          capped: !!msg.capped,
+        };
+        if (docsPopover && !docsPopover.hidden) renderDocsPopover();
+        break;
       case "showThinking":
         // Live toggle (grok.showThinking). Initial value also arrives via
         // initialState + is baked into the <body class> by the host to avoid a flash.
@@ -4051,10 +4193,10 @@
         state.commands = msg.commands || [];
         break;
       case "userMessage":
-        // Live send (or immediate verdict-feedback bubble): render and bump the
-        // counter so any plan history queued for this position drains first.
-        // Seal any in-flight agent bubble first so a mid-turn follow-up lands
-        // *below* the partial reply instead of looking interrupted.
+        // Live send or deferred mid-turn-queue ack (or verdict-feedback bubble):
+        // render and bump the counter so any plan history for this position drains.
+        // Seal any in-flight agent bubble first so a chained follow-up lands
+        // *below* the completed prior reply instead of looking interrupted.
         if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl) {
           commitAgentTurn();
         }
@@ -4063,7 +4205,7 @@
         drainPermissionHistory(state.userMsgCount);
         state.userMsgCount += 1;
         addMessage("user", msg.text, msg.chips || []);
-        // Keep busy across a follow-up ack (host skips agentEnd between turns).
+        // Keep busy across chained turns (host skips agentEnd while queue has work).
         state.busy = true;
         state.busyLocked = false;
         updateSendButton();
@@ -4075,10 +4217,10 @@
         hidePlanProcessing();
         break;
       case "agentStart":
-        // A user-initiated turn just began (live send, or a plan-verdict
-        // follow-up). Show "Grokking…" until the first real content replaces it.
-        // The silent primer never emits agentStart, so it never shows here.
-        // Mid-turn follow-up: seal the prior partial so the next stream is fresh.
+        // A user-initiated turn just began (live send, deferred queue drain, or
+        // plan-verdict follow-up). Show "Grokking…" until the first real content
+        // replaces it. The silent primer never emits agentStart, so it never
+        // shows here. Seal any residual active stream so this turn is fresh.
         if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl) {
           commitAgentTurn();
         }
@@ -4445,10 +4587,12 @@
   if (welcomeAboutLink) welcomeAboutLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openAboutPanel(); };
   addBtn.onclick = (e) => { e.stopPropagation(); openAddPopover(); };
   historyBtn.onclick = (e) => { e.stopPropagation(); openHistoryPopover(); };
+  if (docsBtn) docsBtn.onclick = (e) => { e.stopPropagation(); openDocsPopover(); };
   modePopover.addEventListener("click", (e) => e.stopPropagation());
   gearPopover.addEventListener("click", (e) => e.stopPropagation());
   addPopover.addEventListener("click", (e) => e.stopPropagation());
   historyPopover.addEventListener("click", (e) => e.stopPropagation());
+  if (docsPopover) docsPopover.addEventListener("click", (e) => e.stopPropagation());
   document.addEventListener("click", (e) => {
     // Math / mermaid export actions (Copy source, Download as PNG/SVG, Open as PNG).
     const exprBtn = e.target.closest(".expr-btn");

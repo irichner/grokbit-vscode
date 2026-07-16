@@ -1,0 +1,8 @@
+> **Superseded.** This file was a historical product sketch labeled “2.0.0.”  
+> **Product 2.0.0** already shipped as rebrand + native session tabs.  
+> **Business Studio** is **3.0.0** (thin-client).  
+>
+> Canonical product plan: [`Grokbit-ui-3.0.0`](Grokbit-ui-3.0.0)  
+> Executable roadmap / epic Status: [`grokbit-business-studio-3.0.md`](grokbit-business-studio-3.0.md)
+
+Do not implement the old React / five-tab / React Flow sketch from this path.

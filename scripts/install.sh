@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# Install the Grok VS Code extension on macOS / Linux / WSL.
+# Install / rebuild the Grokbit VS Code extension on macOS / Linux / WSL.
 # Usage:  ./scripts/install.sh [path/to/file.vsix]
-# Picks the first .vsix in the repo root, or builds one if none exists.
+#
+# Default (no argument) = full REBUILD contract (all three, always):
+#   1. bump package.json patch  (scripts/bump_extension_version.py)
+#   2. package a fresh .vsix    (npm run package; clears stale grokbit-*.vsix)
+#   3. reinstall into VS Code   (code --install-extension … --force)
+# Never package-only — this script always ends with a reinstall.
+# Explicit vsix path skips bump/package and only installs that file.
 
 set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -25,8 +31,10 @@ find_code_cli() {
 
 vsix="${1-}"
 if [ -z "$vsix" ]; then
-    # Always rebuild so the installed extension is never stale
+    # Rebuild contract: bump → package (reinstall always follows below)
+    echo "Rebuild: bump version → package → reinstall..."
     cd "$repo_root"
+    python3 scripts/bump_extension_version.py || python scripts/bump_extension_version.py
     [ -d node_modules ] || npm install
     npm run package
     vsix=$(ls -t "$repo_root"/*.vsix | head -n1)
@@ -37,8 +45,8 @@ code=$(find_code_cli)
 # The pre-rename listing registers the same grok.* commands/views, so the two
 # cannot coexist — drop it if present (best-effort; absent on fresh machines).
 "$code" --uninstall-extension PawelHuryn.grok-vscode-phuryn >/dev/null 2>&1 || true
-echo "Installing $vsix via $code"
-# --force so a same-version reinstall actually overwrites the installed files
+# Always reinstall (rebuild contract step 3). --force overwrites an existing install.
+echo "Reinstalling $vsix via $code"
 "$code" --install-extension "$vsix" --force
 echo
 echo "Done. Reload VS Code (Ctrl+Shift+P -> 'Developer: Reload Window') and click the Grok icon."

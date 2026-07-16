@@ -1,10 +1,31 @@
 # Changelog
 
-## 2.0.4 — 2026-07-15
+## 3.0.1 — 2026-07-16
+
+### Fixed
+
+- **Mid-turn follow-ups are additive, not interruptive.** Sending while Grok is mid-turn no longer cancels the in-flight reply or suppresses its stream; extra messages queue FIFO and run as sequential turns after the current one finishes. Stop still cancels the live turn and clears any pending queue. ([src/sidebar.ts](src/sidebar.ts), [src/session.ts](src/session.ts), [media/chat.js](media/chat.js))
+
+## 3.0.0 — 2026-07-15
+
+### Added
+
+- **Business Studio (thin-client).** Chat-first Studio surfaces without a React rewrite or extra sidebar tabs:
+  - **Task quick-actions** on the empty-session welcome row (invoice, receipt, weekly report, pitch deck, approval workflow) — seed the composer only; never auto-send. ([media/webview-helpers.js](media/webview-helpers.js), [media/chat.js](media/chat.js))
+  - **Workspace documents browser** — top-bar **Docs** popover lists capped business files in the workspace; Open / Reveal / Attach / Use (seed). ([src/workspace-docs.ts](src/workspace-docs.ts), [src/sidebar.ts](src/sidebar.ts), [media/chat.js](media/chat.js))
+  - **Template gallery v1** — activity-bar **Templates** section under Create a document (~14 searchable business templates); click seeds the composer (never auto-send). Generation still uses CLI skills (`/docx`, `/pptx`, `/xlsx`, …). ([media/webview-helpers.js](media/webview-helpers.js), [media/launcher.js](media/launcher.js))
+  - Shared composer seed policy: empty → set, non-empty → append on a new line. ([media/webview-helpers.js](media/webview-helpers.js))
+- Plans: [docs/plans/Grokbit-ui-3.0.0](docs/plans/Grokbit-ui-3.0.0), [business-quick-actions.md](docs/plans/business-quick-actions.md), [workspace-documents-browser.md](docs/plans/workspace-documents-browser.md), [template-gallery.md](docs/plans/template-gallery.md).
 
 ### Changed
 
-- **Office document starters moved to the top of the launcher.** The Word / Excel / PowerPoint / PDF / CSV / Markdown strip now sits directly under the "New session" button (above the search box and recent history) instead of below the history list, so it's visible without scrolling. ([media/launcher.js](media/launcher.js), [media/chat.css](media/chat.css), [src/sidebar.ts](src/sidebar.ts))
+- **Rebuild = bump version + package + reinstall.** Install scripts run `scripts/bump_extension_version.py` (patch +1 on `package.json`), then `npm run package`, then `code --install-extension … --force`. Agents must never treat "rebuild" as package-only. Marketplace publish/tag remains separate. ([scripts/install.ps1](scripts/install.ps1), [scripts/install.sh](scripts/install.sh), [CLAUDE.md](CLAUDE.md))
+- **Launcher no longer has a session search box.** The activity bar only shows 7 recent sessions, so the "Search sessions…" field was removed; search remains in the chat history popover. ([media/launcher.js](media/launcher.js), [src/sidebar.ts](src/sidebar.ts))
+- **Office document starters moved to the top of the launcher.** The Word / Excel / PowerPoint / PDF / CSV / Markdown strip now sits directly under the "New session" button (above recent history) instead of below the history list, so it's visible without scrolling. ([media/launcher.js](media/launcher.js), [media/chat.css](media/chat.css), [src/sidebar.ts](src/sidebar.ts))
+- **Templates moved from chat top bar to the left nav.** Collapsible **Templates** under **Create a document**, separator bar between them; the list flex-grows down to **Recent** history. Launcher chrome densified ~20% for a narrower side bar. ([media/launcher.js](media/launcher.js), [media/chat.css](media/chat.css), [media/chat.js](media/chat.js), [src/sidebar.ts](src/sidebar.ts))
+- **Launcher sections are collapsible.** Create a document, Templates, and Recent remember expand/collapse via webview state. ([media/launcher.js](media/launcher.js), [media/chat.css](media/chat.css))
+- **Launcher session history sits at the bottom of the activity bar.** New session + document starters stay at the top; the recent list (and clear-all) is pinned to the bottom so short sidebars keep primary actions above the fold. ([media/chat.css](media/chat.css), [src/sidebar.ts](src/sidebar.ts))
+- **Easier local rebuild.** `npm run rebuild` (cross-platform wrapper) and the project skill `/rebuild` both run the existing install scripts (bump → package → reinstall). Not Marketplace publish and not the `/ship` feature loop. ([scripts/rebuild.js](scripts/rebuild.js), [package.json](package.json), [.grok/skills/rebuild/SKILL.md](.grok/skills/rebuild/SKILL.md))
 
 ## 2.0.3 — 2026-07-15
 

@@ -22,7 +22,9 @@ export const BODY = `
   <header class="top-bar">
     <button id="history-btn"></button>
     <button id="new-btn"></button>
+    <button id="docs-btn">Docs</button>
     <div id="history-popover" hidden></div>
+    <div id="docs-popover" hidden></div>
   </header>
   <div id="plan-banner" class="plan-banner" hidden><span class="plan-banner-dot"></span><span class="plan-banner-text"></span></div>
   <main id="messages" class="messages">

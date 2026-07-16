@@ -1,0 +1,43 @@
+# Grokbit Business Studio — product plan **3.0.0**
+
+| Field | Value |
+|-------|--------|
+| **Status** | Active — thin-client Studio major |
+| **Prior sketch** | [Grokbit-ui-2.0.0](Grokbit-ui-2.0.0) (historical only) |
+| **Roadmap / epic Status SoT** | [grokbit-business-studio-3.0.md](grokbit-business-studio-3.0.md) |
+| **Architecture** | Thin ACP client; vanilla webview; no React / React Flow / five permanent sidebar tabs |
+
+## Goal
+
+Ship a **chat-first Business Studio** on top of Grokbit 2.x (rebrand + native tabs + document cards):
+
+1. **E1** Task quick-actions on welcome / empty session  
+2. **E2** Workspace documents browser (popover)  
+3. **E4** Template gallery v1 (~12–15, search, Use → seed)  
+
+Generation stays in **CLI skills** (`/docx`, `/pptx`, `/xlsx`, `/imagine`). The extension owns discovery, seeds, cards, and browse UX — **not** an Office suite.
+
+## Feature plans
+
+| Epic | Plan |
+|------|------|
+| E1 | [business-quick-actions.md](business-quick-actions.md) |
+| E2 | [workspace-documents-browser.md](workspace-documents-browser.md) |
+| E4 | [template-gallery.md](template-gallery.md) |
+
+## Explicit non-goals (3.0.0)
+
+- React / Tailwind / shadcn / React Flow  
+- Five always-visible sidebar tabs  
+- Bundled Office engines / live Office preview  
+- 50+ templates; n8n/Zapier export  
+- Enterprise blue theme (use `--vscode-*` only)
+
+## User-visible success
+
+1. New session → business task chip → edit composer → Send  
+2. Documents popover → open / reveal / attach / seed a workspace file  
+3. Templates → search → Use → seed  
+4. Document result cards when the agent produces office files (E0)
+
+See roadmap release bar and epic Status in [grokbit-business-studio-3.0.md](grokbit-business-studio-3.0.md).

@@ -278,39 +278,200 @@ code {
   color: var(--vscode-descriptionForeground);
 }
 
+/* Studio E1 — business task chips under welcome starters */
+.welcome-tasks-heading {
+  margin-top: 4px;
+}
+.welcome-task-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+.welcome-task-chip {
+  margin: 0;
+  padding: 5px 10px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--vscode-foreground);
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, #444));
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.welcome-task-chip:hover {
+  background: var(--vscode-list-hoverBackground);
+  border-color: var(--vscode-focusBorder, var(--vscode-editorWidget-border));
+}
+.welcome-task-chip:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+/* Studio E2/E4 — Docs / Templates top-bar buttons + popovers */
+.studio-top-btn {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 0 8px;
+  min-width: auto;
+  height: 24px;
+  color: var(--vscode-descriptionForeground);
+}
+.studio-top-btn:hover {
+  color: var(--vscode-foreground);
+}
+.studio-popover {
+  min-width: 240px;
+  max-width: 360px;
+  /* Match sidebar chrome — slightly quieter than raw editorWidget fill. */
+  background: var(--vscode-sideBar-background, var(--vscode-editorWidget-background));
+  border-color: color-mix(in srgb, var(--vscode-editorWidget-border, var(--vscode-panel-border)) 80%, transparent);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--vscode-widget-shadow, #000) 55%, transparent);
+}
+.studio-popover-head {
+  padding: 8px 12px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-editorWidget-border, var(--vscode-panel-border)) 70%, transparent);
+}
+.studio-popover-body {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+.studio-popover-empty {
+  margin: 0;
+  padding: 12px 14px 14px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.studio-doc-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-editorWidget-border, var(--vscode-panel-border)) 45%, transparent);
+}
+.studio-doc-row:last-child {
+  border-bottom: none;
+}
+.studio-doc-name {
+  width: 100%;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  background: transparent;
+  border-radius: 3px;
+}
+.studio-doc-name:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.studio-doc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 4px 2px;
+}
+.studio-doc-act {
+  margin: 0;
+  padding: 2px 7px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--vscode-panel-border, var(--vscode-foreground)) 40%, transparent);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+}
+.studio-doc-act:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-list-hoverBackground);
+  border-color: color-mix(in srgb, var(--vscode-panel-border, var(--vscode-foreground)) 65%, transparent);
+}
+.studio-doc-act:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.studio-template-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, #333));
+}
+.studio-template-row:last-child {
+  border-bottom: none;
+}
+.studio-template-meta {
+  min-width: 0;
+  flex: 1;
+}
+.studio-template-title {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.studio-template-tags {
+  font-size: 10px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Document-type icon row — Word / Excel / PowerPoint / PDF / CSV / Markdown.
-   Lives on the activity-bar launcher (below recent history). Click opens a
-   session and seeds the composer with "Create <type>: ". Shared class names
-   keep the chip look consistent if reused. */
+   Lives on the activity-bar launcher (under New session, above recent history).
+   Click opens a session and seeds the composer with "Create <type>: ". Quiet
+   ghost chips (not raised cards) so the strip reads as a professional sidebar
+   tool row rather than a bright widget grid. Shared class names keep the look
+   consistent if reused. */
 .welcome-doc-types-row,
 .launcher-docs-row {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
 }
 .welcome-doc-type {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  min-width: 52px;
+  gap: 3px;
+  min-width: 48px;
   margin: 0;
-  padding: 8px 6px;
+  padding: 6px 4px;
   font-family: inherit;
   font-size: 10px;
   line-height: 1.2;
-  color: var(--vscode-foreground);
-  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, #444));
-  border-radius: var(--radius, 6px);
+  color: var(--vscode-descriptionForeground);
+  /* Transparent / hairline — editorWidget fills read as bright tiles on the sidebar. */
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--vscode-panel-border, var(--vscode-foreground)) 35%, transparent);
+  border-radius: 4px;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
 .welcome-doc-type:hover {
   background: var(--vscode-list-hoverBackground);
-  border-color: var(--vscode-focusBorder, var(--vscode-editorWidget-border));
+  border-color: color-mix(in srgb, var(--vscode-panel-border, var(--vscode-foreground)) 55%, transparent);
+  color: var(--vscode-foreground);
 }
 .welcome-doc-type:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
@@ -321,15 +482,18 @@ code {
 }
 .welcome-doc-type-icon {
   display: inline-flex;
+  opacity: 0.72;
   color: var(--vscode-descriptionForeground);
 }
 .welcome-doc-type:hover .welcome-doc-type-icon,
 .welcome-doc-type:focus-visible .welcome-doc-type-icon {
+  opacity: 1;
   color: var(--vscode-foreground);
 }
 .welcome-doc-type-label {
-  font-weight: 600;
-  color: var(--vscode-descriptionForeground);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: inherit;
   max-width: 64px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -338,7 +502,7 @@ code {
 }
 .welcome-doc-type:hover .welcome-doc-type-label,
 .welcome-doc-type:focus-visible .welcome-doc-type-label {
-  color: var(--vscode-foreground);
+  color: inherit;
 }
 
 /* Brief pulse when a starter points at the mic button. */
@@ -2382,10 +2546,16 @@ mjx-container[display="true"] {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 6px;
+  /* ~20% tighter chrome than the previous 6px pad — denser for a narrower sidebar. */
+  padding: 5px 4px;
   box-sizing: border-box;
+  max-width: 100%;
 }
-.launcher-head { padding: 2px 2px 6px; }
+.launcher-head {
+  padding: 2px 1px 5px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-editorWidget-border, #444));
+}
 .launcher-meta {
   font-size: 11px;
   line-height: 1.3;
@@ -2402,38 +2572,254 @@ mjx-container[display="true"] {
 .launcher-meta[hidden] { display: none; }
 .launcher-head .onb-action { width: 100%; margin: 0; }
 .launcher-onboarding { padding: 2px; }
+
+/* Collapsible sections (Create a document, Recent) — VS Code explorer style. */
+.launcher-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.launcher-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  margin: 0;
+  padding: 4px 4px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.launcher-section-toggle:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-list-hoverBackground);
+}
+.launcher-section-toggle:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.launcher-section-chevron {
+  flex: 0 0 auto;
+  opacity: 0.7;
+  transition: transform 0.12s ease, opacity 0.12s ease;
+  /* Point right when collapsed; rotate down when expanded. */
+  transform: rotate(0deg);
+}
+.launcher-section.expanded .launcher-section-chevron {
+  transform: rotate(90deg);
+  opacity: 0.9;
+}
+.launcher-section-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.launcher-section-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.launcher-section.collapsed > .launcher-section-body {
+  display: none;
+}
+
+/*
+ * Studio column: Create a document + bar + Templates.
+ * Templates flex-grows so the list fills down to Recent history.
+ * VS Code owns the real sidebar drag width; content is densified ~20% so the
+ * strip stays usable when the side bar is narrower.
+ */
+.launcher-studio {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
+.launcher-section-bar {
+  flex: 0 0 auto;
+  height: 0;
+  margin: 4px 2px 2px;
+  border: none;
+  border-top: 1px solid color-mix(in srgb, var(--vscode-panel-border, var(--vscode-foreground)) 32%, transparent);
+}
+.launcher-section-bar[hidden] { display: none; }
+
+/* Recent history + clear-all pinned to the bottom of the activity bar. */
+.launcher-history {
+  flex: 0 1 auto;
+  margin-top: 0;
+  min-height: 0;
+  max-height: 42%;
+  display: flex;
+  flex-direction: column;
+  padding-top: 2px;
+  border-top: 1px solid var(--vscode-panel-border, var(--vscode-editorWidget-border, #444));
+}
+.launcher-history.collapsed {
+  /* Collapsed header only — don't reserve space for a hidden list. */
+  max-height: none;
+  flex: 0 0 auto;
+}
+.launcher-history-body {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
 .launcher-list {
-  flex: 1;
-  min-height: 0; /* the list scrolls in the remaining space below the docs strip */
-  max-height: none; /* fill remaining space; the popover cap doesn't apply here */
+  flex: 1 1 auto;
+  min-height: 0; /* scroll when the bottom block is taller than the available space */
+  max-height: none; /* the history wrapper caps height; the popover cap doesn't apply here */
+  overflow-y: auto;
 }
 
 /* Document-type starters under the New session button (activity bar only). */
 .launcher-docs {
   flex: 0 0 auto;
-  margin: 2px 0 4px;
-  padding: 4px 2px 8px;
-  border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-editorWidget-border, #444));
+  margin: 0;
+  padding: 0;
+  border-bottom: none;
 }
 .launcher-docs[hidden] { display: none; }
+.launcher-docs-body {
+  padding: 2px 0 4px;
+}
 .launcher-docs-heading {
-  margin: 0 0 6px;
-  padding: 0 2px;
-  font-size: 11px;
+  margin: 0 0 8px;
+  padding: 0 4px;
+  font-size: 10px;
   font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--vscode-descriptionForeground);
+  opacity: 0.9;
   text-align: center;
 }
 .launcher-docs-row {
   justify-content: center;
-  gap: 4px;
+  gap: 2px;
 }
-/* Narrow activity bar: tighter chips so six types wrap cleanly. */
-.launcher-doc-type {
-  min-width: 44px;
-  padding: 6px 4px;
-  flex: 1 1 44px;
-  max-width: 72px;
+/* Narrow activity bar: tighter chips so six types wrap cleanly (~20% denser). */
+.launcher-doc-type.welcome-doc-type {
+  min-width: 32px;
+  padding: 4px 2px;
+  flex: 1 1 32px;
+  max-width: 54px;
+  font-size: 9px;
+}
+.launcher-doc-type .welcome-doc-type-label {
+  max-width: 52px;
+  font-size: 9px;
+}
+
+/* Templates section — grows to fill remaining studio height above Recent. */
+.launcher-templates {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.launcher-templates[hidden] { display: none; }
+.launcher-templates.collapsed {
+  flex: 0 0 auto;
+}
+.launcher-templates-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0 0 2px;
+}
+.launcher-templates-search-wrap {
+  flex: 0 0 auto;
+  padding: 2px 2px 4px;
+}
+.launcher-templates-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 3px 6px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border, transparent));
+  border-radius: 3px;
+  outline: none;
+}
+.launcher-templates-search:focus {
+  border-color: var(--vscode-focusBorder);
+}
+.launcher-templates-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 1px;
+}
+.launcher-templates-empty {
+  margin: 0;
+  padding: 8px 6px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.launcher-template-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  margin: 0;
+  padding: 5px 6px;
+  font-family: inherit;
+  text-align: left;
+  color: var(--vscode-foreground);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.launcher-template-row:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.launcher-template-row:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+.launcher-template-title {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.launcher-template-tags {
+  font-size: 9px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  opacity: 0.85;
 }
 
 /* The black hole logo lives inside the New session button (left of the label).

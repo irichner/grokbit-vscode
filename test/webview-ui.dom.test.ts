@@ -729,7 +729,7 @@ describe("send button startup state (spinner by default until the session is rea
   });
 });
 
-describe("mid-turn follow-up send (no interrupted flash)", () => {
+describe("mid-turn follow-up send (additive queue, no cancel)", () => {
   const sendBtn = (doc: Document) => $(doc, "send-btn") as HTMLButtonElement;
   const input = (doc: Document) => $(doc, "input") as HTMLTextAreaElement;
 
@@ -754,7 +754,7 @@ describe("mid-turn follow-up send (no interrupted flash)", () => {
     expect(types(posted)).not.toContain("cancel");
     const send = posted.find((p) => p.type === "send") as Posted & { text?: string };
     expect(send.text).toBe("second prompt");
-    expect(input(doc).value).toBe(""); // composer cleared on ack
+    expect(input(doc).value).toBe(""); // composer cleared on submit
     // Stay busy (Stop) — no idle flash while the host chains the follow-up.
     expect(sendBtn(doc).classList.contains("stop")).toBe(true);
   });
@@ -768,12 +768,50 @@ describe("mid-turn follow-up send (no interrupted flash)", () => {
     expect(input(doc).value).toBe("should not be sent by stop");
   });
 
-  it("follow-up userMessage seals the partial reply and keeps busy continuous", () => {
+  it("multiple mid-turn sends post multiple sends in order (no cancel)", () => {
+    const { window, posted, doc } = bootBusyWithPartialReply();
+
+    input(doc).value = "second prompt";
+    input(doc).dispatchEvent(
+      new (window as any).KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+    input(doc).value = "third prompt";
+    input(doc).dispatchEvent(
+      new (window as any).KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+
+    const sends = posted.filter((p) => p.type === "send") as Array<Posted & { text?: string }>;
+    expect(sends.map((s) => s.text)).toEqual(["second prompt", "third prompt"]);
+    expect(types(posted)).not.toContain("cancel");
+    expect(sendBtn(doc).classList.contains("stop")).toBe(true);
+  });
+
+  it("mid-turn submit does not seal the partial reply (stream keeps painting)", () => {
+    const { window, posted, doc } = bootBusyWithPartialReply();
+    input(doc).value = "second prompt";
+    input(doc).dispatchEvent(
+      new (window as any).KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+    expect(types(posted)).toContain("send");
+    // Deferred UI: queued text is not shown until the host acks that turn.
+    expect(($(doc, "messages").textContent || "")).not.toContain("second prompt");
+
+    // Further chunks of the *current* turn still append to the same active
+    // reply (submit did not commitAgentTurn). Host deferred-ack then seals it.
+    dispatch(window, { type: "messageChunk", text: " …continued" });
+    dispatch(window, { type: "userMessage", text: "second prompt", chips: [] });
+
+    const text = $(doc, "messages").textContent || "";
+    expect(text).toContain("partial answer so far …continued");
+    expect(text).toContain("second prompt");
+  });
+
+  it("deferred follow-up userMessage seals the prior reply and keeps busy continuous", () => {
     const { window, doc } = bootBusyWithPartialReply();
 
-    // Host acks the queued follow-up (no agentEnd between turns). userMessage
-    // commits the in-flight agent bubble (flushAgent), so the partial stays on
-    // screen under the new user message instead of looking interrupted.
+    // Host drains the queue after the first turn: userMessage commits the
+    // in-flight agent bubble so the partial stays on screen under the new
+    // user message (no agentEnd between chained turns).
     dispatch(window, { type: "userMessage", text: "second prompt", chips: [] });
     dispatch(window, { type: "agentStart" });
 

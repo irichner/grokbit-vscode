@@ -464,6 +464,178 @@
     ];
   }
 
+  /**
+   * Composer seed insert policy (Studio E1/E2/E4): empty/whitespace → set;
+   * non-empty → append seed on a new line; empty seed is a no-op.
+   * Never auto-sends — caller only mutates composer text.
+   */
+  function applyComposerSeed(currentText, seedText) {
+    const seed = seedText == null ? "" : String(seedText);
+    if (!seed.length) return currentText == null ? "" : String(currentText);
+    const cur = currentText == null ? "" : String(currentText);
+    if (!cur.trim()) return seed;
+    return cur.replace(/\s+$/, "") + "\n" + seed;
+  }
+
+  /**
+   * Task quick-actions for the empty-session welcome row (Studio E1).
+   * Task intent only — not the six format icons (those stay on the launcher).
+   */
+  function taskQuickActions() {
+    return [
+      {
+        id: "invoice",
+        label: "New invoice",
+        prompt:
+          "Create a professional invoice as a Word document (.docx). Include seller/buyer fields, line items, tax, and totals. Ask me for any missing details: ",
+      },
+      {
+        id: "receipt",
+        label: "Analyze receipt",
+        prompt:
+          "Analyze this receipt (image or file I attach or describe) and extract vendor, date, line items, tax, and total. Summarize clearly and offer a CSV or spreadsheet if useful: ",
+      },
+      {
+        id: "weekly-report",
+        label: "Weekly report",
+        prompt:
+          "Build a weekly status report (Markdown or Word) covering goals, progress, blockers, and next week. Fill with placeholders where I have not given details: ",
+      },
+      {
+        id: "pitch",
+        label: "Pitch deck",
+        prompt:
+          "Generate a pitch deck as PowerPoint (.pptx): problem, solution, market, product, traction, team, and ask. Use a clean business structure; ask for company specifics: ",
+      },
+      {
+        id: "approval",
+        label: "Approval workflow",
+        prompt:
+          "Draft an approval workflow document (Markdown or Word) with stages, roles, SLAs, and escalation. Tailor it for: ",
+      },
+    ];
+  }
+
+  /**
+   * Business template gallery catalog (Studio E4) — ~14 fill-ready seeds.
+   * Use only seeds the composer; generation stays in CLI skills.
+   */
+  function businessTemplates() {
+    return [
+      {
+        id: "sales-proposal",
+        title: "Sales proposal",
+        tags: ["sales", "word", "proposal"],
+        prompt:
+          "Create a client sales proposal as a Word document: executive summary, scope, pricing, timeline, and next steps. Company/product: ",
+      },
+      {
+        id: "invoice-standard",
+        title: "Standard invoice",
+        tags: ["finance", "word", "invoice"],
+        prompt:
+          "Create a standard invoice (.docx) with company header, bill-to, line items, tax, and payment terms. Details: ",
+      },
+      {
+        id: "quote-estimate",
+        title: "Quote / estimate",
+        tags: ["sales", "finance", "word"],
+        prompt:
+          "Create a formal quote/estimate (.docx) with itemized pricing and validity period. Project: ",
+      },
+      {
+        id: "financial-model",
+        title: "Simple financial model",
+        tags: ["finance", "excel"],
+        prompt:
+          "Create an Excel financial model with assumptions, monthly projections, and a summary sheet. Business: ",
+      },
+      {
+        id: "budget-tracker",
+        title: "Budget tracker",
+        tags: ["finance", "excel", "ops"],
+        prompt:
+          "Create an Excel budget tracker (categories, planned vs actual, variance). Context: ",
+      },
+      {
+        id: "pitch-seed",
+        title: "Investor pitch deck",
+        tags: ["sales", "powerpoint", "pitch"],
+        prompt:
+          "Create an investor pitch deck (.pptx) with problem, solution, market, product, traction, team, ask. Startup: ",
+      },
+      {
+        id: "status-report",
+        title: "Project status report",
+        tags: ["ops", "markdown", "report"],
+        prompt:
+          "Write a project status report in Markdown: summary, progress, risks, decisions needed. Project: ",
+      },
+      {
+        id: "meeting-notes",
+        title: "Meeting notes",
+        tags: ["ops", "markdown"],
+        prompt:
+          "Create structured meeting notes (Markdown) with attendees, agenda, decisions, and action items. Meeting: ",
+      },
+      {
+        id: "job-description",
+        title: "Job description",
+        tags: ["hr", "word"],
+        prompt:
+          "Write a job description (.docx or Markdown): role summary, responsibilities, requirements, nice-to-haves. Role: ",
+      },
+      {
+        id: "offer-letter",
+        title: "Offer letter outline",
+        tags: ["hr", "word", "legal"],
+        prompt:
+          "Draft an employment offer letter outline (.docx) with role, compensation placeholders, start date, and conditions. Candidate role: ",
+      },
+      {
+        id: "sop",
+        title: "Standard operating procedure",
+        tags: ["ops", "markdown"],
+        prompt:
+          "Write an SOP (Markdown) with purpose, scope, steps, owners, and exceptions. Process: ",
+      },
+      {
+        id: "nda-outline",
+        title: "NDA outline",
+        tags: ["legal", "word"],
+        prompt:
+          "Draft a mutual NDA outline (.docx) with parties, definitions, obligations, term, and exclusions (not legal advice). Context: ",
+      },
+      {
+        id: "marketing-one-pager",
+        title: "Marketing one-pager",
+        tags: ["marketing", "word", "pdf"],
+        prompt:
+          "Create a marketing one-pager (Word or PDF-ready Markdown) with value prop, audience, features, and CTA. Product: ",
+      },
+      {
+        id: "csv-data-clean",
+        title: "CSV data cleanup plan",
+        tags: ["ops", "csv", "excel"],
+        prompt:
+          "Help clean or reshape a CSV/spreadsheet: profile columns, fix types, and output a cleaned file. Describe the data: ",
+      },
+    ];
+  }
+
+  /** Case-insensitive filter of templates by title + tags. Empty query → full list. */
+  function filterTemplates(list, query) {
+    const items = Array.isArray(list) ? list : [];
+    const q = (query == null ? "" : String(query)).trim().toLowerCase();
+    if (!q) return items.slice();
+    return items.filter((t) => {
+      if (!t) return false;
+      const title = String(t.title || "").toLowerCase();
+      const tags = Array.isArray(t.tags) ? t.tags.join(" ") : String(t.tags || "");
+      return title.includes(q) || tags.toLowerCase().includes(q) || String(t.id || "").toLowerCase().includes(q);
+    });
+  }
+
   /** Compact stroke SVG glyphs for each businessDocTypeStarters id (currentColor). */
   function docTypeIcons() {
     return {
@@ -488,8 +660,9 @@
   }
 
   /**
-   * Launcher header line above "New session": extension version + active-session
-   * tokens when known. Pure so unit tests pin the format without the webview.
+   * Launcher header line above "New session": extension version + project
+   * lifetime token estimate when known. Pure so unit tests pin the format
+   * without the webview.
    * e.g. "v2.0.2 · 12.5K tokens" or just "v2.0.2" when no session tokens yet.
    */
   function formatLauncherMeta(opts) {
@@ -510,6 +683,7 @@
     stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext,
     MODE_DISPLAY, modeDisplayMeta, permissionButtonLabel, welcomeStarters,
     businessDocTypeStarters, docTypeIcons, formatTokenCount, formatLauncherMeta,
+    applyComposerSeed, taskQuickActions, businessTemplates, filterTemplates,
     isRejectedPermissionKind, permissionCollapseVerb,
     SESSION_DOT_LABELS, sessionDotLabel,
   };

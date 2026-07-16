@@ -69,7 +69,9 @@ Or build from source:
 git clone https://github.com/irichner/grokbit-vscode.git
 cd grokbit-vscode
 npm install
-./scripts/install.sh        # Windows: pwsh scripts\install.ps1
+npm run rebuild             # bump patch → package .vsix → reinstall into VS Code
+# same as: ./scripts/install.sh  |  Windows: pwsh scripts\install.ps1
+# in a Grok chat: /rebuild
 ```
 
 Reload VS Code (**Ctrl+Shift+P → Developer: Reload Window**) and click the Grok icon in the activity bar.
@@ -98,7 +100,7 @@ _Click any feature to expand._
 <details>
 <summary><strong>Native session tabs + activity-bar launcher</strong></summary>
 
-Each chat lives in its **own editor tab** (like a document). The left activity bar is a **launcher**: session list, status dots, search, rename/delete, and **New session**. You can keep several chats open and switch between them like any other tabs.
+Each chat lives in its **own editor tab** (like a document). The left activity bar is a **launcher**: recent sessions (up to 7), status dots, rename/delete, and **New session**. Full history and search live in the chat tab’s history popover. You can keep several chats open and switch between them like any other tabs.
 
 Closing a tab stops that chat’s live process but keeps history on disk (unless it was an empty “new session” you never used). After a VS Code reload, tabs can restore; the visible tab reconnects first.
 
@@ -122,6 +124,19 @@ A new empty session shows a short value prop and **starter cards**, for example:
 A **Create a document** row lives in the activity-bar **launcher** (under **New session**), with icons for **Word**, **Excel**, **PowerPoint**, **PDF**, **CSV**, and **Markdown**. Click one to open (or reuse an empty) session and fill the composer with `Create <type>: ` — finish the sentence and send.
 
 Power users can ignore the cards and type immediately.
+
+</details>
+
+<details>
+<summary><strong>Business Studio (3.0)</strong> — tasks, docs browser, templates</summary>
+
+Thin-client Studio surfaces (not a separate Office app, not five permanent sidebar tabs):
+
+- **Business tasks** on the empty-session welcome screen (invoice, receipt, weekly report, pitch deck, approval workflow) — each **seeds** the composer for you to edit; nothing is sent until you press Send.
+- **Docs** (chat top bar) — browse a capped list of business documents already in the workspace; open, reveal in the OS, attach as context, or seed a path into the composer.
+- **Templates** (activity-bar left nav, under **Create a document**) — ~14 searchable business templates; click a row to seed a fill-ready prompt. The list fills the space down to **Recent** history. Real files still come from Grok CLI skills (`/docx`, `/pptx`, `/xlsx`, …) and ordinary file tools.
+
+When a turn produces a document path, a **document card** still offers Copy path / Open / Reveal.
 
 </details>
 

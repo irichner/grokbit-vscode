@@ -38,24 +38,28 @@ export class Session {
   /**
    * True while handleSend owns the CLI turn lane (an in-flight session/prompt
    * and any chained afterTurn / queued follow-ups). A second user send while
-   * this is set is acked immediately and queued (see pendingUserSends) rather
-   * than overlapping client.prompt.
+   * this is set is queued (see pendingUserSends) rather than overlapping
+   * client.prompt — the in-flight turn is NOT cancelled; the queue drains
+   * FIFO after it fully completes.
    */
   promptInFlight = false;
 
   /**
-   * User messages submitted while a turn was already running. Each entry was
-   * already shown in the webview (user bubble + Grokking) at queue time; the
-   * host cancels the current turn and drains this FIFO without flashing idle
-   * (no agentEnd between turns).
+   * User messages submitted while a turn was already running. Additive FIFO:
+   * each entry is drained as its own sequential turn after the current one
+   * finishes (no cancel, no last-wins). UI ack (user bubble + Grokking) is
+   * deferred until the entry actually runs. Cleared on Stop/cancel so
+   * abandoned follow-ups do not run. Drained without flashing idle (no
+   * agentEnd between chained turns while the queue has work).
    */
-  pendingUserSends: { text: string; finalPrompt: string }[] = [];
+  pendingUserSends: { text: string; finalPrompt: string; sentChips: FileChip[] }[] = [];
 
   /**
-   * Drop remaining stream content from the turn being cancelled to make room
-   * for a follow-up send — same content set as plan-reject suppress, so
-   * lifecycle (promptComplete) still finalizes the partial reply. Cleared
-   * when the next prompt actually starts.
+   * Drop remaining stream content from a cancelled turn (same content set as
+   * plan-reject suppress) so lifecycle (promptComplete) can still finalize.
+   * Ordinary mid-turn follow-up queueing does NOT set this — the current turn
+   * keeps painting until it completes. Cleared when the next prompt starts or
+   * the turn lane is released.
    */
   suppressTurnTail = false;
 

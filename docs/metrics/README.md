@@ -7,6 +7,10 @@
 1. **`VERSION`** — patch segment bumps (`1.7.0` → `1.7.1` → …) on each commit metrics run  
 2. **`docs/metrics/token-ledger.md`** — one new entry for that commit (measured tokens or explicit unmeasured)
 
+This ledger is the **shared, version-controlled commit history of tokens used to develop this extension** (any contributor). Unmeasured commit stamps do not inflate measured totals.
+
+It is **not** the activity-bar launcher `N tokens` line (that is a project-lifetime estimate from on-disk session `signals.json`) and **not** the active-session context donut.
+
 Enforced by:
 
 - Lead rule in `AGENTS.md`  

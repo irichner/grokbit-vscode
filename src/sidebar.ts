@@ -53,6 +53,12 @@ import {
 import { buildPrompt } from "./prompt-builder";
 import { parseFileRef, shouldReadFileInline } from "./file-ref";
 import { pickRejectOption, shouldRejectPermission } from "./plan-gate";
+import {
+  selectWorkspaceDocs,
+  WORKSPACE_DOC_EXCLUDE,
+  WORKSPACE_DOC_GLOBS,
+  WORKSPACE_DOCS_CAP,
+} from "./workspace-docs";
 import { appendPlanEntry, decideRestoreState } from "./plan-restore";
 import { planReviewFileBaseName, sanitizePlanReviewFilePart } from "./plan-review";
 import { GROK_PRIMER, isPrimerText } from "./grok-primer";
@@ -114,7 +120,9 @@ type WebviewMsg =
   | { type: "pickFile" }
   | { type: "voiceStart" }
   | { type: "voiceStop" }
-  | { type: "docTypeStarter"; id?: string; prompt?: string };
+  | { type: "docTypeStarter"; id?: string; prompt?: string }
+  | { type: "templateStarter"; id?: string; prompt?: string }
+  | { type: "listWorkspaceDocs" };
 
 const SESSION_META_KEY = "grok.sessionMeta";
 /** globalState key for the anonymous per-install telemetry GUID (survives updates). */
@@ -337,6 +345,8 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
         await this.newTab();
         break;
       case "docTypeStarter":
+      case "templateStarter":
+        // Same seed path: open empty tab / reuse empty active, never auto-send.
         await this.openDocTypeStarter(msg.prompt);
         break;
       case "renameSession":
@@ -376,9 +386,9 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
   }
 
   /**
-   * Activity-bar document-type icon: seed "Create <type>: " into the composer.
-   * Reuses a still-empty active tab when one is open; otherwise opens a new tab.
-   * The seed is applied after the webview's ready/replay so it isn't wiped.
+   * Activity-bar Create-a-document icon or Templates row: seed text into the
+   * composer. Reuses a still-empty active tab when one is open; otherwise opens
+   * a new tab. Applied after the webview's ready/replay so it isn't wiped.
    */
   private async openDocTypeStarter(prompt?: string): Promise<void> {
     // Catalog prompts keep a trailing space ("Create Word document: ").
@@ -2282,6 +2292,11 @@ See design doc for the full state machine diagram.`;
         await this.newTab();
         break;
       case "cancel":
+        // Stop: abandon any mid-turn follow-ups so they never run after cancel,
+        // then cancel the in-flight prompt. (Ordinary follow-up queueing does
+        // not cancel — only the explicit Stop path does.)
+        session.pendingUserSends = [];
+        session.suppressTurnTail = false;
         await session.client?.cancel();
         break;
       case "pickModel":
@@ -2505,6 +2520,9 @@ See design doc for the full state machine diagram.`;
       case "pickFile":
         await this.pickFileFromComputer(session);
         break;
+      case "listWorkspaceDocs":
+        await this.listWorkspaceDocs(session);
+        break;
       case "voiceStart":
         await this.handleVoiceStart(session);
         break;
@@ -2513,6 +2531,60 @@ See design doc for the full state machine diagram.`;
         break;
     }
 
+  }
+
+  /**
+   * Studio E2: scan the workspace for business-document paths (capped), classify
+   * by extension, and reply to the requesting panel only (`postTo` — ephemeral).
+   */
+  private async listWorkspaceDocs(session: Session): Promise<void> {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) {
+      this.postTo(session, {
+        type: "workspaceDocs",
+        entries: [],
+        total: 0,
+        capped: false,
+        error: "no-workspace",
+      });
+      return;
+    }
+    try {
+      const uris: vscode.Uri[] = [];
+      const exclude = new vscode.RelativePattern(folder, WORKSPACE_DOC_EXCLUDE);
+      for (const g of WORKSPACE_DOC_GLOBS) {
+        const include = new vscode.RelativePattern(folder, g);
+        // Per-glob soft ceiling; pure selectWorkspaceDocs enforces the real cap.
+        const found = await vscode.workspace.findFiles(include, exclude, WORKSPACE_DOCS_CAP + 30);
+        uris.push(...found);
+      }
+      const files: { path: string; mtimeMs?: number }[] = [];
+      const seen = new Set<string>();
+      for (const uri of uris) {
+        const p = uri.fsPath;
+        if (seen.has(p)) continue;
+        seen.add(p);
+        let mtimeMs = 0;
+        try {
+          const st = await vscode.workspace.fs.stat(uri);
+          mtimeMs = st.mtime;
+        } catch {
+          /* keep 0 */
+        }
+        files.push({ path: p, mtimeMs });
+      }
+      const { entries, capped, total } = selectWorkspaceDocs(files, WORKSPACE_DOCS_CAP);
+      this.postTo(session, { type: "workspaceDocs", entries, capped, total });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.postTo(session, {
+        type: "workspaceDocs",
+        entries: [],
+        total: 0,
+        capped: false,
+        error: msg || "scan-failed",
+      });
+    }
   }
 
   /**
@@ -3304,45 +3376,29 @@ See design doc for the full state machine diagram.`;
   }
 
   /**
-   * User hit send while a turn is already running. Acknowledge immediately
-   * (bubble + Grokking, title/history), suppress the rest of the current stream
-   * so it doesn't paint under the new message, cancel the in-flight prompt, and
-   * queue the real session/prompt for after the current turn lane frees up.
-   * Skipping agentEnd between turns keeps the UI from flashing idle/interrupted.
+   * User hit send while a turn is already running. Snapshot the wire prompt +
+   * chips, clear the composer chips, and enqueue for FIFO drain after the
+   * current turn fully completes. Does NOT cancel the in-flight prompt and
+   * does NOT suppress its stream — mid-turn sends are additive. UI ack (user
+   * bubble + Grokking) is deferred until the entry runs in executeUserSend.
+   * Skipping agentEnd between chained turns keeps busy continuous.
    */
   private queueFollowUpSend(session: Session, text: string, chips: FileChip[]): void {
     const finalPrompt = buildPrompt(text, chips, {
       readFile: (p) => fs.readFileSync(p, "utf8"),
       extName: (p) => path.extname(p),
     });
+    const sentChips = chips.filter((c) => !c.hidden);
 
     session.chips = [];
     this.postChips(session);
-
-    const isFirstSend = !session.hasHistory;
-    session.hasHistory = true;
-    const sentChips = chips.filter((c) => !c.hidden);
-    session.userMessageCount += 1;
-    session.latestUserMessageForTitle = text;
-    this.updateTabTitle(session);
-    this.touch(session);
-    this.broadcastSessionsList();
-    if (isFirstSend) this.reportSessionStart(session);
-
-    session.inUserMessage = false;
-    this.emit(session, { type: "userMessage", text, chips: sentChips });
-    this.emit(session, { type: "agentStart" });
+    // Stay in working so the status-bar / dots don't flash idle while queued.
     this.setStatus(session, "working");
-
-    // Stop painting the cancelled turn under the new user bubble; keep the
-    // partial reply already on screen (no agentReset).
-    session.suppressTurnTail = true;
-    session.pendingUserSends.push({ text, finalPrompt });
-    void session.client?.cancel();
+    session.pendingUserSends.push({ text, finalPrompt, sentChips });
   }
 
   private async handleSend(session: Session, text: string, chips: FileChip[]): Promise<void> {
-    // Mid-turn follow-up: ack + queue, don't overlap client.prompt.
+    // Mid-turn follow-up: queue only — do not cancel or overlap client.prompt.
     if (session.promptInFlight) {
       this.queueFollowUpSend(session, text, chips);
       return;
@@ -3365,6 +3421,7 @@ See design doc for the full state machine diagram.`;
           chips: [],
           alreadyAcked: true,
           finalPrompt: next.finalPrompt,
+          sentChips: next.sentChips,
         });
       }
     } finally {
@@ -3376,8 +3433,9 @@ See design doc for the full state machine diagram.`;
   }
 
   /**
-   * Run one user→agent prompt. When `alreadyAcked`, the user bubble / Grokking
-   * were posted at queue time — only the wire prompt remains.
+   * Run one user→agent prompt. When `alreadyAcked`, the wire prompt was built
+   * at mid-turn queue time; UI (user bubble + Grokking) + title/history are
+   * applied here when the turn actually starts (deferred ack).
    */
   private async executeUserSend(
     session: Session,
@@ -3385,7 +3443,7 @@ See design doc for the full state machine diagram.`;
     gen: number,
     opts:
       | { text: string; chips: FileChip[]; alreadyAcked: false }
-      | { text: string; chips: FileChip[]; alreadyAcked: true; finalPrompt: string },
+      | { text: string; chips: FileChip[]; alreadyAcked: true; finalPrompt: string; sentChips: FileChip[] },
   ): Promise<void> {
     let finalPrompt: string;
     if (!opts.alreadyAcked) {
@@ -3421,8 +3479,20 @@ See design doc for the full state machine diagram.`;
       this.setStatus(session, "working");
     } else {
       finalPrompt = opts.finalPrompt;
-      // New turn's stream may paint again; the cancelled tail is done.
       session.suppressTurnTail = false;
+
+      // Deferred UI + bookkeeping for a send that was queued mid-turn.
+      const isFirstSend = !session.hasHistory;
+      session.hasHistory = true;
+      session.userMessageCount += 1;
+      session.latestUserMessageForTitle = opts.text;
+      this.updateTabTitle(session);
+      this.touch(session);
+      this.broadcastSessionsList();
+      if (isFirstSend) this.reportSessionStart(session);
+      session.inUserMessage = false;
+      this.emit(session, { type: "userMessage", text: opts.text, chips: opts.sentChips });
+      this.emit(session, { type: "agentStart" });
       this.setStatus(session, "working");
     }
 
@@ -3450,8 +3520,9 @@ See design doc for the full state machine diagram.`;
       //  from prompts — explicit renames and grok's on-disk summary own names.)
     } catch (err) {
       if (gen !== session.gen) return; // prompt rejected because we disposed the old client — don't leak the error into the new session
-      // Cancel-to-make-room for a queued follow-up (or plan afterTurn) is not an
-      // error — keep busy continuous and let the finally path chain the next turn.
+      // Turn failed/cancelled while more work is queued (additive follow-ups or
+      // plan afterTurn): keep busy continuous and let the drain path chain next.
+      // Stop clears pendingUserSends first so a user cancel still surfaces here.
       if (session.pendingUserSends.length > 0 || session.afterTurn) return;
       const e = err as any;
       const message = e?.data?.message ?? e?.message ?? String(err);
@@ -3528,8 +3599,9 @@ See design doc for the full state machine diagram.`;
   private emit(session: Session, message: any): void {
     if (session.suppressContent && GrokSidebar.SUPPRESS_TYPES.has(message.type)) return;
     if (session.suppressPlanReject && GrokSidebar.PLAN_REJECT_SUPPRESS.has(message.type)) return;
-    // Follow-up send cancelled the prior turn: drop its remaining stream so it
-    // doesn't paint under the new user bubble. Lifecycle still flows (promptComplete).
+    // Optional stream-tail suppress (not used by ordinary additive follow-up
+    // queueing — those leave the in-flight turn painting until it finishes).
+    // Lifecycle still flows (promptComplete) when this flag is set.
     if (session.suppressTurnTail && GrokSidebar.PLAN_REJECT_SUPPRESS.has(message.type)) return;
     this.router.emit(session, message);
   }
@@ -3875,7 +3947,9 @@ See design doc for the full state machine diagram.`;
   <header class="top-bar">
     <button id="history-btn" class="toolbar-btn" title="Session history"></button>
     <button id="new-btn" class="toolbar-btn" title="New session"></button>
+    <button id="docs-btn" class="toolbar-btn studio-top-btn" title="Workspace documents">Docs</button>
     <div id="history-popover" class="toolbar-popover history-popover" hidden></div>
+    <div id="docs-popover" class="toolbar-popover history-popover studio-popover" hidden></div>
   </header>
 
   <div id="plan-banner" class="plan-banner" hidden>
@@ -3979,12 +4053,20 @@ See design doc for the full state machine diagram.`;
       <div id="launcher-meta" class="launcher-meta" hidden></div>
       <button id="launcher-new" class="onb-action launcher-new-btn" type="button"><span class="launcher-logo" style="--logo:url('${resourceUri("blackhole-icon.svg")}')"></span>New session</button>
     </div>
-    <div id="launcher-docs" class="launcher-docs"></div>
+    <div id="launcher-studio" class="launcher-studio">
+      <div id="launcher-docs" class="launcher-docs launcher-section"></div>
+      <div class="launcher-section-bar" role="separator" aria-hidden="true"></div>
+      <div id="launcher-templates" class="launcher-templates launcher-section expanded"></div>
+    </div>
     <div id="launcher-onboarding" class="launcher-onboarding" hidden></div>
-    <div class="history-search-wrap"><input id="launcher-search" class="history-search" type="text" placeholder="Search sessions…" /></div>
-    <div id="launcher-list" class="history-list launcher-list"></div>
-    <div id="launcher-footer" class="history-footer" hidden>
-      <button id="launcher-clear-all" class="history-clear-all" type="button"></button>
+    <div class="launcher-history launcher-section expanded">
+      <button id="launcher-history-toggle" class="launcher-section-toggle" type="button" aria-expanded="true" aria-controls="launcher-history-body" title="Collapse section"></button>
+      <div id="launcher-history-body" class="launcher-section-body launcher-history-body">
+        <div id="launcher-list" class="history-list launcher-list"></div>
+        <div id="launcher-footer" class="history-footer" hidden>
+          <button id="launcher-clear-all" class="history-clear-all" type="button"></button>
+        </div>
+      </div>
     </div>
   </div>
   <script nonce="${nonce}" src="${mediaUri("webview-helpers.js")}"></script>
