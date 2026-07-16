@@ -119,7 +119,7 @@ A new empty session shows a short value prop and **starter cards**, for example:
 | **Create an image** | Starts with `/imagine ` for image generation |
 | **Dictate instead of type** | Points you at the microphone (or notes setup if voice isn’t configured yet) |
 
-Below the cards, a **Create a document** row shows icons for **Word**, **Excel**, **PowerPoint**, **PDF**, **CSV**, and **Markdown**. Click one to fill the composer with `Create <type>: ` — finish the sentence and send.
+A **Create a document** row lives in the activity-bar **launcher** (under **New session**), with icons for **Word**, **Excel**, **PowerPoint**, **PDF**, **CSV**, and **Markdown**. Click one to open (or reuse an empty) session and fill the composer with `Create <type>: ` — finish the sentence and send.
 
 Power users can ignore the cards and type immediately.
 
@@ -128,7 +128,7 @@ Power users can ignore the cards and type immediately.
 <details>
 <summary><strong>Business documents</strong> — Word, Excel, PowerPoint, PDF, CSV, Markdown</summary>
 
-On a new session, pick a document-type icon (or ask in plain language / use `/docx`, `/pptx`, `/xlsx` from autocomplete). When a tool result includes a document path, Grokbit shows a **document card** with **Copy path**, **Open** (editor for Markdown/CSV/text; system default app for Office/PDF), and **Reveal in file explorer**.
+From the launcher's **Create a document** row, pick a document-type icon (or ask in plain language / use `/docx`, `/pptx`, `/xlsx` from autocomplete). When a tool result includes a document path, Grokbit shows a **document card** with **Copy path**, **Open** (editor for Markdown/CSV/text; system default app for Office/PDF), and **Reveal in file explorer**.
 
 This is not a built-in Office suite: generation uses Grok’s skills and tools on your machine (some skills need local deps such as Node’s `docx` package). Attach an existing file as a chip to edit it.
 

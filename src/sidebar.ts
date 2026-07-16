@@ -3979,13 +3979,13 @@ See design doc for the full state machine diagram.`;
       <div id="launcher-meta" class="launcher-meta" hidden></div>
       <button id="launcher-new" class="onb-action launcher-new-btn" type="button"><span class="launcher-logo" style="--logo:url('${resourceUri("blackhole-icon.svg")}')"></span>New session</button>
     </div>
+    <div id="launcher-docs" class="launcher-docs"></div>
     <div id="launcher-onboarding" class="launcher-onboarding" hidden></div>
     <div class="history-search-wrap"><input id="launcher-search" class="history-search" type="text" placeholder="Search sessions…" /></div>
     <div id="launcher-list" class="history-list launcher-list"></div>
     <div id="launcher-footer" class="history-footer" hidden>
       <button id="launcher-clear-all" class="history-clear-all" type="button"></button>
     </div>
-    <div id="launcher-docs" class="launcher-docs"></div>
   </div>
   <script nonce="${nonce}" src="${mediaUri("webview-helpers.js")}"></script>
   <script nonce="${nonce}" src="${mediaUri("launcher.js")}"></script>

@@ -2404,16 +2404,16 @@ mjx-container[display="true"] {
 .launcher-onboarding { padding: 2px; }
 .launcher-list {
   flex: 1;
-  min-height: 0; /* allow the list to shrink so docs stay visible */
+  min-height: 0; /* the list scrolls in the remaining space below the docs strip */
   max-height: none; /* fill remaining space; the popover cap doesn't apply here */
 }
 
-/* Document-type starters pinned under recent history (activity bar only). */
+/* Document-type starters under the New session button (activity bar only). */
 .launcher-docs {
   flex: 0 0 auto;
-  margin-top: 8px;
-  padding: 8px 2px 4px;
-  border-top: 1px solid var(--vscode-panel-border, var(--vscode-editorWidget-border, #444));
+  margin: 2px 0 4px;
+  padding: 4px 2px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-editorWidget-border, #444));
 }
 .launcher-docs[hidden] { display: none; }
 .launcher-docs-heading {

@@ -15,13 +15,13 @@ const BODY = `
       <div id="launcher-meta" class="launcher-meta" hidden></div>
       <button id="launcher-new" class="onb-action launcher-new-btn" type="button">New session</button>
     </div>
+    <div id="launcher-docs" class="launcher-docs"></div>
     <div id="launcher-onboarding" class="launcher-onboarding" hidden></div>
     <div class="history-search-wrap"><input id="launcher-search" class="history-search" type="text" /></div>
     <div id="launcher-list" class="history-list launcher-list"></div>
     <div id="launcher-footer" class="history-footer" hidden>
       <button id="launcher-clear-all" class="history-clear-all" type="button"></button>
     </div>
-    <div id="launcher-docs" class="launcher-docs"></div>
   </div>`;
 
 type Posted = { type: string; [k: string]: unknown };
@@ -108,7 +108,7 @@ describe("launcher recent history (cap 7)", () => {
 });
 
 describe("launcher document-type starters", () => {
-  it("renders six types under the list and posts docTypeStarter on click", () => {
+  it("renders six types under the New session button and posts docTypeStarter on click", () => {
     const { window, posted, doc } = bootLauncher();
     const docs = doc.getElementById("launcher-docs") as HTMLElement;
     expect(docs).not.toBeNull();

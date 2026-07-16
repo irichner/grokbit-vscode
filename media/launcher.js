@@ -210,7 +210,7 @@
       .replace(/"/g, "&quot;");
   }
 
-  /** Document-type starters below the recent list (moved from the chat welcome). */
+  /** Document-type starters below the New session button (moved from the chat welcome). */
   function renderDocTypes() {
     if (!docsEl || typeof businessDocTypeStarters !== "function") return;
     const types = businessDocTypeStarters();

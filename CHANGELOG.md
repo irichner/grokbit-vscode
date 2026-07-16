@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.4 — 2026-07-15
+
+### Changed
+
+- **Office document starters moved to the top of the launcher.** The Word / Excel / PowerPoint / PDF / CSV / Markdown strip now sits directly under the "New session" button (above the search box and recent history) instead of below the history list, so it's visible without scrolling. ([media/launcher.js](media/launcher.js), [media/chat.css](media/chat.css), [src/sidebar.ts](src/sidebar.ts))
+
 ## 2.0.3 — 2026-07-15
 
 ### Changed
