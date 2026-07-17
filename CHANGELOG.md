@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Rebuild publishes to the VS Code Marketplace.** `npm run rebuild` / `/rebuild` (and the install scripts) now run bump → package → reinstall → `vsce publish --packagePath <vsix>` by default. Auth via `VSCE_PAT` or `vsce login Grokbit`. Skip with `--no-publish` / `-NoPublish`. ([scripts/install.ps1](scripts/install.ps1), [scripts/install.sh](scripts/install.sh), [scripts/rebuild.js](scripts/rebuild.js), [.grok/skills/rebuild/SKILL.md](.grok/skills/rebuild/SKILL.md))
+
+## 3.0.3 — 2026-07-16
+
+### Added
+
+- **Activity carousel — the chat barely scrolls while Grok works.** Each turn's tool calls, thinking, and step narration now roll into ONE compact block: live, a single strip shows the current action with a step counter (‹ › flips back through earlier steps; chevron expands the bounded detail); when the turn ends it freezes into a one-line summary ("Explored 8 items, edited 2 files · 14 steps"). Simple turns (one batch, thinking-only) still render as the classic single row. New setting `grok.compactActivity` (default on; also under gear → Config & debug) restores the classic scrolling stream when off. ([media/chat.js](media/chat.js), [media/chat.css](media/chat.css), [media/webview-helpers.js](media/webview-helpers.js), [src/sidebar.ts](src/sidebar.ts))
+
 ## 3.0.1 — 2026-07-16
 
 ### Fixed

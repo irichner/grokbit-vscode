@@ -1,5 +1,5 @@
 // Grokbit launcher — the activity-bar view. New session + collapsible
-// Create a document + Templates (fills down to history) + Recent history.
+// Create a document + Templates + Recent (stacked under Templates in studio).
 // Status dots / rename / delete / clear-all. Signed-out / missing-CLI
 // onboarding. No composer, no chat rendering. History is hard-capped (full
 // history + search live in the chat history popover). Rows mirror the chat
@@ -48,7 +48,7 @@
     error: "Finished with an error — not opened yet",
   };
 
-  // Collapse prefs survive webview reloads via setState. Defaults: all open.
+  // Collapse prefs survive webview reloads via setState. Defaults: all collapsed.
   const saved = (typeof vscode.getState === "function" && vscode.getState()) || {};
   const state = {
     sessions: [],
@@ -59,9 +59,9 @@
     extVersion: "",
     totalTokens: undefined,
     templateSearch: typeof saved.templateSearch === "string" ? saved.templateSearch : "",
-    docsOpen: saved.docsOpen !== false,
-    templatesOpen: saved.templatesOpen !== false,
-    historyOpen: saved.historyOpen !== false,
+    docsOpen: saved.docsOpen === true,
+    templatesOpen: saved.templatesOpen === true,
+    historyOpen: saved.historyOpen === true,
   };
 
   function persistUi() {
@@ -315,7 +315,7 @@
 
   /**
    * Templates gallery (collapsible). Flex-grows in .launcher-studio so the
-   * list fills the space between Create a document and Recent history.
+   * list fills the space between Create a document and Recent (sibling below).
    * Click seeds the composer via host templateStarter (no auto-send).
    */
   function renderTemplates(opts) {

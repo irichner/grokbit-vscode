@@ -16,20 +16,20 @@ const BODY = `
       <button id="launcher-new" class="onb-action launcher-new-btn" type="button">New session</button>
     </div>
     <div id="launcher-studio" class="launcher-studio">
-      <div id="launcher-docs" class="launcher-docs launcher-section"></div>
+      <div id="launcher-docs" class="launcher-docs launcher-section collapsed"></div>
       <div class="launcher-section-bar" role="separator" aria-hidden="true"></div>
-      <div id="launcher-templates" class="launcher-templates launcher-section expanded"></div>
-    </div>
-    <div id="launcher-onboarding" class="launcher-onboarding" hidden></div>
-    <div class="launcher-history launcher-section expanded">
-      <button id="launcher-history-toggle" class="launcher-section-toggle" type="button" aria-expanded="true" aria-controls="launcher-history-body"></button>
-      <div id="launcher-history-body" class="launcher-section-body launcher-history-body">
-        <div id="launcher-list" class="history-list launcher-list"></div>
-        <div id="launcher-footer" class="history-footer" hidden>
-          <button id="launcher-clear-all" class="history-clear-all" type="button"></button>
+      <div id="launcher-templates" class="launcher-templates launcher-section collapsed"></div>
+      <div class="launcher-history launcher-section collapsed">
+        <button id="launcher-history-toggle" class="launcher-section-toggle" type="button" aria-expanded="false" aria-controls="launcher-history-body"></button>
+        <div id="launcher-history-body" class="launcher-section-body launcher-history-body">
+          <div id="launcher-list" class="history-list launcher-list"></div>
+          <div id="launcher-footer" class="history-footer" hidden>
+            <button id="launcher-clear-all" class="history-clear-all" type="button"></button>
+          </div>
         </div>
       </div>
     </div>
+    <div id="launcher-onboarding" class="launcher-onboarding" hidden></div>
   </div>`;
 
 type Posted = { type: string; [k: string]: unknown };
@@ -179,26 +179,29 @@ describe("launcher document-type starters", () => {
     });
   });
 
-  it("keeps studio strip (docs + templates) above the bottom-pinned history block", () => {
+  it("keeps Recent directly under Templates inside the studio column", () => {
     const { doc } = bootLauncher();
     const launcher = doc.querySelector(".launcher") as HTMLElement;
     const studio = doc.getElementById("launcher-studio") as HTMLElement;
     const docs = doc.getElementById("launcher-docs") as HTMLElement;
     const templates = doc.getElementById("launcher-templates") as HTMLElement;
     const history = doc.querySelector(".launcher-history") as HTMLElement;
+    const onboarding = doc.getElementById("launcher-onboarding") as HTMLElement;
     const list = doc.getElementById("launcher-list") as HTMLElement;
     const footer = doc.getElementById("launcher-footer") as HTMLElement;
     expect(history).not.toBeNull();
     expect(studio.contains(docs)).toBe(true);
     expect(studio.contains(templates)).toBe(true);
+    expect(studio.contains(history)).toBe(true);
     expect(history.contains(list)).toBe(true);
     expect(history.contains(footer)).toBe(true);
-    // DOM order: head → studio → onboarding → history.
+    // DOM order: head → studio → onboarding (history lives inside studio).
     const kids = [...launcher.children] as HTMLElement[];
-    expect(kids.indexOf(studio)).toBeLessThan(kids.indexOf(history));
-    // Within studio: docs, bar, templates.
+    expect(kids.indexOf(studio)).toBeLessThan(kids.indexOf(onboarding));
+    // Within studio: docs → templates → Recent (directly under Templates).
     const studioKids = [...studio.children] as HTMLElement[];
     expect(studioKids.indexOf(docs)).toBeLessThan(studioKids.indexOf(templates));
+    expect(studioKids.indexOf(templates)).toBeLessThan(studioKids.indexOf(history));
   });
 });
 
@@ -232,44 +235,45 @@ describe("launcher templates section", () => {
 });
 
 describe("launcher collapsible sections", () => {
-  it("starts with Create a document, Templates, and Recent expanded", () => {
+  it("starts with Create a document, Templates, and Recent collapsed", () => {
     const { doc } = bootLauncher();
     const docs = doc.getElementById("launcher-docs") as HTMLElement;
     const templates = doc.getElementById("launcher-templates") as HTMLElement;
     const history = doc.querySelector(".launcher-history") as HTMLElement;
-    expect(docs.classList.contains("expanded")).toBe(true);
-    expect(docs.classList.contains("collapsed")).toBe(false);
-    expect(templates.classList.contains("expanded")).toBe(true);
-    expect(history.classList.contains("expanded")).toBe(true);
-    expect(doc.getElementById("launcher-docs-toggle")?.getAttribute("aria-expanded")).toBe("true");
-    expect(doc.getElementById("launcher-templates-toggle")?.getAttribute("aria-expanded")).toBe("true");
-    expect(doc.getElementById("launcher-history-toggle")?.getAttribute("aria-expanded")).toBe("true");
+    expect(docs.classList.contains("collapsed")).toBe(true);
+    expect(docs.classList.contains("expanded")).toBe(false);
+    expect(templates.classList.contains("collapsed")).toBe(true);
+    expect(history.classList.contains("collapsed")).toBe(true);
+    expect(doc.getElementById("launcher-docs-toggle")?.getAttribute("aria-expanded")).toBe("false");
+    expect(doc.getElementById("launcher-templates-toggle")?.getAttribute("aria-expanded")).toBe("false");
+    expect(doc.getElementById("launcher-history-toggle")?.getAttribute("aria-expanded")).toBe("false");
+    // Content still present in DOM (CSS hides the body when collapsed).
     expect(docs.querySelectorAll(".welcome-doc-type")).toHaveLength(6);
   });
 
-  it("collapses Create a document on header click and persists", () => {
+  it("expands Create a document on header click and persists", () => {
     const { window, doc, webviewState } = bootLauncher();
     const docs = doc.getElementById("launcher-docs") as HTMLElement;
     const toggle = doc.getElementById("launcher-docs-toggle") as HTMLButtonElement;
     click(window, toggle);
-    expect(docs.classList.contains("collapsed")).toBe(true);
-    expect(docs.classList.contains("expanded")).toBe(false);
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect((webviewState.current as { docsOpen?: boolean })?.docsOpen).toBe(false);
+    expect(docs.classList.contains("expanded")).toBe(true);
+    expect(docs.classList.contains("collapsed")).toBe(false);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect((webviewState.current as { docsOpen?: boolean })?.docsOpen).toBe(true);
     expect(docs.querySelectorAll(".welcome-doc-type")).toHaveLength(6);
   });
 
-  it("collapses Templates on header click and persists", () => {
+  it("expands Templates on header click and persists", () => {
     const { window, doc, webviewState } = bootLauncher();
     const templates = doc.getElementById("launcher-templates") as HTMLElement;
     const toggle = doc.getElementById("launcher-templates-toggle") as HTMLButtonElement;
     click(window, toggle);
-    expect(templates.classList.contains("collapsed")).toBe(true);
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect((webviewState.current as { templatesOpen?: boolean })?.templatesOpen).toBe(false);
+    expect(templates.classList.contains("expanded")).toBe(true);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect((webviewState.current as { templatesOpen?: boolean })?.templatesOpen).toBe(true);
   });
 
-  it("collapses Recent history on header click", () => {
+  it("expands Recent history on header click", () => {
     const { window, doc, webviewState } = bootLauncher();
     dispatch(window, {
       type: "sessions",
@@ -284,10 +288,25 @@ describe("launcher collapsible sections", () => {
     const history = doc.querySelector(".launcher-history") as HTMLElement;
     const toggle = doc.getElementById("launcher-history-toggle") as HTMLButtonElement;
     click(window, toggle);
-    expect(history.classList.contains("collapsed")).toBe(true);
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect((webviewState.current as { historyOpen?: boolean })?.historyOpen).toBe(false);
+    expect(history.classList.contains("expanded")).toBe(true);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect((webviewState.current as { historyOpen?: boolean })?.historyOpen).toBe(true);
     expect(doc.querySelectorAll("#launcher-list .history-row")).toHaveLength(3);
+  });
+
+  it("restores expanded prefs from webview state on boot", () => {
+    const { doc } = bootLauncher({
+      getState: () => ({ docsOpen: true, templatesOpen: true, historyOpen: true }),
+    });
+    const docs = doc.getElementById("launcher-docs") as HTMLElement;
+    const templates = doc.getElementById("launcher-templates") as HTMLElement;
+    const history = doc.querySelector(".launcher-history") as HTMLElement;
+    expect(docs.classList.contains("expanded")).toBe(true);
+    expect(templates.classList.contains("expanded")).toBe(true);
+    expect(history.classList.contains("expanded")).toBe(true);
+    expect(doc.getElementById("launcher-docs-toggle")?.getAttribute("aria-expanded")).toBe("true");
+    expect(doc.getElementById("launcher-templates-toggle")?.getAttribute("aria-expanded")).toBe("true");
+    expect(doc.getElementById("launcher-history-toggle")?.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("restores collapsed prefs from webview state on boot", () => {

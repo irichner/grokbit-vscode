@@ -1121,6 +1121,113 @@ body.thinking-hidden .msg.thinking { display: none; }
   white-space: pre;
 }
 .tool-item .tool-output-copy { margin-left: 2px; }
+
+/* ---- activity carousel ---- */
+/* One block per turn segment: the strip is a single row showing the CURRENT
+   action (live) or the rolled-up summary (done); the body holds the full
+   detail — tool groups, thinking, step narration — in a bounded scroll area.
+   Metrics mirror .tool-group-header so the strip reads as a sibling of the
+   classic tool rows. */
+.activity-carousel { font-size: var(--vscode-font-size); }
+.activity-strip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  color: var(--vscode-descriptionForeground);
+  padding: 3px 0;
+  font-family: var(--vscode-font-family);
+  user-select: none;
+  min-width: 0;
+}
+.activity-strip:hover { color: var(--vscode-foreground); }
+.activity-icon { width: 15px; height: 15px; flex: 0 0 auto; opacity: 0.85; }
+.activity-icon svg { display: block; width: 100%; height: 100%; }
+.activity-strip:hover .activity-icon { opacity: 1; }
+/* Live activity carries the same cyan halo as the other progress indicators. */
+.activity-carousel.live .activity-icon { filter: drop-shadow(0 0 4px var(--neon-cyan-soft)); }
+.activity-carousel.has-error .activity-icon { color: var(--vscode-errorForeground); opacity: 1; }
+/* The current-action label ellipsizes rather than wrapping — the strip must
+   stay exactly one row no matter how long a command/path is. */
+.activity-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-label-anim { animation: activity-slide-in 0.18s ease-out; }
+@keyframes activity-slide-in {
+  from { transform: translateY(6px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .activity-label-anim { animation: none; }
+}
+/* Blinking dots only while live-following; a static peek isn't "running".
+   Every dots/chevron rule here is scoped to .activity-strip — the body hosts
+   real .tool-group headers whose own dots/chevron must keep their own rules. */
+.activity-strip .tool-dots { display: none; }
+.activity-carousel.live .activity-strip .tool-dots {
+  display: inline-flex;
+  gap: 1px;
+  margin-left: 1px;
+  color: var(--neon-cyan-ink);
+  flex: 0 0 auto;
+}
+.activity-carousel.live .activity-strip .tool-dots span {
+  opacity: 0.2;
+  animation: tool-dot-blink 1.4s infinite;
+}
+.activity-carousel.live .activity-strip .tool-dots span:nth-child(2) { animation-delay: 0.2s; }
+.activity-carousel.live .activity-strip .tool-dots span:nth-child(3) { animation-delay: 0.4s; }
+.activity-carousel.live.peeking .activity-strip .tool-dots { display: none; }
+/* ‹ n/N › peek nav, right-aligned; the arrows fade in on hover. */
+.activity-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+.activity-nav-btn {
+  background: none;
+  border: none;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 3px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.activity-strip:hover .activity-nav-btn { opacity: 0.7; }
+.activity-nav-btn:hover { opacity: 1; color: var(--vscode-foreground); }
+.activity-pos {
+  font-size: 10px;
+  opacity: 0.8;
+  min-width: 3ch;
+  text-align: center;
+}
+.activity-strip .tool-chevron { flex: 0 0 auto; }
+.activity-carousel.expanded .activity-strip .tool-chevron {
+  opacity: 0.8;
+  transform: rotate(90deg);
+}
+/* Full detail: the same left-rail look as a tool-group body, but bounded — the
+   whole point is that a 40-step turn scrolls HERE, not in the chat. */
+.activity-body {
+  margin-top: 2px;
+  padding-left: 15px;
+  border-left: 1px solid var(--vscode-panel-border);
+  margin-left: 7px;
+  max-height: min(340px, 45vh);
+  overflow-y: auto;
+}
+/* Narration folded into the block reads as a muted step note, not a full
+   bubble — and its hover actions (copy/timestamp) are noise in the detail. */
+.activity-body .msg.agent { opacity: 0.85; }
+.activity-body .msg.agent .msg-actions { display: none; }
 .tool-kind {
   font-size: 10px;
   color: var(--vscode-descriptionForeground);
@@ -2573,7 +2680,7 @@ mjx-container[display="true"] {
 .launcher-head .onb-action { width: 100%; margin: 0; }
 .launcher-onboarding { padding: 2px; }
 
-/* Collapsible sections (Create a document, Recent) — VS Code explorer style. */
+/* Collapsible sections (Create a document, Templates, Recent) — explorer style. */
 .launcher-section {
   display: flex;
   flex-direction: column;
@@ -2636,8 +2743,9 @@ mjx-container[display="true"] {
 }
 
 /*
- * Studio column: Create a document + bar + Templates.
- * Templates flex-grows so the list fills down to Recent history.
+ * Studio column: Create a document + bar + Templates + Recent (in that order).
+ * Templates flex-grows to fill space above Recent; Recent stays under Templates
+ * with a height cap so the template list remains usable when both are open.
  * VS Code owns the real sidebar drag width; content is densified ~20% so the
  * strip stays usable when the side bar is narrower.
  */
@@ -2659,7 +2767,7 @@ mjx-container[display="true"] {
 }
 .launcher-section-bar[hidden] { display: none; }
 
-/* Recent history + clear-all pinned to the bottom of the activity bar. */
+/* Recent history + clear-all — stacked under Templates inside .launcher-studio. */
 .launcher-history {
   flex: 0 1 auto;
   margin-top: 0;
@@ -2683,7 +2791,7 @@ mjx-container[display="true"] {
 }
 .launcher-list {
   flex: 1 1 auto;
-  min-height: 0; /* scroll when the bottom block is taller than the available space */
+  min-height: 0; /* scroll when the Recent block is taller than its max-height */
   max-height: none; /* the history wrapper caps height; the popover cap doesn't apply here */
   overflow-y: auto;
 }
@@ -2727,7 +2835,7 @@ mjx-container[display="true"] {
   font-size: 9px;
 }
 
-/* Templates section — grows to fill remaining studio height above Recent. */
+/* Templates section — grows to fill studio space between the bar and Recent. */
 .launcher-templates {
   flex: 1 1 auto;
   min-height: 0;

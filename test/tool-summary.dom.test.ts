@@ -195,22 +195,25 @@ describe("real transcripts — Grok + Composer", () => {
 });
 
 // grok narrates each step then runs its tools (narrate → tools → narrate → tools).
-// The bubble for each narration must sit directly ABOVE the tools it introduced —
-// not coalesce into one bubble with N consecutive tool summaries stacked below it.
-describe("narration interleaves with tool groups", () => {
-  function seq(doc: Document): string[] {
-    const messages = doc.getElementById("messages")!;
-    return (Array.from(messages.children) as HTMLElement[])
+// With the activity carousel (the default), the whole working sequence rolls into
+// ONE block: the narration folds into the block's body directly above the tools it
+// introduced, so the interleave order is preserved INSIDE the detail view while the
+// transcript itself stays a single strip row. The trailing narration ("Done.") is
+// the turn's answer-in-progress — it stays a normal bubble below the block.
+describe("narration interleaves with tool groups (inside the activity block)", () => {
+  function seqOf(container: Element): string[] {
+    return (Array.from(container.children) as HTMLElement[])
       .filter((c) => c.id !== "welcome")
       .map((c) => {
         if (c.classList.contains("agent")) return "agent:" + (c.querySelector(".body")?.textContent ?? "");
         if (c.classList.contains("tool-group")) return "tools:" + (c.querySelector(".tool-group-label")?.textContent ?? "");
         if (c.classList.contains("tool-flat")) return "tool:" + c.textContent;
+        if (c.classList.contains("activity-carousel")) return "activity";
         return c.className;
       });
   }
 
-  it("each narration renders above its own tool group, in order", () => {
+  it("narration + tool batches collapse into one block, interleaved in order inside it", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "messageChunk", text: "First, reading the files." } as any);
     dispatch(window, tc({ toolCallId: "1", kind: "read", rawInput: { path: "/a.ts" } }));
@@ -219,17 +222,39 @@ describe("narration interleaves with tool groups", () => {
     dispatch(window, tc({ toolCallId: "3", kind: "execute", rawInput: { command: "npm run build" } }));
     dispatch(window, tc({ toolCallId: "4", kind: "execute", rawInput: { command: "npm test" } }));
     dispatch(window, { type: "messageChunk", text: "Done." } as any); // closes the 2nd group
+    dispatch(window, { type: "promptComplete" } as any); // flushes the bubble + freezes the block
 
-    const s = seq(doc);
-    // Two distinct narration bubbles, each immediately above the group it introduced
-    // — NOT one merged bubble followed by two back-to-back summaries.
+    // Transcript: ONE activity block + the trailing (answer) bubble — no scroll spam.
+    expect(seqOf(doc.getElementById("messages")!)).toEqual(["activity", "agent:Done."]);
+    // Inside the block the interleave order survives exactly: each narration
+    // directly above the group it introduced, never coalesced.
+    const body = doc.querySelector(".activity-carousel .activity-body")!;
+    expect(seqOf(body)).toEqual([
+      "agent:First, reading the files.",
+      "tools:Explored 2 items",
+      "agent:Now running the build.",
+      "tools:Ran 2 commands",
+    ]);
+  });
+
+  it("classic mode (compactActivity off) keeps the original interleaved transcript", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "compactActivity", value: false } as any);
+    dispatch(window, { type: "messageChunk", text: "First, reading the files." } as any);
+    dispatch(window, tc({ toolCallId: "1", kind: "read", rawInput: { path: "/a.ts" } }));
+    dispatch(window, tc({ toolCallId: "2", kind: "read", rawInput: { path: "/b.ts" } }));
+    dispatch(window, { type: "messageChunk", text: "Now running the build." } as any);
+    dispatch(window, tc({ toolCallId: "3", kind: "execute", rawInput: { command: "npm run build" } }));
+    dispatch(window, tc({ toolCallId: "4", kind: "execute", rawInput: { command: "npm test" } }));
+    dispatch(window, { type: "messageChunk", text: "Done." } as any);
+
+    const s = seqOf(doc.getElementById("messages")!);
     expect(s.slice(0, 4)).toEqual([
       "agent:First, reading the files.",
       "tools:Explored 2 items",
       "agent:Now running the build.",
       "tools:Ran 2 commands",
     ]);
-    // Three separate agent bubbles (the third holds "Done."), not one coalesced.
     expect(s.filter((x) => x.startsWith("agent:"))).toHaveLength(3);
   });
 });
@@ -330,10 +355,9 @@ describe("failed tool calls surface the reason", () => {
   });
 });
 
-describe("plan / permission cards sit below interleaved narration + tools", () => {
-  function cardSeq(doc: Document): string[] {
-    const messages = doc.getElementById("messages")!;
-    return (Array.from(messages.children) as HTMLElement[])
+describe("plan / permission cards sit below the frozen activity block", () => {
+  function cardSeq(container: Element): string[] {
+    return (Array.from(container.children) as HTMLElement[])
       .filter((c) => c.id !== "welcome")
       .map((c) => {
         if (c.classList.contains("thinking")) return "thinking";
@@ -342,11 +366,13 @@ describe("plan / permission cards sit below interleaved narration + tools", () =
         if (c.classList.contains("agent")) return "agent:" + (c.querySelector(".body")?.textContent ?? "");
         if (c.classList.contains("tool-group")) return "tools:" + (c.querySelector(".tool-group-label")?.textContent ?? "");
         if (c.classList.contains("tool-flat")) return "tool:" + c.textContent;
+        if (c.classList.contains("activity-carousel"))
+          return "activity:" + (c.querySelector(".activity-label")?.textContent ?? "");
         return c.className;
       });
   }
 
-  it("a plan turn: thinking + interleaved narration/tools, then the plan card at the bottom", () => {
+  it("a plan turn: the lead-up freezes into one summary block, then the plan card at the bottom", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "thoughtChunk", text: "Planning the approach." } as any);
     dispatch(window, { type: "messageChunk", text: "Let me explore the code." } as any);
@@ -355,16 +381,23 @@ describe("plan / permission cards sit below interleaved narration + tools", () =
     dispatch(window, { type: "messageChunk", text: "Here's my plan." } as any);
     dispatch(window, { type: "exitPlanRequest", req: { id: 7, plan: "1. do X\n2. do Y" } } as any);
 
-    expect(cardSeq(doc)).toEqual([
-      "thinking",
-      "agent:Let me explore the code.",
-      "tools:Explored 2 items",
+    // Transcript: one frozen block (thinking + narration + tools · 4 steps), the
+    // plan intro bubble, then the card at the bottom — nothing above scrolls away.
+    expect(cardSeq(doc.getElementById("messages")!)).toEqual([
+      "activity:Explored 2 items · 4 steps",
       "agent:Here's my plan.",
       "PLAN-CARD",
     ]);
+    // The lead-up detail survives, in order, inside the block.
+    const body = doc.querySelector(".activity-carousel .activity-body")!;
+    expect(cardSeq(body)).toEqual([
+      "thinking",
+      "agent:Let me explore the code.",
+      "tools:Explored 2 items",
+    ]);
   });
 
-  it("a permission card lands below the narration + tool that triggered it", () => {
+  it("a permission card lands below the frozen block that led to it", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "messageChunk", text: "I'll remove the stale files." } as any);
     dispatch(window, tc({ toolCallId: "1", kind: "execute", rawInput: { command: "rm /a.tmp" } }));
@@ -374,10 +407,14 @@ describe("plan / permission cards sit below interleaved narration + tools", () =
       req: { id: 9, toolCall: { toolCallId: "x", kind: "execute", title: "Run rm" }, options: [{ optionId: "a", kind: "allow_once", name: "Allow" }, { optionId: "r", kind: "reject_once", name: "Reject" }] },
     } as any);
 
-    expect(cardSeq(doc)).toEqual([
+    expect(cardSeq(doc.getElementById("messages")!)).toEqual([
+      "activity:Ran 2 commands · 3 steps",
+      "PERM-CARD",
+    ]);
+    const body = doc.querySelector(".activity-carousel .activity-body")!;
+    expect(cardSeq(body)).toEqual([
       "agent:I'll remove the stale files.",
       "tools:Ran 2 commands",
-      "PERM-CARD",
     ]);
   });
 });

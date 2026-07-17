@@ -80,6 +80,11 @@
     activeThoughtHdrEl: null,
     thoughtStartTime: null,
     activeToolGroupEl: null,
+    // Live activity-carousel block (one per turn segment): collects tool groups,
+    // thinking, and step narration while grok works so the transcript stays one
+    // row; finalized into a one-line summary at the turn boundary. Null when no
+    // block is live (incl. classic mode — see state.compactActivity).
+    activeActivityEl: null,
     slashFiltered: [],
     slashActive: 0,
     pendingDiffByToolCallId: new Map(),
@@ -190,6 +195,11 @@
     // & debug. The host posts the real value on init and on config change.
     showThinking: false,
     thinkingIndicatorEl: null,
+    // grok.compactActivity — roll each turn's working activity (tools, thinking,
+    // step narration) into one carousel block instead of a scrolling stream of
+    // rows. On by default; the setting and the gear → Config & debug switch flip
+    // it live (new turns only — already-rendered DOM is never restructured).
+    compactActivity: true,
   };
 
   // Matches any version of the extension's primer (v1, v2, …). Used during
@@ -273,6 +283,18 @@
     : function () { return []; };
   const welcomeStarters = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.welcomeStarters)
     || function () { return []; };
+  const activityPeek = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.activityPeek)
+    || function (view, count, dir) {
+        if (!count || count <= 1) return -1;
+        const cur = view === -1 ? count - 1 : Math.min(Math.max(view, 0), count - 1);
+        const next = Math.max(0, Math.min(count - 1, cur + dir));
+        return next >= count - 1 ? -1 : next;
+      };
+  const activityPosText = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.activityPosText)
+    || function (view, count) {
+        if (!count) return "";
+        return view === -1 ? String(count) : `${view + 1}/${count}`;
+      };
 
   // Three blinking dots — the tool rows' in-progress animation, reused by every
   // progress indicator (Grokking / Thinking) so they all pulse the same way
@@ -1307,6 +1329,18 @@
       },
     );
     addGearInfo('<span class="popover-hint">When off, you only see a short “Thinking…” line while Grok works.</span>');
+    // Compact activity carousel — one strip per turn instead of a scrolling
+    // stream of tool/thinking rows. Applies to new turns; setting-backed.
+    addGearItem(
+      `<span>Compact activity view</span><span class="popover-switch${state.compactActivity ? " on" : ""}" role="switch" aria-checked="${state.compactActivity}"><span class="popover-switch-knob"></span></span>`,
+      () => {
+        state.compactActivity = !state.compactActivity;
+        if (!state.compactActivity) finalizeActivity();
+        vscode.postMessage({ type: "setCompactActivity", value: state.compactActivity });
+        renderConfigDebugPanel(); // re-render so the switch reflects the new state
+      },
+    );
+    addGearInfo('<span class="popover-hint">Rolls each turn’s tool activity into one compact strip you can expand, instead of a scrolling list.</span>');
     addGearSep();
     addGearItem('<span>Open global settings file</span><span class="popover-external">↗</span>', () => {
       vscode.postMessage({ type: "openGlobalConfig" });
@@ -1809,6 +1843,7 @@
     state.activeThoughtHdrEl = null;
     state.thoughtBuffer = "";
     state.activeToolGroupEl = null;
+    state.activeActivityEl = null;
     state.replaying = false;
     state.planHistoryQueue = [];
     state.permissionHistoryQueue = [];
@@ -2161,6 +2196,143 @@
     return TOOL_ICON_BY_RANK[rank];
   }
 
+  // ---------- activity carousel ----------
+  // One compact block per turn segment collects the tool groups, thinking, and
+  // step narration that each used to take their own transcript row — so a long
+  // agentic turn occupies a single line instead of scrolling the chat. Live, the
+  // strip shows the CURRENT action (label slides on change) + blinking dots + a
+  // step counter, with ‹ › to peek back through earlier steps and a chevron that
+  // expands the full detail in a bounded scroll area. At the turn boundary
+  // (finalizeActivity) the strip freezes into a one-line summary ("Explored 8
+  // items, edited 2 files · 14 steps"). A block whose body ended up holding
+  // exactly ONE item unwraps back to the bare element, so simple turns (one
+  // batch, or thinking-only) render exactly like the classic rows — including
+  // .msg.thinking staying hidden under body.thinking-hidden. Interactive cards
+  // and deliverables never enter the block; they finalize it (segment break) so
+  // the DOM stays append-only and chronological. Gated by grok.compactActivity
+  // (default on): when off, ensureActivityBlock returns null and finalizeActivity
+  // no-ops, leaving the classic scrolling stream bit-identical.
+
+  function activityBody(el) {
+    return el.querySelector(".activity-body");
+  }
+
+  function ensureActivityBlock() {
+    if (!state.compactActivity) return null;
+    if (state.activeActivityEl) return state.activeActivityEl;
+    clearWelcome();
+    const el = document.createElement("div");
+    el.className = "activity-carousel live";
+    el._steps = [];
+    el._allCalls = [];
+    el._view = -1; // -1 = live (strip follows the latest step)
+    const strip = document.createElement("div");
+    strip.className = "activity-strip";
+    strip.innerHTML =
+      `<span class="activity-icon">${ICON.grok}</span>` +
+      `<span class="activity-label"></span>` +
+      `<span class="tool-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>` +
+      `<span class="activity-nav">` +
+      `<button class="activity-nav-btn activity-prev" type="button" title="Previous step" aria-label="Previous step">‹</button>` +
+      `<span class="activity-pos"></span>` +
+      `<button class="activity-nav-btn activity-next" type="button" title="Next step" aria-label="Next step">›</button>` +
+      `</span>` +
+      `<span class="tool-chevron" aria-hidden="true">›</span>`;
+    const body = document.createElement("div");
+    body.className = "activity-body";
+    // Opted-in thinking traces stream visibly: start expanded so the detail
+    // scrolls inside the bounded body instead of hiding behind a click.
+    body.hidden = !state.showThinking;
+    el.classList.toggle("expanded", !body.hidden);
+    el.appendChild(strip);
+    el.appendChild(body);
+    strip.onclick = () => {
+      body.hidden = !body.hidden;
+      el.classList.toggle("expanded", !body.hidden);
+      if (!body.hidden) body.scrollTop = body.scrollHeight;
+    };
+    strip.querySelector(".activity-prev").onclick = (e) => { e.stopPropagation(); stepActivityView(el, -1); };
+    strip.querySelector(".activity-next").onclick = (e) => { e.stopPropagation(); stepActivityView(el, 1); };
+    messagesEl.appendChild(el);
+    state.activeActivityEl = el;
+    renderActivityStrip(el, false);
+    scrollToBottom();
+    return el;
+  }
+
+  function stepActivityView(el, dir) {
+    el._view = activityPeek(el._view, el._steps.length, dir);
+    renderActivityStrip(el, false);
+  }
+
+  function renderActivityStrip(el, animate) {
+    const steps = el._steps || [];
+    const labelEl = el.querySelector(".activity-label");
+    const iconEl = el.querySelector(".activity-icon");
+    const posEl = el.querySelector(".activity-pos");
+    const idx = el._view === -1 ? steps.length - 1 : el._view;
+    const cur = steps[idx];
+    labelEl.textContent = cur ? cur.label : "Working";
+    iconEl.innerHTML = (cur && cur.icon) || ICON.grok;
+    if (posEl) posEl.textContent = activityPosText(el._view, steps.length);
+    el.classList.toggle("peeking", el._view !== -1);
+    if (animate && !state.replaying) {
+      labelEl.classList.remove("activity-label-anim");
+      void labelEl.offsetWidth; // restart the slide-in
+      labelEl.classList.add("activity-label-anim");
+    }
+  }
+
+  // Record one carousel step (a tool call, a thought starting, or a narration
+  // bubble folding in) and refresh the strip — following the newest step unless
+  // the user is peeking back through earlier ones.
+  function activityStep(label, iconHtml) {
+    const el = state.activeActivityEl;
+    if (!el) return;
+    el._steps.push({ label, icon: iconHtml });
+    renderActivityStrip(el, el._view === -1);
+    const body = activityBody(el);
+    if (!body.hidden) body.scrollTop = body.scrollHeight; // follow while expanded
+  }
+
+  // Freeze the live block at a boundary (turn end, interactive card, deliverable,
+  // error): close any open tool group inside it, then swap the strip to a summary
+  // row. No-op when no block is live — classic mode never passes the guard, so
+  // legacy call sites keep their exact behavior.
+  function finalizeActivity() {
+    const el = state.activeActivityEl;
+    if (!el) return;
+    closeToolGroup(); // an open group can't outlive its block
+    state.activeActivityEl = null;
+    const body = activityBody(el);
+    const items = Array.from(body.children);
+    if (items.length === 0) { el.remove(); return; }
+    if (items.length === 1) {
+      // A single-item segment gains nothing from the wrapper — unwrap it so
+      // simple turns render exactly like the classic rows (a lone flat/group,
+      // or a thinking-only turn that thinking-hidden then hides entirely).
+      el.replaceWith(items[0]);
+      return;
+    }
+    el.classList.remove("live", "peeking");
+    el.classList.add("done");
+    el._view = -1;
+    const strip = el.querySelector(".activity-strip");
+    const dots = strip.querySelector(".tool-dots");
+    if (dots) dots.remove();
+    const nav = strip.querySelector(".activity-nav");
+    if (nav) nav.remove();
+    const labelEl = strip.querySelector(".activity-label");
+    labelEl.classList.remove("activity-label-anim");
+    const calls = el._allCalls || [];
+    const n = el._steps.length;
+    labelEl.textContent =
+      (calls.length ? summarizeTools(calls) : "Worked") + ` · ${n} step${n === 1 ? "" : "s"}`;
+    strip.querySelector(".activity-icon").innerHTML = calls.length ? toolIconFor(calls) : ICON.grok;
+    body.hidden = true;
+    el.classList.remove("expanded");
+  }
+
   function closeToolGroup() {
     if (!state.activeToolGroupEl) return;
     const el = state.activeToolGroupEl;
@@ -2215,6 +2387,21 @@
       // — agent rendering is deferred to a rAF, so detaching without flushing would
       // discard the buffered narration (leaving an empty bubble).
       flushAgent();
+      // Carousel mode: the narration bubble that introduced this batch folds
+      // INTO the block as a step. It's step-by-step commentary, not the final
+      // answer — the answer is never followed by tools, so it's never pulled.
+      const act = state.compactActivity ? ensureActivityBlock() : null;
+      if (act && state.activeAgentEl) {
+        const narration = (state.activeAgentEl.textContent || "").trim();
+        const bubble = state.activeAgentEl.closest(".msg");
+        if (bubble && bubble.parentElement === messagesEl) {
+          // A whitespace-only bubble is moved too (tucked away beats an empty
+          // transcript row) but records no step — the body then holds 2 items,
+          // so that turn keeps its summary block instead of unwrapping. Fine.
+          activityBody(act).appendChild(bubble);
+          if (narration) activityStep(truncate(narration, 60), ICON.grok);
+        }
+      }
       state.activeAgentEl = null;
       state.activeAgentRaw = "";
       const el = document.createElement("div");
@@ -2227,7 +2414,7 @@
       body.hidden = true;
       el.appendChild(hdr);
       el.appendChild(body);
-      messagesEl.appendChild(el);
+      (act ? activityBody(act) : messagesEl).appendChild(el);
       state.activeToolGroupEl = el;
     }
 
@@ -2245,6 +2432,12 @@
     item.dataset.toolCategory = categorize(call);
     body.appendChild(item);
     if (call.toolCallId) state.toolItemsByToolCallId.set(call.toolCallId, item);
+
+    // Carousel: every call is a step; the strip mirrors the newest action.
+    if (state.activeActivityEl) {
+      state.activeActivityEl._allCalls.push(call);
+      activityStep(inProgressLabel(call), TOOL_ICON_BY_RANK[toolIconRank(call)]);
+    }
 
     hdr.innerHTML =
       toolIconFor(el._calls) +
@@ -2545,11 +2738,14 @@
       applyToolFailure(item, message);
       const group = item.closest && item.closest(".tool-group");
       if (group) group.classList.add("has-error"); // collapsed group still signals the failure
+      const act = item.closest && item.closest(".activity-carousel");
+      if (act) act.classList.add("has-error"); // strip tints too — visible while collapsed
       scrollToBottom();
     }
   }
 
   function addSessionContextBanner() {
+    finalizeActivity(); // compaction boundary — freeze any live block first
     clearWelcome();
     const existing = document.getElementById("summarizing-indicator");
     if (existing) existing.remove();
@@ -2561,6 +2757,7 @@
   }
 
   function addError(text) {
+    finalizeActivity(); // errors land below the work that led to them
     clearWelcome();
     const el = document.createElement("div");
     el.className = "msg error";
@@ -2625,6 +2822,7 @@
   function addDocumentCard(msg) {
     if (state.suppressReplayTurn) return;
     closeToolGroup();
+    finalizeActivity(); // a deliverable stays visible — break the segment
     clearWelcome();
     hideGrokking();
     const kind = msg.kind || "text";
@@ -2708,6 +2906,7 @@
     if (state.suppressReplayTurn) return;
     const isVideo = msg.media === "video";
     closeToolGroup();
+    finalizeActivity(); // a deliverable stays visible — break the segment
     clearWelcome();
     hideGrokking();
     const el = document.createElement("div");
@@ -2750,6 +2949,7 @@
   // probe of the live subagent wire shape (research/subagents.md).
   function addSubagentCard(call) {
     closeToolGroup();
+    finalizeActivity(); // the delegation card stays visible — break the segment
     clearWelcome();
     hideGrokking();
     const el = document.createElement("div");
@@ -2763,6 +2963,7 @@
   }
 
   function addPlanNotice(text) {
+    finalizeActivity(); // the notice must land below the work it interrupts
     clearWelcome();
     hideGrokking();
     const el = document.createElement("div");
@@ -2776,9 +2977,10 @@
     if (state.suppressReplayTurn) return; // thinking inside the primer turn
     hidePlanProcessing(); // thought streaming → indicator obsolete
     hideGrokking(); // real content arrived — the Thinking block takes over
-    // Traces hidden (the default): stand in with a "Thinking…" row. While
-    // replaying a loaded session there's no live reasoning to indicate.
-    if (!state.showThinking && !state.replaying) showThinkingIndicator();
+    // Traces hidden (the default): stand in with a "Thinking…" row — except in
+    // carousel mode, where the block's strip IS the indicator (the thought below
+    // creates the block, whose strip shows "Thinking" + dots).
+    if (!state.compactActivity && !state.showThinking && !state.replaying) showThinkingIndicator();
     state.activeUserEl = null;
     state.skipUserBubble = false; // marker-only verdict turn is over
     clearWelcome();
@@ -2801,7 +3003,9 @@
       };
       el.appendChild(hdr);
       el.appendChild(body);
-      messagesEl.appendChild(el);
+      const act = state.compactActivity ? ensureActivityBlock() : null;
+      (act ? activityBody(act) : messagesEl).appendChild(el);
+      if (act) activityStep("Thinking", ICON.grok);
       state.activeThoughtEl = body;
       state.activeThoughtHdrEl = hdr;
     }
@@ -2870,6 +3074,7 @@
       state.thoughtStartTime = null;
     }
     closeToolGroup();
+    finalizeActivity(); // freeze the carousel block at the turn boundary
     hideThinkingIndicator();
     state.activeAgentEl = null;
     state.activeAgentRaw = "";
@@ -2885,7 +3090,7 @@
     // the host already drops those, but guard here too so a stray live echo
     // can never double the bubble.
     if (!state.replaying) return;
-    if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl) {
+    if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl || state.activeActivityEl) {
       commitAgentTurn();
     }
     // No clearWelcome() here — the bubble path's addMessage() clears it. The
@@ -2999,6 +3204,7 @@
     const matched = new Set(matches);
     state.permissionHistoryQueue = state.permissionHistoryQueue.filter((p) => !matched.has(p));
     closeToolGroup();
+    finalizeActivity(); // the restored card lands below the block it gated
     for (const p of matches) addRestoredPermissionCard(p.title, p.outcome);
   }
 
@@ -3117,6 +3323,7 @@
       state.thinkingIndicatorEl ||
       state.planProcessingEl ||
       state.activeToolGroupEl ||
+      state.activeActivityEl || // live carousel strip (dots + current action)
       (state.activeAgentEl && (state.activeAgentRaw || "").trim()) ||
       (state.showThinking && state.activeThoughtEl) ||
       messagesEl.querySelector(".card:not(.resolved)")
@@ -3309,6 +3516,7 @@
   // the question + a clear green "✓ <chosen>" so it's obvious grok received it
   // (the bare grey-out gave no such signal).
   function addQuestionCard(req) {
+    finalizeActivity(); // the interactive card breaks the segment
     clearWelcome();
     hideGrokking();
     const questions = Array.isArray(req.questions) ? req.questions : [];
@@ -3502,6 +3710,7 @@
   // a later update). Handles both the grok-build and cursor/composer schemas.
   // Returns the card element so the update path can fill its answer later.
   function addRestoredQuestionCard(questions, answerText) {
+    finalizeActivity(); // restored card breaks the replayed segment, like live
     clearWelcome();
     const qs = Array.isArray(questions) ? questions : [];
     const el = document.createElement("div");
@@ -3643,6 +3852,7 @@
   // grok wrote during that session, recovered from ~/.grok/sessions/.../plan.md,
   // and the verdict the user gave it (persisted in globalState).
   function addPlanHistoryCard(text, verdict, planPath, planName) {
+    finalizeActivity(); // restored plan card breaks the replayed segment
     clearWelcome();
     const el = document.createElement("div");
     el.className = "card plan plan-history";
@@ -4026,6 +4236,7 @@
         state.cwd = msg.cwd || "";
         state.extVersion = msg.extVersion || "";
         if (typeof msg.showThinking === "boolean") state.showThinking = msg.showThinking;
+        if (typeof msg.compactActivity === "boolean") state.compactActivity = msg.compactActivity;
         applyThinkingVisibility();
         updateModelLabel(); // effort is now known
         updateComposerPlaceholder(); // send-key hint follows useCtrlEnter
@@ -4050,6 +4261,13 @@
         // initialState + is baked into the <body class> by the host to avoid a flash.
         state.showThinking = !!msg.value;
         applyThinkingVisibility();
+        if (state.gearView === "config") renderConfigDebugPanel(); // keep the switch in sync
+        break;
+      case "compactActivity":
+        // Live toggle (grok.compactActivity). Applies to NEW turns; flipping it
+        // off mid-turn freezes the live block so nothing keeps collecting into it.
+        state.compactActivity = !!msg.value;
+        if (!state.compactActivity) finalizeActivity();
         if (state.gearView === "config") renderConfigDebugPanel(); // keep the switch in sync
         break;
       case "fontScale":
@@ -4197,7 +4415,7 @@
         // render and bump the counter so any plan history for this position drains.
         // Seal any in-flight agent bubble first so a chained follow-up lands
         // *below* the completed prior reply instead of looking interrupted.
-        if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl) {
+        if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl || state.activeActivityEl) {
           commitAgentTurn();
         }
         clearChangedFiles(); // a new turn starts — the strip shows only its own edits
@@ -4221,7 +4439,7 @@
         // plan-verdict follow-up). Show "Grokking…" until the first real content
         // replaces it. The silent primer never emits agentStart, so it never
         // shows here. Seal any residual active stream so this turn is fresh.
-        if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl) {
+        if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl || state.activeActivityEl) {
           commitAgentTurn();
         }
         state.busy = true;
@@ -4402,6 +4620,7 @@
         hidePlanProcessing(); // turn is being reset, indicator no longer applies
         hideGrokking();
         hideThinkingIndicator();
+        finalizeActivity(); // freeze the live block — the turn it tracked is over
         clearChangedFiles(); // the suppressed turn's edits are being discarded
         // Drop the in-flight agent bubble entirely. Used when the host wants to
         // suppress the rest of the current turn (e.g. after Reject, where

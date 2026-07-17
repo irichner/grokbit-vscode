@@ -43,8 +43,7 @@ Run the **stdlib installer script** — do not hand-copy files or re-run free-fo
    - conflicts skipped (if any)
    - handoff path: `docs/plans/agentic-team-install-handoff.md` (when `--write-handoff`)
 6. If Coverage or Unit is NONE/TODO: point to durable waiver or filling `AGENTS.md` before claiming accuracy gates are operational.
-7. **Host skills probe:** remind that `/review`, `/check-work`, `/implement` are host-bundled (not installed by this script). If `grok inspect` is available, note whether they appear. Missing → record `HOST_SKILLS=PARTIAL` for future protocol; never silent-skip those gates.
-8. Optional post-install: Fixture A under target (`fixtures/agentic-template-acceptance/bad-plan.md` → `docs/plans/acceptance-bad-plan.md` + `/plan-review-loop`; optional `/cold-review` only if listed in `grok inspect`).
+7. Optional post-install: Fixture A under target (`fixtures/agentic-template-acceptance/bad-plan.md` → `docs/plans/acceptance-bad-plan.md` + `/plan-review-loop`; optional `/cold-review` only if listed in `grok inspect`).
 
 ## What it installs
 

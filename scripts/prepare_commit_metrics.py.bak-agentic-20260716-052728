@@ -84,26 +84,19 @@ def resolve_metrics(args: argparse.Namespace, root: Path) -> tuple[str, int, int
     note = args.note or os.environ.get("GROK_METRICS_NOTE", "") or pending.get("NOTE", "")
     model = args.model or os.environ.get("GROK_MODEL", "") or pending.get("MODEL", "")
 
-    # Unmeasured stamps ignore token counts — do not parse (or fail on) leftover garbage ints.
-    if unmeasured:
-        return rtu.UNMEASURED_MODEL, 0, 0, note, True
-
     def _int(name_cli: int | None, env_key: str, pending_key: str) -> int | None:
         if name_cli is not None:
             return name_cli
         raw = os.environ.get(env_key, "") or pending.get(pending_key, "")
         if raw == "":
             return None
-        try:
-            return int(raw)
-        except ValueError as e:
-            raise SystemExit(
-                f"ERROR: invalid integer for tokens ({env_key} / {pending_key}={raw!r}). "
-                "Use a whole number, or --unmeasured / omit for unmeasured stamp."
-            ) from e
+        return int(raw)
 
     inp = _int(args.input_tokens, "GROK_INPUT_TOKENS", "INPUT")
     out = _int(args.output_tokens, "GROK_OUTPUT_TOKENS", "OUTPUT")
+
+    if unmeasured:
+        return rtu.UNMEASURED_MODEL, 0, 0, note, True
 
     if model and inp is not None and out is not None:
         return model, inp, out, note, False

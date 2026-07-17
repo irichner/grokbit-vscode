@@ -127,7 +127,7 @@ Also follow these existing contributor files (do not ignore product invariants):
 
 ## Preserved notes
 
-A previous root `AGENTS.md` was backed up to `AGENTS.md.bak-before-agentic-template-20260716-20260716-052810` before this install. Merge any project-specific lead rules from that backup if needed.
+A previous root `AGENTS.md` was backed up to `AGENTS.md.bak-before-agentic-template-20260716-20260716-052728` before this install. Merge any project-specific lead rules from that backup if needed.
 ## Project Test Commands
 
 <!-- BEGIN PROJECT_TEST_COMMANDS -->

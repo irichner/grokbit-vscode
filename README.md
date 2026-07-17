@@ -69,8 +69,10 @@ Or build from source:
 git clone https://github.com/irichner/grokbit-vscode.git
 cd grokbit-vscode
 npm install
-npm run rebuild             # bump patch → package .vsix → reinstall into VS Code
+npm run rebuild             # bump → package → reinstall → publish to Marketplace
 # same as: ./scripts/install.sh  |  Windows: pwsh scripts\install.ps1
+# local only: npm run rebuild -- --no-publish
+# needs VSCE_PAT (Marketplace Manage) or: npx @vscode/vsce login Grokbit
 # in a Grok chat: /rebuild
 ```
 
@@ -252,7 +254,7 @@ The **microphone** in the composer records speech via [xAI Speech-to-Text](https
 <details>
 <summary><strong>Tool activity</strong> — what Grok did, in plain language</summary>
 
-Actions appear as compact rows or groups, e.g. *Explored 5 items*, *Edited 2 files*, *Ran 1 command*. Expand for detail. Commands can show **output**. Failed tools turn red with a short reason. A **files changed** strip above the composer summarizes applied edits this turn.
+While Grok works, each turn's activity rolls into **one compact carousel strip** instead of a scrolling list: the strip shows the current action (*Reading chat.js…*, *Running command…*) with a step counter, and **‹ ›** flips back through earlier steps. When the turn finishes it collapses to a one-line summary — e.g. *Explored 5 items, edited 2 files · 9 steps* — that expands to the full detail (tool rows, step narration, thinking). Commands can show **output**, failed tools turn red with a short reason, and a **files changed** strip above the composer summarizes applied edits this turn. Prefer the classic scrolling stream? Turn off `grok.compactActivity` (gear → **Config & debug → Compact activity view**).
 
 </details>
 
@@ -335,6 +337,7 @@ Anonymous usage only: one `session_start` per real conversation with install id 
 | `grok.includeActiveFileByDefault` | `true` | Auto-add the active editor as a context chip. |
 | `grok.useCtrlEnterToSend` | `false` | When true, Enter inserts a newline and Ctrl/Cmd+Enter sends. |
 | `grok.showThinking` | `false` | Show full thinking details in chat. |
+| `grok.compactActivity` | `true` | Roll each turn's activity into one carousel strip (off = classic scrolling stream). |
 | `grok.notifyWhenWaiting` | `false` | Passive notification when a background tab needs you. |
 | `grok.telemetry.enabled` | `true` | Anonymous usage telemetry (see Privacy). |
 | `grok.chatFontScale` | `100` | Chat-only zoom percent (60–300). |

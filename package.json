@@ -2,7 +2,7 @@
   "name": "grokbit",
   "displayName": "Grokbit",
   "description": "Grokbit — VS Code client for xAI's Grok Build CLI — each session in its own editor tab, review edits in a diff before approving, @-mention files, resumable history, inline image/video, and voice. Requires the Grok Build CLI plus a SuperGrok or X Premium+ subscription (or an xAI API key). MIT, open-source. Based on grok-build-vscode by Paweł Huryn. Not affiliated with or endorsed by xAI.",
-  "version": "3.0.2",
+  "version": "3.0.10",
   "publisher": "Grokbit",
   "author": {
     "name": "Israel Richner",
@@ -209,6 +209,11 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "Show Grok's reasoning (thinking) traces in chat. Off by default — a lightweight \"Thinking…\" indicator stands in while Grok reasons. Also toggleable live from the gear menu → **Config & debug → Show thinking traces** (applies to already-loaded sessions too)."
+        },
+        "grok.compactActivity": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show each turn's working activity (tool calls, thinking, step-by-step narration) as one compact carousel block: while Grok works the strip shows the current action with a step counter (‹ › flips back through earlier steps), then it collapses to a one-line summary you can expand. Keeps long agentic turns from scrolling the chat. Turn off to restore the classic scrolling activity stream (applies to new turns). Also toggleable live from the gear menu → **Config & debug → Compact activity view**."
         },
         "grok.notifyWhenWaiting": {
           "type": "boolean",

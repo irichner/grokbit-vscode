@@ -235,9 +235,9 @@ The full pedagogical write-up lives in
 | [src/voice.ts](../src/voice.ts) | Voice-input pure helpers — STT request/response, ffmpeg args, device parsing, key resolution |
 | [src/voice-recorder.ts](../src/voice-recorder.ts) | Batch capture (`ffmpeg` → WAV) + STT REST upload |
 | [src/voice-streamer.ts](../src/voice-streamer.ts) | Live capture (ffmpeg PCM → WebSocket STT) |
-| [media/chat.{js,css}](../media/) | Webview UI (rendered in each session tab) |
+| [media/chat.{js,css}](../media/) | Webview UI (rendered in each session tab) — incl. the per-turn **activity carousel** (`grok.compactActivity`, default on): tool groups + thinking + step narration roll into one strip row while grok works (step counter, ‹ › peek, expandable bounded detail), frozen to a one-line summary at the turn boundary; single-item turns unwrap to the classic row |
 | [media/launcher.js](../media/launcher.js) | Activity-bar launcher — session list + dots + New + rename/delete + onboarding states (reuses chat.css row styles) |
-| [media/webview-helpers.js](../media/webview-helpers.js) | Pure webview helpers (file-ref detection, relative-time, mic-button state machine, trailing send-phrase highlight, math extraction `splitMath`/`stripUnsupportedTex`, and the deferred subagent classifier `isSubagentToolCall`/`subagentLabel`) — shared between webview and tests |
+| [media/webview-helpers.js](../media/webview-helpers.js) | Pure webview helpers (file-ref detection, relative-time, mic-button state machine, trailing send-phrase highlight, math extraction `splitMath`/`stripUnsupportedTex`, the activity-carousel peek nav `activityPeek`/`activityPosText`, and the deferred subagent classifier `isSubagentToolCall`/`subagentLabel`) — shared between webview and tests |
 
 ## History at scale
 

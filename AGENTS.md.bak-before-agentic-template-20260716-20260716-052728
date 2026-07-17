@@ -22,8 +22,7 @@ Auto-loaded spawn rules: `.grok/rules/spawn.md`. Accuracy gates: `.grok/rules/ac
 
 ### Implement vs `/review` de-dupe
 
-- After clean `/implement` (**zero open bugs and zero gate-mapped gaps**, tree matches implement scope — record `git status --porcelain` / path list): skip **`/review` only**; record reason e.g. `Review: SKIPPED (implement clean; bugs=0; gaps=0; tree=<note>)`.  
-- Gate-mapped **gaps** include review suggestions on missing tests / correctness / security / data loss (severity map). If implement artifact is missing or unclear → **do not de-dupe**; run `/review`.  
+- After clean `/implement` (zero open bugs, tree unchanged): skip **`/review` only**; record reason.  
 - **Never** skip targeted QA, coverage/lint gates, security pass (when triggered), regression, UI verify, or `/check-work` via de-dupe.  
 - After manual/`gf-*` implement, dirty implement, or user request: run `/review`.
 
@@ -127,15 +126,15 @@ Also follow these existing contributor files (do not ignore product invariants):
 
 ## Preserved notes
 
-A previous root `AGENTS.md` was backed up to `AGENTS.md.bak-before-agentic-template-20260716-20260716-052810` before this install. Merge any project-specific lead rules from that backup if needed.
+A previous root `AGENTS.md` was backed up to `AGENTS.md.bak-before-agentic-template-20260716` before this install. Merge any project-specific lead rules from that backup if needed.
 ## Project Test Commands
 
 <!-- BEGIN PROJECT_TEST_COMMANDS -->
-<!-- Filled by install_agentic_team.py from: manifest/CI scan, no pytest-cov / --cov in scan -->
+<!-- Filled by install_agentic_team.py then corrected from CLAUDE.md + package.json (Node/vitest VS Code extension) -->
 
-- **Build:** TODO — user must fill
-- **Unit tests:** `npm test`
-- **Coverage:** NONE — no tool in repo
-- **Regression / full suite:** `npm test`
-- **Lint:** NONE — no tool in repo
+- **Build:** `npm run compile` (equiv. `tsc -p .`; package vsix: `npm run package`)
+- **Unit tests:** `npm test` (vitest; grok-free floor — never spawns real CLI)
+- **Coverage:** NONE — no coverage tool in repo (see `docs/waivers/coverage-no-tool.md`)
+- **Regression / full suite:** `npm test` (CI: `npm ci && npm test && npm run package`). Extended pre-release only: `npm run test:live` (real grok; not in CI). Opt-in perf: `npm run test:perf`
+- **Lint:** `tsc -p . --noEmit` (typecheck; no ESLint/ruff in repo)
 <!-- END PROJECT_TEST_COMMANDS -->

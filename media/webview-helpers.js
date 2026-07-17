@@ -676,6 +676,30 @@
     return [verLabel, tokens].filter(Boolean).join(" · ");
   }
 
+  /**
+   * Activity-carousel peek navigation (pure). The strip shows one step at a time;
+   * `view` is the index being shown, with -1 meaning "live" (follow the latest
+   * step as it streams). Stepping forward past the newest step returns to live,
+   * stepping back clamps at the first step, and a 0/1-step carousel has nothing
+   * to peek at.
+   */
+  function activityPeek(view, count, dir) {
+    if (typeof count !== "number" || count <= 1) return -1;
+    const cur = view === -1 || view == null ? count - 1 : Math.min(Math.max(view, 0), count - 1);
+    const next = Math.max(0, Math.min(count - 1, cur + (dir || 0)));
+    return next >= count - 1 ? -1 : next;
+  }
+
+  /**
+   * Step-counter text for the carousel strip: live shows the running total
+   * ("12"), a peek shows position ("3/12"), an empty carousel shows nothing.
+   */
+  function activityPosText(view, count) {
+    if (typeof count !== "number" || count <= 0) return "";
+    if (view === -1 || view == null) return String(count);
+    return `${Math.min(Math.max(view, 0), count - 1) + 1}/${count}`;
+  }
+
   const api = {
     FILE_EXTS, looksLikeFileRef, formatRelativeTime, modelDisplayName,
     MIC_STATES, nextMicState, trailingSendPhrase, buildQuestionAnswers,
@@ -686,6 +710,7 @@
     applyComposerSeed, taskQuickActions, businessTemplates, filterTemplates,
     isRejectedPermissionKind, permissionCollapseVerb,
     SESSION_DOT_LABELS, sessionDotLabel,
+    activityPeek, activityPosText,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

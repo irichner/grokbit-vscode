@@ -100,6 +100,7 @@ type WebviewMsg =
   | { type: "runMcpList" }
   | { type: "showLogs" }
   | { type: "setShowThinking"; value: boolean }
+  | { type: "setCompactActivity"; value: boolean }
   | { type: "dropFile"; path: string; shift: boolean }
   | { type: "permissionAnswer"; requestId: number | string; optionId: string }
   | { type: "exitPlanAnswer"; requestId: number | string; verdict: "approved" | "abandoned" | "rejected"; comment?: string }
@@ -298,6 +299,9 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
       }
       if (e.affectsConfiguration("grok.showThinking")) {
         this.postShowThinking();
+      }
+      if (e.affectsConfiguration("grok.compactActivity")) {
+        this.postCompactActivity();
       }
       if (e.affectsConfiguration("grok.defaultEffort")) {
         this.updateStatusBar(); // the HUD shows the effort level
@@ -2462,6 +2466,12 @@ See design doc for the full state machine diagram.`;
           .getConfiguration("grok")
           .update("showThinking", !!msg.value, vscode.ConfigurationTarget.Global);
         break;
+      case "setCompactActivity":
+        // Same pattern as setShowThinking — the watcher broadcasts it back.
+        await vscode.workspace
+          .getConfiguration("grok")
+          .update("compactActivity", !!msg.value, vscode.ConfigurationTarget.Global);
+        break;
       case "runInstallCmd": {
         const term = vscode.window.createTerminal("Install Grok");
         term.show();
@@ -2955,6 +2965,17 @@ See design doc for the full state machine diagram.`;
 
   private postShowThinking(): void {
     this.broadcast({ type: "showThinking", value: this.showThinking() });
+  }
+
+  /** grok.compactActivity — roll each turn's working activity into one carousel
+   *  block (strip + expandable detail) instead of a scrolling stream of rows.
+   *  On by default; webview-structural, so it applies to new turns only. */
+  private compactActivity(): boolean {
+    return vscode.workspace.getConfiguration("grok").get<boolean>("compactActivity", true);
+  }
+
+  private postCompactActivity(): void {
+    this.broadcast({ type: "compactActivity", value: this.compactActivity() });
   }
 
   /** Anonymous, per-install GUID — generated once and kept in globalState (so it
@@ -3549,6 +3570,7 @@ See design doc for the full state machine diagram.`;
       useCtrlEnter: cfg.get("useCtrlEnterToSend", false),
       extVersion: (this.context.extension.packageJSON as { version?: string })?.version ?? "",
       showThinking: cfg.get("showThinking", false),
+      compactActivity: cfg.get("compactActivity", true),
     });
     this.postTo(session, this.voiceConfiguredMessage());
   }
@@ -4054,20 +4076,20 @@ See design doc for the full state machine diagram.`;
       <button id="launcher-new" class="onb-action launcher-new-btn" type="button"><span class="launcher-logo" style="--logo:url('${resourceUri("blackhole-icon.svg")}')"></span>New session</button>
     </div>
     <div id="launcher-studio" class="launcher-studio">
-      <div id="launcher-docs" class="launcher-docs launcher-section"></div>
+      <div id="launcher-docs" class="launcher-docs launcher-section collapsed"></div>
       <div class="launcher-section-bar" role="separator" aria-hidden="true"></div>
-      <div id="launcher-templates" class="launcher-templates launcher-section expanded"></div>
-    </div>
-    <div id="launcher-onboarding" class="launcher-onboarding" hidden></div>
-    <div class="launcher-history launcher-section expanded">
-      <button id="launcher-history-toggle" class="launcher-section-toggle" type="button" aria-expanded="true" aria-controls="launcher-history-body" title="Collapse section"></button>
-      <div id="launcher-history-body" class="launcher-section-body launcher-history-body">
-        <div id="launcher-list" class="history-list launcher-list"></div>
-        <div id="launcher-footer" class="history-footer" hidden>
-          <button id="launcher-clear-all" class="history-clear-all" type="button"></button>
+      <div id="launcher-templates" class="launcher-templates launcher-section collapsed"></div>
+      <div class="launcher-history launcher-section collapsed">
+        <button id="launcher-history-toggle" class="launcher-section-toggle" type="button" aria-expanded="false" aria-controls="launcher-history-body" title="Expand section"></button>
+        <div id="launcher-history-body" class="launcher-section-body launcher-history-body">
+          <div id="launcher-list" class="history-list launcher-list"></div>
+          <div id="launcher-footer" class="history-footer" hidden>
+            <button id="launcher-clear-all" class="history-clear-all" type="button"></button>
+          </div>
         </div>
       </div>
     </div>
+    <div id="launcher-onboarding" class="launcher-onboarding" hidden></div>
   </div>
   <script nonce="${nonce}" src="${mediaUri("webview-helpers.js")}"></script>
   <script nonce="${nonce}" src="${mediaUri("launcher.js")}"></script>

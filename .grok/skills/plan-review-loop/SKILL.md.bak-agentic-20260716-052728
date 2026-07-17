@@ -11,8 +11,6 @@ disable-model-invocation: true
 
 # Skill: Plan Review Loop
 
-Lead may **re-enact this SKILL.md** when slash UI is unavailable; slash is preferred operator entry.
-
 ## Default path
 
 **This skill is the default plan critique** for installed templates.
@@ -48,10 +46,8 @@ while pass <= 2:
          OR subagent_type: explore | plan
        - description: [gf-plan-reviewer] plan review pass N  (UI label only)
        - Prompt = persona + plan path + standards path + Review Report schema
-         + “Return the full Review Report in your message. Do not edit product code.
-            Do not write files (read-only). Lead will persist the report.”
-  4. **Lead** writes report → docs/plans/<name>.review.md  (pass 2 → .review-2.md)
-     from the child’s returned report body (child is read-only and must not write)
+         + “Do not edit product code.”
+  4. Write report → docs/plans/<name>.review.md  (pass 2 → .review-2.md)
   5. If Overall == Approve: break (exit ready-for-user-approve)
   6. If pass == 2:
        escalate — max reviews used; optional plan edits may continue outside this loop
@@ -66,8 +62,6 @@ if still not Approve:
   (prefer Overall: Major Concerns for unsafe/unbounded plans; Request Changes residual
    hard-gate gaps after pass 2 also require waiver — any Overall other than Approve)
 ```
-
-**Material plan edits after the last review pass** (including post-pass-2 edits outside the loop) require a **new review pass** or a durable waiver for residual hard-gate risk — do not implement on an unreviewed material delta.
 
 ## Steps (detail)
 

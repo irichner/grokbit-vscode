@@ -234,6 +234,13 @@ happy-dom test locking in the native-Windows regressions this build fixed (plus 
 
 - Renders each question's options (single-question single-select resolves on one click; multi → pick-then-Submit; Skip → cancel), replies `{outcome:"accepted", answers, annotations}` (or cancelled), collapses to the question + a green `✓ <choice>`, and rebuilds a read-only "You answered" card from the resume replay
 
+### `test/activity-carousel.dom.test.ts` — per-turn activity carousel (14 tests)
+
+- Live strip: tool calls collect into one `.activity-carousel` block (one transcript row), the strip follows the newest action with a step counter, a streaming thought creates the block (the strip replaces the standalone "Thinking…" stand-in), narration folds in as a step when its batch starts, click expands the bounded detail, `showThinking` starts it expanded
+- `‹ ›` peek nav flips through earlier step labels (position `i/N`) and returns to live; new steps bump the counter without yanking a peek
+- Finalize: `promptComplete` freezes a multi-batch turn to `summarizeTools + · N steps`; single-batch and thinking-only turns **unwrap** to the classic bare row; a failed tool tints the block live and after finalize
+- Segment breaks (document card, `agentReset`), replay (one frozen summary per replayed turn), and classic mode (`grok.compactActivity` off via initialState / live toggle / the gear switch posting `setCompactActivity`)
+
 ---
 
 ## Webview DOM tests

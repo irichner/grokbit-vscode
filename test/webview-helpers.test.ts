@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain JS module, no types
-import { looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta } from "../media/webview-helpers.js";
+import { looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, activityPeek, activityPosText } from "../media/webview-helpers.js";
 import { buildPrompt } from "../src/prompt-builder";
 import { makeExplicitChip, makeImplicitChip } from "../src/chips";
 
@@ -546,5 +546,41 @@ describe("formatLauncherMeta", () => {
     expect(formatLauncherMeta({ extVersion: "2.0.2", totalTokens: 0 })).toBe(
       "v2.0.2 · 0 tokens",
     );
+  });
+});
+
+// Activity-carousel peek state machine — view -1 means "live" (follow latest).
+describe("activityPeek", () => {
+  it("steps back from live to the second-newest step", () => {
+    expect(activityPeek(-1, 5, -1)).toBe(3);
+  });
+
+  it("clamps at the first step", () => {
+    expect(activityPeek(0, 5, -1)).toBe(0);
+  });
+
+  it("stepping forward onto the newest step returns to live", () => {
+    expect(activityPeek(3, 5, 1)).toBe(-1);
+    expect(activityPeek(2, 5, 1)).toBe(3);
+  });
+
+  it("has nothing to peek at with 0 or 1 steps", () => {
+    expect(activityPeek(-1, 0, -1)).toBe(-1);
+    expect(activityPeek(-1, 1, -1)).toBe(-1);
+  });
+
+  it("re-clamps a stale peek index when the step list shrank", () => {
+    expect(activityPeek(9, 3, -1)).toBe(1);
+  });
+});
+
+describe("activityPosText", () => {
+  it("live shows the running total; a peek shows position", () => {
+    expect(activityPosText(-1, 7)).toBe("7");
+    expect(activityPosText(2, 7)).toBe("3/7");
+  });
+
+  it("empty carousel shows nothing", () => {
+    expect(activityPosText(-1, 0)).toBe("");
   });
 });

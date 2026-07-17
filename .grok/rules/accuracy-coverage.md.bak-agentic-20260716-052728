@@ -4,13 +4,13 @@
 
 1. Targeted tests for changed code: **pass** (real run; `/targeted-unit-test-loop` or equivalent).  
 2. Code review: no open **bug** or gate-mapped **gap**, or durable waiver in `docs/waivers/`.  
-   - After clean `/implement` (**zero open bugs and zero gate-mapped gaps**, tree matches implement scope): **`/review` only** may be skipped with recorded reason — never skip targeted QA, security (when triggered), regression, UI verify, or `/check-work`. If implement artifact is missing/unclear → run `/review`.  
+   - After clean `/implement` (zero open bugs, tree unchanged): **`/review` only** may be skipped with recorded reason — never skip targeted QA, security (when triggered), regression, UI verify, or `/check-work`.  
 3. Regression Quick (or Extended when required): **pass**.  
 4. Coverage ≥ 80% on new/changed executable lines when Coverage command is real in AGENTS.md; else `NO COVERAGE TOOL` + durable waiver. Vacuous diff-cover (“no lines in this diff”) → **UNMEASURED / no changed lines**, not 100%.  
-5. `/check-work` → `VERDICT: PASS` for claimed session work (session adequacy; not coverage %). Not a substitute for QA GO.  
+5. `/check-work` → `VERDICT: PASS` for claimed session work (session adequacy; not coverage %).  
 6. **Plan quality** (when a plan was required): Approve from **`/plan-review-loop`** (default; optional `/cold-review` only if present in `grok inspect`), or durable waiver for residual hard-gate failures — see `.grok/docs/plan-quality-standards.md` (hard gates 1–7 always; gate **8 UI/UX design** when the plan touches UI).  
 7. **Lint**: exit 0 when the Lint command is real in AGENTS.md (checked inside the targeted loop).  
-8. **UI design**: when UI surfaces changed — no blockers per `.grok/docs/ui-design-standards.md`; UI verification evidence recorded in the protocol (or `NO UI TOOLING` + durable waiver / completed manual blocker checklist).
+8. **UI design**: when UI surfaces changed — no blockers per `.grok/docs/ui-design-standards.md`; UI verification evidence recorded in the protocol (or `NO UI TOOLING` + waiver path).
 
 ## Severity map
 

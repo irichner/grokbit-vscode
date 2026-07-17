@@ -966,8 +966,12 @@ describe("thinking traces toggle (#26)", () => {
     expect(doc.body.classList.contains("thinking-hidden")).toBe(true);
   });
 
+  // Classic mode (compactActivity off): the standalone stand-in row. In carousel
+  // mode the live strip is the indicator instead — covered in
+  // activity-carousel.dom.test.ts.
   it("stands in a 'Thinking…' indicator while hidden, still building the real block", () => {
     const { window, doc } = bootWebview();
+    dispatch(window, { type: "compactActivity", value: false });
     dispatch(window, { type: "showThinking", value: false });
     dispatch(window, { type: "thoughtChunk", text: "weighing options…" });
     const ind = doc.querySelector(".thinking-indicator");
@@ -985,8 +989,9 @@ describe("thinking traces toggle (#26)", () => {
     expect(doc.querySelector(".msg.thinking")).not.toBeNull();
   });
 
-  it("drops the stand-in when real agent text arrives", () => {
+  it("drops the stand-in when real agent text arrives (classic mode)", () => {
     const { window, doc } = bootWebview();
+    dispatch(window, { type: "compactActivity", value: false });
     dispatch(window, { type: "showThinking", value: false });
     dispatch(window, { type: "thoughtChunk", text: "weighing…" });
     expect(doc.querySelector(".thinking-indicator")).not.toBeNull();
@@ -1051,7 +1056,7 @@ describe("continuous progress indicator (always show something mid-turn)", () =>
   const hasLiveIndicator = (doc: Document) => {
     if (
       doc.querySelector(
-        ".grokking, .thinking-indicator, .tool-group.in-progress, .plan-processing, .msg.agent, .card:not(.resolved)",
+        ".grokking, .thinking-indicator, .tool-group.in-progress, .plan-processing, .msg.agent, .card:not(.resolved), .activity-carousel.live",
       )
     )
       return true;
