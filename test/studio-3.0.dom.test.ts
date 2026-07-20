@@ -1,5 +1,5 @@
 // Studio 3.0.0 DOM: task chips, insert policy, docs popover.
-// Templates moved to the activity-bar launcher (see launcher.dom.test.ts).
+// Create a document / Templates launcher chrome removed (see launcher.dom.test.ts).
 import { describe, it, expect } from "vitest";
 import { bootWebview, dispatch, click } from "./webview-harness";
 import { taskQuickActions } from "../media/webview-helpers.js";

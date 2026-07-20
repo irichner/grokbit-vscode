@@ -121,8 +121,6 @@ type WebviewMsg =
   | { type: "pickFile" }
   | { type: "voiceStart" }
   | { type: "voiceStop" }
-  | { type: "docTypeStarter"; id?: string; prompt?: string }
-  | { type: "templateStarter"; id?: string; prompt?: string }
   | { type: "listWorkspaceDocs" };
 
 const SESSION_META_KEY = "grok.sessionMeta";
@@ -348,11 +346,6 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
       case "newSession":
         await this.newTab();
         break;
-      case "docTypeStarter":
-      case "templateStarter":
-        // Same seed path: open empty tab / reuse empty active, never auto-send.
-        await this.openDocTypeStarter(msg.prompt);
-        break;
       case "renameSession":
         this.renameSession(msg.id, msg.name);
         break;
@@ -378,39 +371,14 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
   // ---------- panel (editor tab) lifecycle ----------
 
   /** Open a fresh session in a new editor tab and spawn its grok process. */
-  async newTab(opts?: { composerSeed?: string }): Promise<void> {
+  async newTab(): Promise<void> {
     const session = new Session();
-    if (opts?.composerSeed) session.pendingComposerSeed = opts.composerSeed;
     if (vscode.workspace.getConfiguration("grok").get<boolean>("includeActiveFileByDefault", true)) {
       this.addActiveEditorChip(session); // lands in session.chips; ready's replay paints it
     }
     this.openPanel(session, tabTitleFor(undefined));
     this.maybeWarnLiveCount();
     await this.startSession(session);
-  }
-
-  /**
-   * Activity-bar Create-a-document icon or Templates row: seed text into the
-   * composer. Reuses a still-empty active tab when one is open; otherwise opens
-   * a new tab. Applied after the webview's ready/replay so it isn't wiped.
-   */
-  private async openDocTypeStarter(prompt?: string): Promise<void> {
-    // Catalog prompts keep a trailing space ("Create Word document: ").
-    const seed = typeof prompt === "string" ? prompt : "";
-    if (!seed.length) return;
-
-    const active = this.active;
-    if (active?.panel && !active.hasHistory) {
-      active.panel.reveal(undefined, false);
-      this.setActive(active);
-      if (active.ready) {
-        this.postTo(active, { type: "seedComposer", text: seed });
-      } else {
-        active.pendingComposerSeed = seed;
-      }
-      return;
-    }
-    await this.newTab({ composerSeed: seed });
   }
 
   /**
@@ -2274,12 +2242,6 @@ See design doc for the full state machine diagram.`;
         this.router.markReady(session);
         this.postPanelConfig(session);
         this.replayInto(session);
-        // After replay so clearMessages doesn't wipe a just-seeded composer.
-        if (session.pendingComposerSeed) {
-          const seed = session.pendingComposerSeed;
-          session.pendingComposerSeed = undefined;
-          this.postTo(session, { type: "seedComposer", text: seed });
-        }
         if (session.pendingStart !== undefined) {
           // Lazy start (CLI-update respawn / serializer-restored background tab):
           // the first reveal spawns; a tab that's never revealed never spawns.
@@ -4075,17 +4037,12 @@ See design doc for the full state machine diagram.`;
       <div id="launcher-meta" class="launcher-meta" hidden></div>
       <button id="launcher-new" class="onb-action launcher-new-btn" type="button"><span class="launcher-logo" style="--logo:url('${resourceUri("blackhole-icon.svg")}')"></span>New session</button>
     </div>
-    <div id="launcher-studio" class="launcher-studio">
-      <div id="launcher-docs" class="launcher-docs launcher-section collapsed"></div>
-      <div class="launcher-section-bar" role="separator" aria-hidden="true"></div>
-      <div id="launcher-templates" class="launcher-templates launcher-section collapsed"></div>
-      <div class="launcher-history launcher-section collapsed">
-        <button id="launcher-history-toggle" class="launcher-section-toggle" type="button" aria-expanded="false" aria-controls="launcher-history-body" title="Expand section"></button>
-        <div id="launcher-history-body" class="launcher-section-body launcher-history-body">
-          <div id="launcher-list" class="history-list launcher-list"></div>
-          <div id="launcher-footer" class="history-footer" hidden>
-            <button id="launcher-clear-all" class="history-clear-all" type="button"></button>
-          </div>
+    <div class="launcher-history launcher-section collapsed">
+      <button id="launcher-history-toggle" class="launcher-section-toggle" type="button" aria-expanded="false" aria-controls="launcher-history-body" title="Expand section"></button>
+      <div id="launcher-history-body" class="launcher-section-body launcher-history-body">
+        <div id="launcher-list" class="history-list launcher-list"></div>
+        <div id="launcher-footer" class="history-footer" hidden>
+          <button id="launcher-clear-all" class="history-clear-all" type="button"></button>
         </div>
       </div>
     </div>

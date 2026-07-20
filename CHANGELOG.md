@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **Removed Create a document and Templates from the activity-bar launcher.** The left nav is New session + collapsible Recent only. Document generation still works via chat (skills / plain language); in-chat document cards and the Docs browser are unchanged. ([media/launcher.js](media/launcher.js), [src/sidebar.ts](src/sidebar.ts), [media/chat.css](media/chat.css))
 - **Rebuild publishes to the VS Code Marketplace.** `npm run rebuild` / `/rebuild` (and the install scripts) now run bump → package → reinstall → `vsce publish --packagePath <vsix>` by default. Auth via `VSCE_PAT` or `vsce login Grokbit`. Skip with `--no-publish` / `-NoPublish`. ([scripts/install.ps1](scripts/install.ps1), [scripts/install.sh](scripts/install.sh), [scripts/rebuild.js](scripts/rebuild.js), [.grok/skills/rebuild/SKILL.md](.grok/skills/rebuild/SKILL.md))
 
 ## 3.0.3 — 2026-07-16

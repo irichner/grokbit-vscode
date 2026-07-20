@@ -55,10 +55,10 @@ describe("document result card", () => {
   });
 });
 
-describe("document-type seedComposer (from launcher)", () => {
+describe("document-type seedComposer (host message)", () => {
   it("host seedComposer message fills the composer (PowerPoint prompt)", () => {
     const { window, doc } = bootWebview();
-    // Icons moved to the activity-bar launcher; chat only receives seedComposer.
+    // Generic host→webview seed path (launcher Create-a-document icons removed).
     const starters = doc.getElementById("welcome-starters") as HTMLElement;
     expect(starters.querySelectorAll(".welcome-doc-type")).toHaveLength(0);
     dispatch(window, { type: "seedComposer", text: "Create PowerPoint presentation: " });

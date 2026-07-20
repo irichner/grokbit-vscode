@@ -311,7 +311,7 @@ code {
   outline-offset: 1px;
 }
 
-/* Studio E2/E4 — Docs / Templates top-bar buttons + popovers */
+/* Studio E2 — Docs top-bar button + popover */
 .studio-top-btn {
   font-size: 11px;
   font-weight: 500;
@@ -2680,7 +2680,7 @@ mjx-container[display="true"] {
 .launcher-head .onb-action { width: 100%; margin: 0; }
 .launcher-onboarding { padding: 2px; }
 
-/* Collapsible sections (Create a document, Templates, Recent) — explorer style. */
+/* Collapsible Recent section — explorer style. */
 .launcher-section {
   display: flex;
   flex-direction: column;
@@ -2742,37 +2742,11 @@ mjx-container[display="true"] {
   display: none;
 }
 
-/*
- * Studio column: Create a document + bar + Templates + Recent (in that order).
- * Templates flex-grows to fill space above Recent; Recent stays under Templates
- * with a height cap so the template list remains usable when both are open.
- * VS Code owns the real sidebar drag width; content is densified ~20% so the
- * strip stays usable when the side bar is narrower.
- */
-.launcher-studio {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  margin: 0;
-  padding: 0;
-}
-.launcher-section-bar {
-  flex: 0 0 auto;
-  height: 0;
-  margin: 4px 2px 2px;
-  border: none;
-  border-top: 1px solid color-mix(in srgb, var(--vscode-panel-border, var(--vscode-foreground)) 32%, transparent);
-}
-.launcher-section-bar[hidden] { display: none; }
-
-/* Recent history + clear-all — stacked under Templates inside .launcher-studio. */
+/* Recent history + clear-all — fills space under New session. */
 .launcher-history {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   margin-top: 0;
   min-height: 0;
-  max-height: 42%;
   display: flex;
   flex-direction: column;
   padding-top: 2px;
@@ -2780,7 +2754,6 @@ mjx-container[display="true"] {
 }
 .launcher-history.collapsed {
   /* Collapsed header only — don't reserve space for a hidden list. */
-  max-height: none;
   flex: 0 0 auto;
 }
 .launcher-history-body {
@@ -2791,143 +2764,9 @@ mjx-container[display="true"] {
 }
 .launcher-list {
   flex: 1 1 auto;
-  min-height: 0; /* scroll when the Recent block is taller than its max-height */
-  max-height: none; /* the history wrapper caps height; the popover cap doesn't apply here */
+  min-height: 0;
+  max-height: none;
   overflow-y: auto;
-}
-
-/* Document-type starters under the New session button (activity bar only). */
-.launcher-docs {
-  flex: 0 0 auto;
-  margin: 0;
-  padding: 0;
-  border-bottom: none;
-}
-.launcher-docs[hidden] { display: none; }
-.launcher-docs-body {
-  padding: 2px 0 4px;
-}
-.launcher-docs-heading {
-  margin: 0 0 8px;
-  padding: 0 4px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--vscode-descriptionForeground);
-  opacity: 0.9;
-  text-align: center;
-}
-.launcher-docs-row {
-  justify-content: center;
-  gap: 2px;
-}
-/* Narrow activity bar: tighter chips so six types wrap cleanly (~20% denser). */
-.launcher-doc-type.welcome-doc-type {
-  min-width: 32px;
-  padding: 4px 2px;
-  flex: 1 1 32px;
-  max-width: 54px;
-  font-size: 9px;
-}
-.launcher-doc-type .welcome-doc-type-label {
-  max-width: 52px;
-  font-size: 9px;
-}
-
-/* Templates section — grows to fill studio space between the bar and Recent. */
-.launcher-templates {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.launcher-templates[hidden] { display: none; }
-.launcher-templates.collapsed {
-  flex: 0 0 auto;
-}
-.launcher-templates-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding: 0 0 2px;
-}
-.launcher-templates-search-wrap {
-  flex: 0 0 auto;
-  padding: 2px 2px 4px;
-}
-.launcher-templates-search {
-  width: 100%;
-  box-sizing: border-box;
-  margin: 0;
-  padding: 3px 6px;
-  font-family: inherit;
-  font-size: 11px;
-  color: var(--vscode-input-foreground);
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border, transparent));
-  border-radius: 3px;
-  outline: none;
-}
-.launcher-templates-search:focus {
-  border-color: var(--vscode-focusBorder);
-}
-.launcher-templates-list {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 0 1px;
-}
-.launcher-templates-empty {
-  margin: 0;
-  padding: 8px 6px;
-  font-size: 11px;
-  line-height: 1.4;
-}
-.launcher-template-row {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-  width: 100%;
-  margin: 0;
-  padding: 5px 6px;
-  font-family: inherit;
-  text-align: left;
-  color: var(--vscode-foreground);
-  background: transparent;
-  border: none;
-  border-radius: 3px;
-  cursor: pointer;
-}
-.launcher-template-row:hover {
-  background: var(--vscode-list-hoverBackground);
-}
-.launcher-template-row:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
-  outline-offset: -1px;
-}
-.launcher-template-title {
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-.launcher-template-tags {
-  font-size: 9px;
-  line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-  opacity: 0.85;
 }
 
 /* The black hole logo lives inside the New session button (left of the label).

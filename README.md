@@ -123,31 +123,19 @@ A new empty session shows a short value prop and **starter cards**, for example:
 | **Create an image** | Starts with `/imagine ` for image generation |
 | **Dictate instead of type** | Points you at the microphone (or notes setup if voice isn’t configured yet) |
 
-A **Create a document** row lives in the activity-bar **launcher** (under **New session**), with icons for **Word**, **Excel**, **PowerPoint**, **PDF**, **CSV**, and **Markdown**. Click one to open (or reuse an empty) session and fill the composer with `Create <type>: ` — finish the sentence and send.
-
 Power users can ignore the cards and type immediately.
 
 </details>
 
 <details>
-<summary><strong>Business Studio (3.0)</strong> — tasks, docs browser, templates</summary>
+<summary><strong>Business Studio (3.0)</strong> — tasks + docs browser</summary>
 
 Thin-client Studio surfaces (not a separate Office app, not five permanent sidebar tabs):
 
 - **Business tasks** on the empty-session welcome screen (invoice, receipt, weekly report, pitch deck, approval workflow) — each **seeds** the composer for you to edit; nothing is sent until you press Send.
 - **Docs** (chat top bar) — browse a capped list of business documents already in the workspace; open, reveal in the OS, attach as context, or seed a path into the composer.
-- **Templates** (activity-bar left nav, under **Create a document**) — ~14 searchable business templates; click a row to seed a fill-ready prompt. The list fills the space down to **Recent** history. Real files still come from Grok CLI skills (`/docx`, `/pptx`, `/xlsx`, …) and ordinary file tools.
 
-When a turn produces a document path, a **document card** still offers Copy path / Open / Reveal.
-
-</details>
-
-<details>
-<summary><strong>Business documents</strong> — Word, Excel, PowerPoint, PDF, CSV, Markdown</summary>
-
-From the launcher's **Create a document** row, pick a document-type icon (or ask in plain language / use `/docx`, `/pptx`, `/xlsx` from autocomplete). When a tool result includes a document path, Grokbit shows a **document card** with **Copy path**, **Open** (editor for Markdown/CSV/text; system default app for Office/PDF), and **Reveal in file explorer**.
-
-This is not a built-in Office suite: generation uses Grok’s skills and tools on your machine (some skills need local deps such as Node’s `docx` package). Attach an existing file as a chip to edit it.
+When a turn produces a document path, a **document card** still offers Copy path / Open / Reveal. Generation still uses Grok CLI skills (`/docx`, `/pptx`, `/xlsx`, …) and ordinary file tools — ask in plain language or use slash skills from autocomplete. This is not a built-in Office suite.
 
 </details>
 

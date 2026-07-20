@@ -207,11 +207,4 @@ export class Session {
    * tabs never spawn N processes at once.
    */
   pendingStart?: string;
-
-  /**
-   * Composer text to seed once the panel webview is ready (e.g. launcher
-   * document-type icon → "Create Word document: "). Consumed on the next
-   * `ready` after replay so it isn't wiped by clearMessages.
-   */
-  pendingComposerSeed?: string;
 }

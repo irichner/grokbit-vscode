@@ -53,7 +53,6 @@
     commands: [],
     chips: [],
     // Studio E2 workspace-docs popover state (ephemeral — not buffered).
-    // Templates live in the activity-bar launcher (E4), not this chat top bar.
     workspaceDocs: { entries: [], loading: false, error: null, total: 0, capped: false },
     // Start busy+locked: opening the view immediately spins up a session
     // (ready → startSession), so the send button shows the spinner from the

@@ -1,6 +1,5 @@
-// Grokbit launcher — the activity-bar view. New session + collapsible
-// Create a document + Templates + Recent (stacked under Templates in studio).
-// Status dots / rename / delete / clear-all. Signed-out / missing-CLI
+// Grokbit launcher — the activity-bar view. New session + collapsible Recent
+// history. Status dots / rename / delete / clear-all. Signed-out / missing-CLI
 // onboarding. No composer, no chat rendering. History is hard-capped (full
 // history + search live in the chat history popover). Rows mirror the chat
 // panel's history-popover markup so chat.css styles both.
@@ -10,10 +9,6 @@
   const {
     formatRelativeTime,
     formatLauncherMeta,
-    businessDocTypeStarters,
-    docTypeIcons,
-    businessTemplates,
-    filterTemplates,
   } = helpers;
 
   /** Hard cap for the activity-bar recent list (chat popover keeps full history). */
@@ -26,12 +21,8 @@
   const newBtn = $("launcher-new");
   const onboardingEl = $("launcher-onboarding");
   const metaEl = $("launcher-meta");
-  const docsEl = $("launcher-docs");
-  const templatesEl = $("launcher-templates");
-  const studioEl = $("launcher-studio");
   const historyEl = document.querySelector(".launcher-history");
   const historyToggle = $("launcher-history-toggle");
-  const historyBody = $("launcher-history-body");
 
   const ICON = {
     pencil: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>',
@@ -48,7 +39,7 @@
     error: "Finished with an error — not opened yet",
   };
 
-  // Collapse prefs survive webview reloads via setState. Defaults: all collapsed.
+  // Collapse prefs survive webview reloads via setState. Defaults: Recent collapsed.
   const saved = (typeof vscode.getState === "function" && vscode.getState()) || {};
   const state = {
     sessions: [],
@@ -58,9 +49,6 @@
     renamingId: null,
     extVersion: "",
     totalTokens: undefined,
-    templateSearch: typeof saved.templateSearch === "string" ? saved.templateSearch : "",
-    docsOpen: saved.docsOpen === true,
-    templatesOpen: saved.templatesOpen === true,
     historyOpen: saved.historyOpen === true,
   };
 
@@ -68,10 +56,7 @@
     if (typeof vscode.setState !== "function") return;
     const prev = (typeof vscode.getState === "function" && vscode.getState()) || {};
     vscode.setState(Object.assign({}, prev, {
-      docsOpen: state.docsOpen,
-      templatesOpen: state.templatesOpen,
       historyOpen: state.historyOpen,
-      templateSearch: state.templateSearch,
     }));
   }
 
@@ -83,22 +68,6 @@
       toggleEl.setAttribute("aria-expanded", open ? "true" : "false");
       toggleEl.title = open ? "Collapse section" : "Expand section";
     }
-  }
-
-  function setDocsOpen(open) {
-    state.docsOpen = !!open;
-    applySectionOpen(docsEl, docsEl && docsEl.querySelector(".launcher-section-toggle"), state.docsOpen);
-    persistUi();
-  }
-
-  function setTemplatesOpen(open) {
-    state.templatesOpen = !!open;
-    applySectionOpen(
-      templatesEl,
-      templatesEl && templatesEl.querySelector(".launcher-section-toggle"),
-      state.templatesOpen,
-    );
-    persistUi();
   }
 
   function setHistoryOpen(open) {
@@ -248,196 +217,6 @@
     if (dot) applyDot(dot, state.dots[id]);
   }
 
-  function escapeHtml(s) {
-    return String(s)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-  }
-
-  /** Create a document type chips (collapsible). */
-  function renderDocTypes() {
-    if (!docsEl || typeof businessDocTypeStarters !== "function") return;
-    const types = businessDocTypeStarters();
-    const icons = typeof docTypeIcons === "function" ? docTypeIcons() : {};
-    docsEl.innerHTML = "";
-    docsEl.classList.add("launcher-section");
-    if (!types.length) {
-      docsEl.hidden = true;
-      return;
-    }
-    docsEl.hidden = false;
-
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = "launcher-section-toggle";
-    toggle.id = "launcher-docs-toggle";
-    toggle.innerHTML =
-      ICON.chevron +
-      '<span class="launcher-section-label">Create a document</span>';
-    toggle.onclick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setDocsOpen(!state.docsOpen);
-    };
-    docsEl.appendChild(toggle);
-
-    const body = document.createElement("div");
-    body.className = "launcher-section-body launcher-docs-body";
-    body.id = "launcher-docs-body";
-    const row = document.createElement("div");
-    row.className = "launcher-docs-row welcome-doc-types-row";
-    row.setAttribute("role", "list");
-    row.setAttribute("aria-label", "Document types");
-    for (const t of types) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "welcome-doc-type launcher-doc-type";
-      btn.setAttribute("role", "listitem");
-      btn.dataset.docType = t.id;
-      btn.setAttribute("aria-label", "Create " + t.label);
-      btn.title = "Create " + t.label;
-      btn.innerHTML =
-        '<span class="welcome-doc-type-icon">' + (icons[t.id] || icons.word || "") + "</span>" +
-        '<span class="welcome-doc-type-label">' + escapeHtml(t.label) + "</span>";
-      btn.onclick = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        vscode.postMessage({ type: "docTypeStarter", id: t.id, prompt: t.prompt });
-      };
-      row.appendChild(btn);
-    }
-    body.appendChild(row);
-    docsEl.appendChild(body);
-    applySectionOpen(docsEl, toggle, state.docsOpen);
-  }
-
-  /**
-   * Templates gallery (collapsible). Flex-grows in .launcher-studio so the
-   * list fills the space between Create a document and Recent (sibling below).
-   * Click seeds the composer via host templateStarter (no auto-send).
-   */
-  function renderTemplates(opts) {
-    opts = opts || {};
-    if (!templatesEl) return;
-    const all = typeof businessTemplates === "function" ? businessTemplates() : [];
-    templatesEl.innerHTML = "";
-    templatesEl.classList.add("launcher-section");
-    if (!all.length) {
-      templatesEl.hidden = true;
-      if (studioEl) {
-        const bar = studioEl.querySelector(".launcher-section-bar");
-        if (bar) bar.hidden = true;
-      }
-      return;
-    }
-    templatesEl.hidden = false;
-    if (studioEl) {
-      const bar = studioEl.querySelector(".launcher-section-bar");
-      if (bar) bar.hidden = !!(docsEl && docsEl.hidden);
-    }
-
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = "launcher-section-toggle";
-    toggle.id = "launcher-templates-toggle";
-    toggle.innerHTML =
-      ICON.chevron +
-      '<span class="launcher-section-label">Templates</span>';
-    toggle.onclick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setTemplatesOpen(!state.templatesOpen);
-    };
-    templatesEl.appendChild(toggle);
-
-    const body = document.createElement("div");
-    body.className = "launcher-section-body launcher-templates-body";
-    body.id = "launcher-templates-body";
-
-    const searchWrap = document.createElement("div");
-    searchWrap.className = "launcher-templates-search-wrap";
-    const search = document.createElement("input");
-    search.type = "search";
-    search.className = "launcher-templates-search";
-    search.placeholder = "Search…";
-    search.value = state.templateSearch || "";
-    search.setAttribute("aria-label", "Search templates");
-    search.oninput = () => {
-      state.templateSearch = search.value;
-      persistUi();
-      renderTemplates({ focusSearch: true });
-    };
-    search.onkeydown = (e) => e.stopPropagation();
-    search.onclick = (e) => e.stopPropagation();
-    searchWrap.appendChild(search);
-    body.appendChild(searchWrap);
-
-    const list = document.createElement("div");
-    list.className = "launcher-templates-list";
-    list.setAttribute("role", "list");
-    list.setAttribute("aria-label", "Business templates");
-    const filtered =
-      typeof filterTemplates === "function"
-        ? filterTemplates(all, state.templateSearch)
-        : all;
-    if (!filtered.length) {
-      const empty = document.createElement("p");
-      empty.className = "launcher-templates-empty muted";
-      empty.textContent = "No templates match.";
-      list.appendChild(empty);
-    } else {
-      for (const t of filtered) {
-        const row = document.createElement("button");
-        row.type = "button";
-        row.className = "launcher-template-row";
-        row.setAttribute("role", "listitem");
-        row.dataset.templateId = t.id;
-        row.title = t.prompt ? String(t.prompt).trim() : (t.title || t.id);
-        row.setAttribute("aria-label", "Use template " + (t.title || t.id));
-        const title = document.createElement("span");
-        title.className = "launcher-template-title";
-        title.textContent = t.title || t.id;
-        row.appendChild(title);
-        if (t.tags && t.tags.length) {
-          const tags = document.createElement("span");
-          tags.className = "launcher-template-tags muted";
-          tags.textContent = (Array.isArray(t.tags) ? t.tags : []).join(" · ");
-          row.appendChild(tags);
-        }
-        row.onclick = (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (t.prompt) {
-            vscode.postMessage({ type: "templateStarter", id: t.id, prompt: t.prompt });
-          }
-        };
-        list.appendChild(row);
-      }
-    }
-    body.appendChild(list);
-    templatesEl.appendChild(body);
-    applySectionOpen(templatesEl, toggle, state.templatesOpen);
-
-    if (opts.focusSearch) {
-      requestAnimationFrame(() => {
-        const again = templatesEl.querySelector(".launcher-templates-search");
-        if (again) {
-          again.focus();
-          try {
-            again.setSelectionRange(again.value.length, again.value.length);
-          } catch { /* */ }
-        }
-      });
-    }
-  }
-
-  function renderStudio() {
-    renderDocTypes();
-    renderTemplates();
-  }
-
   // Signed-out / missing-CLI states. Sessions stay listed while signed out —
   // clicking a row opens a tab that shows the full auth onboarding.
   function showOnboarding(mode, info) {
@@ -533,6 +312,5 @@
     }
   });
 
-  renderStudio();
   vscode.postMessage({ type: "ready" });
 })();
