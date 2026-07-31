@@ -23,8 +23,10 @@ export const BODY = `
     <button id="history-btn"></button>
     <button id="new-btn"></button>
     <button id="docs-btn">Docs</button>
+    <button id="capabilities-btn">Actions</button>
     <div id="history-popover" hidden></div>
     <div id="docs-popover" hidden></div>
+    <div id="capabilities-popover" hidden></div>
   </header>
   <div id="plan-banner" class="plan-banner" hidden><span class="plan-banner-dot"></span><span class="plan-banner-text"></span></div>
   <main id="messages" class="messages">
@@ -32,7 +34,11 @@ export const BODY = `
       <h2>Grokbit</h2>
       <p class="welcome-tagline">Your AI coding partner in the editor</p>
       <p id="welcome-version" class="loading-dots">Starting</p>
-      <div id="welcome-starters" class="welcome-starters" hidden></div>
+      <div id="welcome-guide" class="welcome-guide" hidden></div>
+      <div id="welcome-grid" class="welcome-grid">
+        <div id="session-setup-card" class="session-setup-card" hidden></div>
+        <div id="capabilities-panel" class="capabilities-panel" hidden></div>
+      </div>
       <div id="welcome-onboarding"></div>
       <p class="welcome-byline muted"><a href="#" id="welcome-about-link" class="muted-link">About Grokbit</a></p>
     </div>
@@ -49,10 +55,13 @@ export const BODY = `
     <button id="gear-btn"></button>
     <div id="donut"><svg><circle id="donut-arc"/></svg><span id="donut-label"></span></div>
     <button id="model-label" hidden></button>
+    <button id="backend-label" hidden></button>
     <div id="chips"></div>
     <button id="mode-btn"></button>
     <button id="send-btn"></button>
     <div id="mode-popover" hidden></div>
+    <div id="backend-popover" hidden></div>
+    <div id="session-settings-popover" hidden></div>
     <div id="gear-popover" hidden></div>
     <div id="add-popover" hidden></div>
     <div id="slash-popover" hidden></div>
@@ -64,15 +73,20 @@ export interface Harness {
   window: Window;
   posted: Posted[];
   doc: Document;
+  /** Every payload the webview handed to `vscode.setState` (in order) — the
+   *  panel-serializer persistence path (docs/plans/claude-code-backend.md §
+   *  WP5); `getState()` mirrors the LAST one, like the real VS Code webview API. */
+  states: unknown[];
 }
 
 export function bootWebview(opts: { ready?: boolean } = {}): Harness {
   const window = new Window({ url: "https://localhost/" });
   const posted: Posted[] = [];
+  const states: unknown[] = [];
   (window as any).acquireVsCodeApi = () => ({
     postMessage: (m: Posted) => posted.push(m),
-    setState: () => {},
-    getState: () => undefined,
+    setState: (s: unknown) => states.push(s),
+    getState: () => states[states.length - 1],
   });
   const doc = (window as any).document as Document;
   doc.body.innerHTML = BODY;
@@ -86,7 +100,7 @@ export function bootWebview(opts: { ready?: boolean } = {}): Harness {
     dispatch(window, { type: "setBusy", value: false });
   }
   posted.length = 0; // drop chat.js's startup {type:"ready"} so tests see only their own messages
-  return { window, posted, doc };
+  return { window, posted, doc, states };
 }
 
 /** Deliver a message to the webview exactly as the extension host would. */

@@ -27,15 +27,32 @@ import {
   shouldBlockWrite,
 } from "./plan-gate";
 import { resolveGrokHome } from "./sessions";
+import { BackendQuirks, buildGrokAgentArgs, EffortLevel } from "./backends";
 
-export type EffortLevel = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+// Re-exported for existing call sites/tests that import these from "./acp"
+// (`session.ts`, `sidebar.ts`, `test/acp.test.ts`) — see src/backends.ts,
+// which now owns the definitions, and docs/plans/claude-code-backend.md § WP2.
+export { buildGrokAgentArgs };
+export type { EffortLevel };
 
 export interface AcpClientOptions {
-  cliPath: string;
+  /** Executable to spawn — grok's resolved CLI path, or `process.execPath`
+   *  for the Claude adapter under Electron (see `src/claude-locator.ts`). */
+  command: string;
+  /** Full argv for `command`, backend-owned (`buildGrokAgentArgs` for grok,
+   *  `buildClaudeAdapterArgv` for Claude). */
+  args: string[];
   cwd: string;
-  effort?: EffortLevel;
   env?: NodeJS.ProcessEnv;
   log: (msg: string) => void;
+  /**
+   * The grok-specific client behaviours this class implements, gated by the
+   * caller's backend descriptor (`BackendSpec.quirks` — see `src/backends.ts`).
+   * When a flag is false the corresponding code path is inert regardless of
+   * what the host later sets (e.g. `planActive`) — Claude enforces plan mode
+   * natively and must never be gated client-side, and never sends `x.ai/*`.
+   */
+  quirks: Pick<BackendQuirks, "clientPlanGate" | "mediaGen" | "xaiRequests">;
 }
 
 export interface ModelInfo {
@@ -118,14 +135,6 @@ export interface TerminalHandler {
 
 type Pending = { resolve: (v: any) => void; reject: (e: any) => void; timer?: ReturnType<typeof setTimeout> };
 
-export function buildGrokAgentArgs(effort?: EffortLevel): string[] {
-  // `--reasoning-effort` is an `agent`-level flag, so it must precede the `stdio`
-  // subcommand (after `stdio` the CLI errors "unexpected argument"). Only the
-  // values grok actually accepts are offered (none|minimal|low|medium|high|xhigh);
-  // the bogus `max` we used to expose made grok exit with code 2 (see #3/#4).
-  return effort ? ["agent", "--reasoning-effort", effort, "stdio"] : ["agent", "stdio"];
-}
-
 export class AcpClient extends EventEmitter {
   private proc?: ChildProcessWithoutNullStreams;
   private rl?: Interface;
@@ -178,14 +187,16 @@ export class AcpClient extends EventEmitter {
   }
 
   async start(): Promise<void> {
-    const args = buildGrokAgentArgs(this.opts.effort);
+    const { command, args } = this.opts;
 
-    this.opts.log(`spawning ${this.opts.cliPath} ${args.join(" ")} (cwd=${this.opts.cwd})`);
+    this.opts.log(`spawning ${command} ${args.join(" ")} (cwd=${this.opts.cwd})`);
     // Node 18+ refuses to spawn .cmd/.bat without `shell: true` on Windows
     // (CVE-2024-27980). Enable shell mode for those so installs that resolve to
     // a .cmd shim (e.g. some package managers, our test fake-CLI) still work.
-    const needsShell = process.platform === "win32" && /\.(cmd|bat)$/i.test(this.opts.cliPath);
-    this.proc = spawn(this.opts.cliPath, args, {
+    // `command` is the Claude adapter's plain Electron/Node executable for a
+    // Claude session, which never matches this suffix, so it doesn't misfire.
+    const needsShell = process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
+    this.proc = spawn(command, args, {
       cwd: this.opts.cwd,
       env: this.opts.env ?? process.env,
       shell: needsShell,
@@ -527,14 +538,18 @@ export class AcpClient extends EventEmitter {
 
   /**
    * Emit any media carried by a tool call: ACP-standard image/resource blocks
-   * (`collectToolImages`) plus grok's image_gen / image_to_video path-in-JSON
-   * result, which only the flagged tool-call ids are allowed to produce.
+   * (`collectToolImages` — backend-agnostic, always on) plus grok's image_gen /
+   * image_to_video path-in-JSON result, which only the flagged tool-call ids
+   * are allowed to produce and which only runs when `quirks.mediaGen` is set
+   * (Claude never emits this shape — see `src/backends.ts`).
    */
   private emitToolMedia(payload: any): void {
     const id = payload?.toolCallId;
-    if (isMediaGenToolCall(payload) && typeof id === "string") this.mediaGenCallIds.add(id);
+    if (this.opts.quirks.mediaGen && isMediaGenToolCall(payload) && typeof id === "string") {
+      this.mediaGenCallIds.add(id);
+    }
     const media = collectToolImages(payload);
-    if (typeof id === "string" && this.mediaGenCallIds.has(id)) {
+    if (this.opts.quirks.mediaGen && typeof id === "string" && this.mediaGenCallIds.has(id)) {
       media.push(...extractGeneratedMediaPaths(payload));
     }
     for (const m of media) this.emit("mediaContent", m);
@@ -577,7 +592,12 @@ export class AcpClient extends EventEmitter {
         if (isPlanFileWrite(params.path)) {
           this.emit("planFileContent", params.content ?? "");
         }
-        if (shouldBlockWrite(params.path, {
+        // Client-side plan-mode enforcement is grok-only (`quirks.clientPlanGate`)
+        // — Claude enforces plan mode natively, so this whole check (including
+        // the grok-specific `resolveGrokHome` lookup) must stay inert for it,
+        // regardless of what `planActive` happens to be set to. See
+        // src/backends.ts § BackendQuirks.clientPlanGate.
+        if (this.opts.quirks.clientPlanGate && shouldBlockWrite(params.path, {
           active: this.planActive,
           workspaceRoot: this.opts.cwd,
           grokHome: resolveGrokHome(this.opts.env ?? process.env),
@@ -592,7 +612,9 @@ export class AcpClient extends EventEmitter {
       }
       if (method === "terminal/create") {
         if (!this.terminal) throw new Error("terminal handler not registered");
-        if (shouldBlockTerminal(params.command, { active: this.planActive, workspaceRoot: this.opts.cwd })) {
+        // See the matching comment on fs/write_text_file — gated on
+        // `quirks.clientPlanGate`, grok-only.
+        if (this.opts.quirks.clientPlanGate && shouldBlockTerminal(params.command, { active: this.planActive, workspaceRoot: this.opts.cwd })) {
           this.emit("mutationBlocked", { kind: "terminal", target: params.command });
           this.respondError(id, PLAN_BLOCKED_CODE, PLAN_BLOCKED_TERMINAL_MSG);
           return;
@@ -633,45 +655,55 @@ export class AcpClient extends EventEmitter {
         this.emit("permissionRequest", req);
         return; // response is async, host calls respondPermission()
       }
-      if (
-        method === "x.ai/exit_plan_mode" ||
-        method === "_x.ai/exit_plan_mode"
-      ) {
-        const req: ExitPlanRequest = {
-          id,
-          sessionId: params?.sessionId ?? this.sessionId ?? "",
-          plan: params?.planContent ?? params?.plan ?? params?.input?.plan ?? "",
-        };
-        this.emit("exitPlanRequest", req);
-        return;
-      }
-      if (
-        method === "x.ai/ask_user_question" ||
-        method === "_x.ai/ask_user_question"
-      ) {
-        const req: QuestionRequest = {
-          id,
-          sessionId: params?.sessionId ?? this.sessionId ?? "",
-          questions: Array.isArray(params?.questions) ? params.questions : [],
-        };
-        this.emit("questionRequest", req);
-        return; // response is async — host calls respondQuestion()/respondQuestionCancelled()
-      }
-      if (
-        method === "_x.ai/session_notification" ||
-        method === "x.ai/session_notification"
-      ) {
-        this.emit("xaiNotification", params?.update);
-        if (id != null) this.respondOk(id, {});
-        return;
-      }
-      if (
-        method === "_x.ai/session/prompt_complete" ||
-        method === "x.ai/session/prompt_complete"
-      ) {
-        this.emit("xaiPromptComplete", params);
-        if (id != null) this.respondOk(id, {});
-        return;
+      // grok's `x.ai/*` extension methods (exit_plan_mode, ask_user_question, the
+      // two session-notification variants) — gated on `quirks.xaiRequests`, grok-only.
+      // Claude's adapter never sends these today, but treating the four blocks below
+      // as structurally inert when the flag is off (rather than always dispatching on
+      // method name alone) matches every other quirk in `BackendQuirks` and means an
+      // unexpected `x.ai/*` request from a non-grok backend falls through to the
+      // generic "unknown server request: emit + ack" path at the bottom instead of
+      // being treated as a real exit-plan/question flow.
+      if (this.opts.quirks.xaiRequests) {
+        if (
+          method === "x.ai/exit_plan_mode" ||
+          method === "_x.ai/exit_plan_mode"
+        ) {
+          const req: ExitPlanRequest = {
+            id,
+            sessionId: params?.sessionId ?? this.sessionId ?? "",
+            plan: params?.planContent ?? params?.plan ?? params?.input?.plan ?? "",
+          };
+          this.emit("exitPlanRequest", req);
+          return;
+        }
+        if (
+          method === "x.ai/ask_user_question" ||
+          method === "_x.ai/ask_user_question"
+        ) {
+          const req: QuestionRequest = {
+            id,
+            sessionId: params?.sessionId ?? this.sessionId ?? "",
+            questions: Array.isArray(params?.questions) ? params.questions : [],
+          };
+          this.emit("questionRequest", req);
+          return; // response is async — host calls respondQuestion()/respondQuestionCancelled()
+        }
+        if (
+          method === "_x.ai/session_notification" ||
+          method === "x.ai/session_notification"
+        ) {
+          this.emit("xaiNotification", params?.update);
+          if (id != null) this.respondOk(id, {});
+          return;
+        }
+        if (
+          method === "_x.ai/session/prompt_complete" ||
+          method === "x.ai/session/prompt_complete"
+        ) {
+          this.emit("xaiPromptComplete", params);
+          if (id != null) this.respondOk(id, {});
+          return;
+        }
       }
 
       // unknown server request: emit + ack so the agent doesn't hang

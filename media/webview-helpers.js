@@ -379,6 +379,48 @@
     return "Answered";
   }
 
+  // Claude's session/request_permission carries NO `toolCall.kind` at all — only
+  // `{toolCallId, title, rawInput}` — unlike grok's, which always includes it
+  // (verified: research/claude-code-backend.md § session/request_permission).
+  // Resolve the best available kind: the payload's own `kind` (grok, always
+  // present) → the kind already seen for this SAME toolCallId from a preceding
+  // tool_call/tool_call_update (Claude emits `kind:"edit"` there before the
+  // permission request) → inferred from `rawInput`'s shape (file_path+content =
+  // Write, file_path+old_string+new_string = Edit) as a last resort, e.g. no
+  // tool_call was ever recorded (replay gaps, out-of-order delivery). Pure so
+  // the correlation logic is unit-testable without booting the webview.
+  function inferPermissionKind(explicitKind, seenKind, rawInput) {
+    if (explicitKind) return explicitKind;
+    if (seenKind) return seenKind;
+    const r = rawInput || {};
+    if (typeof r.file_path === "string") {
+      if (typeof r.old_string === "string" && typeof r.new_string === "string") return "edit";
+      if (typeof r.content === "string") return "write";
+    }
+    return "";
+  }
+
+  // Synthesize a preview diff straight from a permission's rawInput when no
+  // structured ACP diff content has arrived yet for this toolCallId. This is
+  // the common case for Claude: its completed tool_call_update carries the real
+  // diff hunks, but that update lands AFTER approval — so at permission-request
+  // time there's nothing in the usual toolCallId→diff cache to render. Edit's
+  // old_string/new_string IS already a genuine, if narrower, before/after,
+  // rendered with the same computeLineDiff as everything else; Write has no
+  // "before" available client-side, so it previews as an all-added file. Returns
+  // null when `rawInput` doesn't match either shape (e.g. a command permission).
+  function permissionDiffFromRawInput(rawInput, kind) {
+    const r = rawInput || {};
+    if (typeof r.file_path !== "string") return null;
+    if (kind === "edit" && typeof r.old_string === "string" && typeof r.new_string === "string") {
+      return { path: r.file_path, oldText: r.old_string, newText: r.new_string };
+    }
+    if (kind === "write" && typeof r.content === "string") {
+      return { path: r.file_path, oldText: "", newText: r.content };
+    }
+    return null;
+  }
+
   // Status-dot tooltips for chat history + activity-bar launcher (shared so the
   // two surfaces cannot drift). Keys match computeDot values.
   const SESSION_DOT_LABELS = {
@@ -389,6 +431,398 @@
   };
   function sessionDotLabel(value) {
     return SESSION_DOT_LABELS[value] || "";
+  }
+
+  // Backend badge for a merged history row (grok + Claude Code sessions in one
+  // list — see docs/plans/claude-code-backend.md § WP4). Labels BOTH backends
+  // (docs/plans/capability-surfacing-and-history-ux.md § Thread 4) — a deliberate
+  // reversal of the original "quiet for grok" idiom, for the history row ONLY:
+  // once rows from both backends are interleaved by recency in one scrollable
+  // list, every row needs per-row disambiguation, not just the secondary one.
+  // `"grok"` and a missing/legacy `backend` field (a row from before the field
+  // existed) both read "Grok" — never invent a label for a backend we don't
+  // recognize. The status-bar HUD (src/status-bar.ts / computeStatusBar) is
+  // NOT changed to match — it stays quiet for grok on purpose, since it's one
+  // always-visible, width-constrained item describing a single open session
+  // whose model is already named, not an interleaved list of many. Shared by
+  // media/launcher.js and the chat history popover so the two can't drift.
+  function backendBadgeLabel(backend) {
+    if (backend === "claude") return "Claude";
+    if (backend === "grok" || !backend) return "Grok";
+    return "";
+  }
+
+  // Agent options for the setup-model's segmented Agent row. Only two backends
+  // exist today, so this stays a tiny local list rather than importing
+  // src/backends.ts (a TypeScript module the webview never loads).
+  const SETUP_AGENT_OPTIONS = [
+    { id: "grok", label: "Grok Build" },
+    { id: "claude", label: "Claude Code" },
+  ];
+
+  // Mode options for the setup-model's segmented Mode row. Deliberately short
+  // ("Plan", not MODE_DISPLAY.plan.label's "Plan first") — a segmented control
+  // has no room for the mode popover's longer onboarding wording.
+  const SETUP_MODE_OPTIONS = [
+    { id: "agent", label: "Agent" },
+    { id: "plan", label: "Plan" },
+    { id: "yolo", label: "Auto accept" },
+  ];
+
+  function withSelected(list, selectedId) {
+    return list.map((o) => ({ id: o.id, label: o.label, selected: o.id === selectedId }));
+  }
+
+  // "xhigh" -> "XHigh", everything else -> plain capitalize. Mirrors chat.js's
+  // own `capitalize()` (kept local here rather than shared — see WP6's
+  // precedent for a small intentional duplicate across the host/webview
+  // boundary in docs/plans/claude-code-backend.md).
+  function effortLevelLabel(id) {
+    const s = id == null ? "" : String(id);
+    if (s === "xhigh") return "XHigh";
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
+  /**
+   * Pure view-model for the per-tab settings UI — Agent / Model / Thinking /
+   * Mode — the single source of truth rendered by BOTH the new-tab welcome
+   * "Session setup" card and the composer quick-settings popover (see
+   * docs/plans/claude-code-backend.md § WP7 "UI: per-tab settings"). No DOM, no
+   * vscode API — chat.js turns the returned rows into elements and wires the
+   * message-posting click handlers.
+   *
+   * `effortLevels` is backend-specific (empty for Claude — CLAUDE_EFFORT_LEVELS
+   * in src/backends.ts, since Claude has no reasoning-effort axis at all): the
+   * Thinking row is OMITTED entirely (not rendered disabled/empty) whenever
+   * `effortLevels` is empty, so `rows.length` also tells the caller which rows
+   * apply for this backend.
+   *
+   * Each row carries `options: [{id, label, selected}]` plus a `selectedId`
+   * echoing the input verbatim (even when it matches no option — e.g. a stale
+   * or not-yet-loaded model id) so a caller can always show *something* without
+   * the builder silently substituting a different value.
+   */
+  function sessionSetupModel(opts) {
+    opts = opts || {};
+    const backend = opts.backend === "claude" ? "claude" : "grok";
+    const modelId = opts.modelId || "";
+    const availableModels = Array.isArray(opts.availableModels) ? opts.availableModels : [];
+    const effort = opts.effort || "";
+    const effortLevels = Array.isArray(opts.effortLevels) ? opts.effortLevels : [];
+    const modeId = opts.mode || "agent";
+    const locked = !!opts.locked;
+
+    const modelOptions = withSelected(
+      availableModels
+        .filter((m) => m && m.modelId)
+        .map((m) => ({ id: m.modelId, label: m.name || m.modelId })),
+      modelId,
+    );
+
+    const rows = [
+      {
+        id: "agent", kind: "segmented", label: "Agent", locked,
+        selectedId: backend, options: withSelected(SETUP_AGENT_OPTIONS, backend),
+      },
+      {
+        id: "model", kind: "dropdown", label: "Model", locked,
+        selectedId: modelId, options: modelOptions,
+      },
+    ];
+
+    if (effortLevels.length) {
+      rows.push({
+        id: "thinking", kind: "dots", label: "Thinking", locked,
+        selectedId: effort, selectedIndex: effortLevels.indexOf(effort),
+        options: withSelected(
+          effortLevels.map((lvl) => ({ id: lvl, label: effortLevelLabel(lvl) })),
+          effort,
+        ),
+      });
+    }
+
+    rows.push({
+      id: "mode", kind: "segmented", label: "Mode", locked,
+      selectedId: modeId, options: withSelected(SETUP_MODE_OPTIONS, modeId),
+    });
+
+    return { backend, rows };
+  }
+
+  /**
+   * Pure view-model for the toggle-shaped rows the Actions popover shows above
+   * the discovered capabilities — session state the user can flip in place,
+   * rather than something to drop into the composer.
+   *
+   * Shaped exactly like a `capabilityGroupsView` group so the renderer needs no
+   * special case beyond one branch on `item.control` — deliberately NOT on
+   * `item.kind`, preserving the standing rule that the renderer never branches
+   * on kind strings (docs/plans/capability-surfacing-and-dynamic-capabilities).
+   *
+   * The host never produces this group: it is built at render time from the
+   * webview's own `state.currentModeId` and posts the existing `setMode`
+   * message, so it holds no state of its own and cannot drift from the mode
+   * button, the Session Setup card's Mode row, or the quick-settings popover.
+   *
+   * Auto-accept is one value of a TRI-state mode (agent / plan / yolo), so a
+   * two-state switch has to name its OFF target explicitly:
+   *   yolo  -> on,  turning it off returns to `agent`
+   *   agent -> off, turning it on selects `yolo`
+   *   plan  -> off, turning it on selects `yolo` AND leaves Plan mode — allowed
+   *            (the host's setMode already drops planActive, and the Mode
+   *            segmented control permits the same transition), so the
+   *            description says so rather than the row being disabled.
+   */
+  function sessionToggleGroup(opts) {
+    opts = opts || {};
+    const modeId = opts.modeId || "agent";
+    const locked = !!opts.locked;
+    const on = modeId === "yolo";
+    const description = modeId === "plan"
+      ? "Apply edits and run commands without asking. Turning this on leaves Plan mode."
+      : "Apply edits and run commands without asking.";
+    return {
+      kind: "toggle",
+      title: "Session controls",
+      items: [{
+        toggleId: "autoAccept",
+        control: "switch",
+        label: "Auto-accept",
+        description,
+        on,
+        offModeId: "agent",
+        onModeId: "yolo",
+        locked,
+      }],
+      total: 1,
+      remaining: 0,
+    };
+  }
+
+  // Mirrors src/capabilities.ts's CAPABILITY_KIND_LABELS (kept in sync manually
+  // — the same small intentional cross-boundary duplicate as shortEffort above).
+  // Only ever used as a fallback: the host already stamps each CapabilityGroup's
+  // own `title` from this same map, so this exists for a group missing one.
+  const CAPABILITY_KIND_LABELS = {
+    command: "Commands",
+    skill: "Skills",
+    agent: "Agents",
+    grokbit: "Grokbit workflow",
+  };
+
+  // Longer than this and a row's description is clamped — mainly a guard on
+  // ACP-only "command" rows (grok's own builtins), whose description comes
+  // straight from the CLI with no server-side cap (disk skills/agents are
+  // already capped at CAPABILITY_DESCRIPTION_MAX_CHARS in src/capabilities.ts).
+  const CAPABILITY_ROW_DESCRIPTION_MAX = 140;
+  function truncateCapabilityDescription(desc) {
+    const s = (desc == null ? "" : String(desc)).trim();
+    if (s.length <= CAPABILITY_ROW_DESCRIPTION_MAX) return s;
+    return s.slice(0, CAPABILITY_ROW_DESCRIPTION_MAX - 1).trimEnd() + "…";
+  }
+
+  // Featured subset per CapabilityKind, shown by default with the rest behind
+  // an expand link (docs/plans/actions-panel-featured-capabilities.md). Data,
+  // not logic — a later kind needs one map entry here, not a renderer change,
+  // the same data-driven rule as CAPABILITY_KIND_ORDER (src/capabilities.ts).
+  // Matching is case-insensitive on item.name (see partitionFeatured below),
+  // so "Plan" / "plan" / "Workflow" / "workflow" all land.
+  //
+  // Every named item is listed under EVERY kind it could plausibly discover
+  // as (never just the one the operator had in mind), for the same "costs one
+  // array entry and cannot be wrong" reason `alawys-approve` is listed beside
+  // `always-approve` below: `mergeAcpCommands` keeps the DISK kind on a name
+  // collision, and disk roots only ever yield `skill`/`agent`, never
+  // `command` (src/capabilities.ts) — so an install where e.g. `docx`/`pptx`
+  // ship as real skill directories would otherwise land in Skills (matching
+  // neither `plan` nor `implement`) while Commands matches nothing at all and
+  // silently degrades to plain first-N truncation, with no warning that the
+  // feature stopped doing its job. The dual-listed command names ride in the
+  // Skills list for that reason. Same reasoning for agents: `explore` is
+  // grok's built-in agent type, `explorer` is `.claude/agents/explorer.md` in
+  // this very repo — one intent, two spellings.
+  //
+  // `grokbit` lists the whole bundled suite, in the pipeline order
+  // SUITE_SKILL_NAMES (src/skill-suite.ts) declares — partitionFeatured
+  // reorders matched items into THIS array's order, which is the only thing
+  // that sorts that group, so the two arrays must stay in the same order.
+  // Listing every member also means featuredCount === items.length, so the
+  // group renders no "Show all" expander: a four-item pipeline that hides its
+  // last two steps behind a link would be teaching the workflow wrong.
+  //
+  // The old agentic-team `plan`/`implement` skills are deliberately NOT
+  // featured here any more — they were this repo's own `.grok/skills` suite,
+  // which the bundled Grokbit suite replaces (docs/plans/
+  // grokbit-actions-and-bundled-skill-suite.md § D4). A user who still has
+  // them installed keeps them; they just no longer outrank their own skills.
+  const CAPABILITY_FEATURED = {
+    grokbit: ["grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document"],
+    skill: [
+      "cold-review", "init-repo", "docx", "pptx", "pdf", "create-workflow",
+      "workflow", "deep-research", "always-approve", "alawys-approve",
+    ],
+    agent: ["explore", "explorer"],
+    // The operator's request misspelled "always-approve" as "alawys-approve" —
+    // both spellings are kept so the feature works regardless of which one an
+    // install actually ships; it costs one array entry and cannot be wrong.
+    command: [
+      "cold-review", "init-repo", "docx", "pptx", "pdf", "create-workflow",
+      "workflow", "deep-research", "always-approve", "alawys-approve",
+    ],
+  };
+
+  // No configured list for a kind, or none of its named items are installed
+  // on this machine: still collapse to the first N items rather than showing
+  // every row, so the panel is compact for everyone, not only on the
+  // operator's own machine. Never collapses to zero rows.
+  const CAPABILITY_FEATURED_FALLBACK = 5;
+
+  /**
+   * Pure partition of one group's (already-shaped) items into featured-first
+   * order plus how many of the front are "featured" — the caller slices on
+   * `featuredCount`, this never re-sorts on its behalf. Featured items move
+   * to the front IN THE CONFIGURED ORDER from CAPABILITY_FEATURED, not the
+   * host's order; every other item keeps its original relative order behind
+   * them. Falls back to the first CAPABILITY_FEATURED_FALLBACK items when the
+   * kind has no configured list, or the configured names match nothing in
+   * this install.
+   */
+  function partitionFeatured(items, kind) {
+    const list = Array.isArray(items) ? items : [];
+    const names = CAPABILITY_FEATURED[kind];
+    if (Array.isArray(names) && names.length) {
+      const order = names.map((n) => n.toLowerCase());
+      const rank = new Map(order.map((n, i) => [n, i]));
+      const matched = list.filter((item) => rank.has((item.name || "").toLowerCase()));
+      if (matched.length) {
+        matched.sort((a, b) => rank.get(a.name.toLowerCase()) - rank.get(b.name.toLowerCase()));
+        const matchedSet = new Set(matched);
+        const rest = list.filter((item) => !matchedSet.has(item));
+        return { items: [...matched, ...rest], featuredCount: matched.length };
+      }
+    }
+    // .slice() — a fresh array, matching the matched branch above, not the
+    // caller's own array by reference (this function is documented pure).
+    return { items: list.slice(), featuredCount: Math.min(list.length, CAPABILITY_FEATURED_FALLBACK) };
+  }
+
+  /**
+   * Pure view-model for the capability browser (slash commands, skills,
+   * subagents/agents) — rendered into BOTH the new-tab welcome canvas
+   * (#capabilities-panel) and the top-bar Skills popover (#capabilities-popover)
+   * from this ONE builder, mirroring the sessionSetupModel idiom above. Iterates
+   * the supplied `groups` ARRAY in the order given — no fixed keys, no
+   * three-kind branching — so a later kind (should workflows ever stop being
+   * deferred — see docs/plans/capability-surfacing-and-history-ux.md § Non-goals)
+   * needs no renderer change, only a new discovery source plus an entry in
+   * CAPABILITY_KIND_ORDER/_LABELS (src/capabilities.ts).
+   *
+   * Each returned item carries a ready-to-render `action`:
+   *   "invoke" — seed the composer with `invoke` and never auto-send
+   *   "open"   — open `path` in an editor tab
+   *   "inert"  — neither `invoke` nor `path` (e.g. grok's built-in agent types);
+   *              render non-interactive, no click handler, no pointer cursor
+   * A group with no items is dropped; `remaining` is `total - items.length`,
+   * the "+N more" count the host's per-group cap leaves behind.
+   *
+   * `label` is always the PLAIN NAME — not the slash token — so a
+   * non-technical user reads "adr — Record an architecture decision" and
+   * *learns* `/adr` by seeing it beside the name, rather than needing to know
+   * it first (docs/plans/session-tab-ux-overhaul.md § Approach B). The slash
+   * form, when the item is invocable, rides separately as `invokeLabel`
+   * (`"/adr"`, trimmed of its trailing composer-seed space) for the renderer
+   * to show as a small chip beside the name. `hint` (frontmatter
+   * `argument-hint` / the ACP command's `input.hint`) is untrusted workspace
+   * text, truncated here exactly like `description` — the source
+   * (`src/capabilities.ts`) does not truncate it.
+   *
+   * `workspaceSource` flags a workspace-tier item (`source` starts with
+   * "Project" — the convention every `CAPABILITY_ROOTS` entry uses, see
+   * src/capabilities.ts § Root spec) so the renderer can call it out visibly:
+   * `dedupeByPriority` is workspace-first, so a repo-authored skill silently
+   * shadows a same-named one under `~/.grok`/`~/.claude` — without this a
+   * checked-in `code-review` skill is indistinguishable from the user's own.
+   *
+   * Each group's `items` are reordered featured-first by `partitionFeatured`
+   * (docs/plans/actions-panel-featured-capabilities.md), and the group
+   * carries the resulting `featuredCount` — the renderer slices on it, it
+   * does not re-sort. `sessionToggleGroup`'s group never passes through here,
+   * so it carries no `featuredCount` and the renderer's fallback treats it as
+   * "show everything."
+   */
+  function capabilityGroupsView(opts) {
+    opts = opts || {};
+    const groups = Array.isArray(opts.groups) ? opts.groups : [];
+    const out = [];
+    for (const g of groups) {
+      if (!g || !Array.isArray(g.items) || !g.items.length) continue;
+      const items = g.items.map((raw) => {
+        raw = raw || {};
+        const invoke = typeof raw.invoke === "string" && raw.invoke ? raw.invoke : undefined;
+        const path = typeof raw.path === "string" && raw.path ? raw.path : undefined;
+        const action = invoke ? "invoke" : (path ? "open" : "inert");
+        const source = raw.source || "";
+        const hint = typeof raw.hint === "string" && raw.hint.trim() ? truncateCapabilityDescription(raw.hint) : undefined;
+        return {
+          kind: raw.kind,
+          name: raw.name || "",
+          label: raw.name || "",
+          invokeLabel: invoke ? invoke.trim() : undefined,
+          description: truncateCapabilityDescription(raw.description),
+          hint,
+          invoke,
+          path,
+          source,
+          workspaceSource: source.startsWith("Project"),
+          action,
+          inert: action === "inert",
+        };
+      });
+      const total = typeof g.total === "number" && g.total >= items.length ? g.total : items.length;
+      const { items: ordered, featuredCount } = partitionFeatured(items, g.kind);
+      out.push({
+        kind: g.kind,
+        title: g.title || CAPABILITY_KIND_LABELS[g.kind] || g.kind,
+        items: ordered,
+        total,
+        remaining: total - items.length,
+        featuredCount,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Pure three-line guide strip for the new-tab welcome canvas (#welcome-guide) —
+   * plain-English orientation for a user who will never type `/`
+   * (docs/plans/session-tab-ux-overhaul.md § Approach C). Unlike the removed
+   * welcomeStarters/taskQuickActions catalogues below, this is prose describing
+   * SHIPPED behaviour, not a set of invented clickable prompts — the renderer
+   * turns each returned line into a plain, non-interactive row.
+   *
+   * Mode- and backend-accurate so it never states something false: the middle
+   * line is the one that matters most. Plan mode drafts before touching
+   * anything and Agent mode may still ask before editing files or running
+   * commands — both true today — but Auto-accept applies edits and runs
+   * commands WITHOUT asking first, and that line must never be softened into
+   * something that reads as "your files are still protected," which would be
+   * a materially false safety claim to exactly the non-technical user this
+   * strip exists for.
+   */
+  function welcomeGuide(opts) {
+    opts = opts || {};
+    const agentName = opts.backend === "claude" ? "Claude" : "Grok";
+    const modeId = opts.modeId === "plan" || opts.modeId === "yolo" ? opts.modeId : "agent";
+    const modeLine = modeId === "plan"
+      ? `Plan mode is on — ${agentName} drafts a plan first; nothing changes until you approve it.`
+      : modeId === "yolo"
+        ? `Auto accept is on — ${agentName} edits files and runs commands without asking first.`
+        : `${agentName} may ask before editing files or running commands.`;
+    return [
+      `Ask ${agentName} to explain code, write or fix something, or answer a question about this workspace.`,
+      modeLine,
+      `Type in plain English below — no slash commands required.`,
+    ];
   }
 
   // Starter action cards for the empty-session welcome screen. Pure so unit tests
@@ -650,20 +1084,23 @@
 
   /**
    * Compact token count for launcher meta / tooltips.
-   * Always one decimal for K/M units ("12.5K", "1.0K", "1.5M"); plain integers below 1K.
+   * Always one decimal for K/M/B units ("12.5K", "1.0K", "1.5M", "1.2B");
+   * plain integers below 1K. The B tier exists because the development-token
+   * figure crossed 10^9 — four digits of millions ("1183.1M") reads as noise.
    */
   function formatTokenCount(n) {
     if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return "";
     if (n < 1000) return String(Math.round(n));
     if (n < 1_000_000) return (n / 1000).toFixed(1) + "K";
-    return (n / 1_000_000).toFixed(1) + "M";
+    if (n < 1_000_000_000) return (n / 1_000_000).toFixed(1) + "M";
+    return (n / 1_000_000_000).toFixed(1) + "B";
   }
 
   /**
-   * Launcher header line above "New session": extension version + project
-   * lifetime token estimate when known. Pure so unit tests pin the format
-   * without the webview.
-   * e.g. "v2.0.2 · 12.5K tokens" or just "v2.0.2" when no session tokens yet.
+   * Launcher header line above "New session": extension version + the
+   * development cost of Grokbit itself when known. Pure so unit tests pin the
+   * format without the webview.
+   * e.g. "v2.0.2 · 12.5K tokens" or just "v2.0.2" when no constant shipped.
    */
   function formatLauncherMeta(opts) {
     opts = opts || {};
@@ -674,6 +1111,35 @@
         ? formatTokenCount(opts.totalTokens) + " tokens"
         : "";
     return [verLabel, tokens].filter(Boolean).join(" · ");
+  }
+
+  /**
+   * Tooltip for that same line. The compact label has no room to say WHOSE
+   * tokens these are, and the entire risk of this figure is a user reading it
+   * as their own usage — so the tooltip says so in words, names the scope (all
+   * maintainers, all sessions) and dates it, since the number is baked in at
+   * package time and therefore lags live development by up to one release.
+   * `generatedAt` is the ISO stamp from the generated constant; an absent or
+   * unparseable one just drops the "as of" clause. Falls back to the bare
+   * version when no token constant shipped. Pure.
+   */
+  function formatLauncherMetaTooltip(opts) {
+    opts = opts || {};
+    const raw = String(opts.extVersion || "").trim();
+    const verLabel = raw ? (raw.charAt(0) === "v" || raw.charAt(0) === "V" ? raw : "v" + raw) : "";
+    if (typeof opts.totalTokens !== "number" || !Number.isFinite(opts.totalTokens)) {
+      return verLabel ? "Extension " + verLabel : "";
+    }
+    const stamp = new Date(String(opts.generatedAt || ""));
+    const asOf = Number.isNaN(stamp.getTime()) ? "" : ", as of " + stamp.toISOString().slice(0, 10);
+    return (
+      ["Grokbit", verLabel].filter(Boolean).join(" ") +
+      " — " +
+      Math.round(opts.totalTokens).toLocaleString() +
+      " tokens spent developing this extension (all maintainers, all sessions" +
+      asOf +
+      "). This is not your usage."
+    );
   }
 
   /**
@@ -707,10 +1173,15 @@
     stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext,
     MODE_DISPLAY, modeDisplayMeta, permissionButtonLabel, welcomeStarters,
     businessDocTypeStarters, docTypeIcons, formatTokenCount, formatLauncherMeta,
+    formatLauncherMetaTooltip,
     applyComposerSeed, taskQuickActions, businessTemplates, filterTemplates,
     isRejectedPermissionKind, permissionCollapseVerb,
-    SESSION_DOT_LABELS, sessionDotLabel,
+    SESSION_DOT_LABELS, sessionDotLabel, backendBadgeLabel,
     activityPeek, activityPosText,
+    inferPermissionKind, permissionDiffFromRawInput,
+    sessionSetupModel,
+    CAPABILITY_KIND_LABELS, capabilityGroupsView, sessionToggleGroup,
+    welcomeGuide, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

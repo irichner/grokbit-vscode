@@ -117,4 +117,92 @@ describe("permission card inline diff (real chat.js in a DOM)", () => {
     expect(doc.querySelector(".card.permission .inline-diff")).toBeNull();
     expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(0);
   });
+
+  // Claude's session/request_permission carries NO toolCall.kind at all — only
+  // {toolCallId, title, rawInput} — and its real structured diff hunks only
+  // land on the COMPLETED tool_call_update, which arrives AFTER approval. See
+  // docs/plans/claude-code-backend.md § WP3.
+  describe("Claude-shaped permission payload (no toolCall.kind)", () => {
+    it("still renders a diff by correlating the kind from the preceding tool_call, synthesized from rawInput", () => {
+      const { window, doc } = bootWebview();
+      // The pending tool_call Claude sends BEFORE the permission request — kind
+      // present, but (unlike grok) no diff content yet.
+      dispatch(window, {
+        type: "toolCall",
+        call: { toolCallId: "claude-1", kind: "edit", title: "Edit src/foo.ts" },
+      });
+      dispatch(window, {
+        type: "permissionRequest",
+        req: {
+          id: 20,
+          toolCall: {
+            toolCallId: "claude-1",
+            title: "Edit src/foo.ts",
+            rawInput: { file_path: "src/foo.ts", old_string: "hello", new_string: "goodbye" },
+            // no `kind` — this is the whole point of the test
+          },
+          options: [
+            { optionId: "allow_always", kind: "allow_always", name: "Always allow" },
+            { optionId: "allow", kind: "allow_once", name: "Allow" },
+            { optionId: "reject", kind: "reject_once", name: "Reject" },
+          ],
+        },
+      });
+
+      const card = doc.querySelector(".card.permission");
+      expect(card).not.toBeNull();
+      expect(card!.querySelector(".card-subtitle")!.textContent).toContain("src/foo.ts");
+      expect([...card!.querySelectorAll(".inline-diff .diff-line")].map((el) => el.textContent)).toEqual([
+        "hello", "goodbye",
+      ]);
+    });
+
+    it("infers the kind from rawInput alone when no preceding tool_call was seen", () => {
+      const { doc, window } = bootWebview();
+      dispatch(window, {
+        type: "permissionRequest",
+        req: {
+          id: 21,
+          toolCall: {
+            toolCallId: "claude-2",
+            title: "Write notes.txt",
+            rawInput: { file_path: "notes.txt", content: "hello world" },
+          },
+          options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+        },
+      });
+      const card = doc.querySelector(".card.permission");
+      expect(card!.querySelector(".card-subtitle")!.textContent).toContain("notes.txt");
+      expect([...card!.querySelectorAll(".inline-diff .diff-line")].map((el) => el.textContent)).toEqual([
+        "hello world",
+      ]);
+    });
+
+    it("keys button labels/danger styling off option KIND, not optionId (Claude's ids differ from grok's)", () => {
+      const { window, posted, doc } = bootWebview();
+      dispatch(window, {
+        type: "permissionRequest",
+        req: {
+          id: 22,
+          toolCall: { toolCallId: "claude-3", title: "Run npm test" },
+          options: [
+            { optionId: "allow_always", kind: "allow_always", name: "Always allow" },
+            { optionId: "allow", kind: "allow_once", name: "Allow" },
+            { optionId: "reject", kind: "reject_once", name: "Reject" },
+          ],
+        },
+      });
+      const buttons = [...doc.querySelectorAll(".card.permission .card-actions button")] as HTMLButtonElement[];
+      expect(buttons.map((b) => b.textContent)).toEqual(["Allow always", "Allow this change", "Don't allow"]);
+      const primary = buttons.find((b) => b.classList.contains("primary"));
+      expect(primary?.textContent).toBe("Allow this change"); // allow_once, not the first option
+      const danger = buttons.find((b) => b.classList.contains("danger"));
+      expect(danger?.textContent).toBe("Don't allow");
+
+      // Answering still posts the exact optionId back — Claude's "allow", not
+      // some derived/normalized id — the wire contract.
+      click(window, primary!);
+      expect(posted).toContainEqual({ type: "permissionAnswer", requestId: 22, optionId: "allow" });
+    });
+  });
 });

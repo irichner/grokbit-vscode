@@ -1,0 +1,11 @@
+{"type":"assistant","sessionId":"sess-1111","cwd":"C:\\fixtures\\grokbit","requestId":"req_stream","message":{"id":"msg_stream","model":"fixture-model","usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":30,"cache_creation_input_tokens":40}}}
+{"type":"assistant","sessionId":"sess-1111","cwd":"C:\\fixtures\\grokbit","requestId":"req_stream","message":{"id":"msg_stream","model":"fixture-model","usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":30,"cache_creation_input_tokens":40}}}
+{"type":"assistant","sessionId":"sess-1111","cwd":"C:\\fixtures\\grokbit","requestId":"req_stream","message":{"id":"msg_stream","model":"fixture-model","usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":30,"cache_creation_input_tokens":40}}}
+{"type":"user","sessionId":"sess-1111","cwd":"C:\\fixtures\\grokbit","message":{"role":"user","content":"non-assistant record, never counted"}}
+
+{ this line is deliberately not valid json
+{"type":"assistant","sessionId":"sess-1111","cwd":"C:\\fixtures\\grokbit","message":{"id":"msg_second","model":"fixture-model","usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":3,"cache_creation_input_tokens":4}}}
+{"type":"assistant","sessionId":"sess-1111","message":{"id":"msg_no_cwd","model":"fixture-model","usage":{"input_tokens":9999,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
+{"type":"assistant","sessionId":"sess-1111","cwd":"C:\\fixtures\\grokbit","message":{"id":"msg_no_usage","model":"fixture-model"}}
+{"type":"assistant","cwd":"C:\\fixtures\\grokbit","message":{"id":"msg_no_session","model":"fixture-model","usage":{"input_tokens":7777,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
+{"type":"assistant","sessionId":"sess-outside","cwd":"C:\\fixtures\\grokbit-other","message":{"id":"msg_outside","model":"fixture-model","usage":{"input_tokens":8888,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}

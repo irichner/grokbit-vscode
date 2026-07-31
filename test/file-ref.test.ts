@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseFileRef, shouldReadFileInline, MAX_INLINE_CHIP_BYTES } from "../src/file-ref";
+import { isUsableFilePath, parseFileRef, shouldReadFileInline, MAX_INLINE_CHIP_BYTES } from "../src/file-ref";
 
 describe("parseFileRef", () => {
   it("returns the bare path when there is no line suffix", () => {
@@ -28,6 +28,33 @@ describe("parseFileRef", () => {
 
   it("handles Windows paths with a # folder", () => {
     expect(parseFileRef("C:\\proj\\C#\\a.cs#L3")).toEqual({ path: "C:\\proj\\C#\\a.cs", startLine: 3 });
+  });
+});
+
+// [R] B3 — the openFile handler's guard used to be falsy-only (`!msg.path`),
+// which misses a whitespace-only string and, worse, a truthy NON-string (e.g.
+// a number) that reaches `parseFileRef` and throws inside `raw.match(...)`,
+// which used to become an unhandled rejection in the extension host.
+describe("isUsableFilePath", () => {
+  it("accepts a non-empty string", () => {
+    expect(isUsableFilePath("src/a.ts")).toBe(true);
+  });
+
+  it("[R] rejects a whitespace-only string", () => {
+    expect(isUsableFilePath("   ")).toBe(false);
+  });
+
+  it("[R] rejects non-string values that a falsy-only check would let through", () => {
+    expect(isUsableFilePath(5)).toBe(false);
+    expect(isUsableFilePath(true)).toBe(false);
+    expect(isUsableFilePath({})).toBe(false);
+    expect(isUsableFilePath(["a.ts"])).toBe(false);
+  });
+
+  it("rejects missing/empty values", () => {
+    expect(isUsableFilePath(undefined)).toBe(false);
+    expect(isUsableFilePath(null)).toBe(false);
+    expect(isUsableFilePath("")).toBe(false);
   });
 });
 

@@ -1,5 +1,6 @@
 import type * as vscode from "vscode";
-import { AcpClient } from "./acp";
+import { AcpClient, EffortLevel } from "./acp";
+import { BackendId } from "./backends";
 import { FileChip } from "./chips";
 
 /** Live state for the dashboard dot. `cold` (no live process) is represented by
@@ -18,14 +19,58 @@ export type SessionStatus = "idle" | "working" | "needs-you" | "done" | "error";
  * singletons it replaces 1:1).
  */
 export class Session {
-  /** The live ACP client (one spawned `grok agent stdio` process), once started. */
+  /**
+   * Which agent backend this tab runs on (see `src/backends.ts`). Grok is the
+   * default for every new tab (docs/plans/claude-code-backend.md § WP3) — set
+   * once at `newTab`/`openTabForId` time and read by `startSession` to resolve
+   * the right binary/argv/env and to gate every grok-only quirk
+   * (`backendSpec(session.backend).quirks`). A backend flip (the composer chip)
+   * mutates this in place and restarts the session on the new value.
+   */
+  backend: BackendId = "grok";
+
+  /** The live ACP client (one spawned `grok agent stdio` process, or the Claude
+   *  adapter process for a Claude-backed tab), once started. */
   client?: AcpClient;
+
+  /**
+   * Best-effort `claude auth status --json` snapshot for a Claude-backed
+   * session, refreshed once after a successful start (`refreshClaudeAccount` in
+   * sidebar.ts) — surfaced in the composer's backend chip so it's evident the
+   * user's subscription (not an inherited API key) is what's billed.
+   * `authMethod`/`apiProvider` come straight from `claude auth status --json`;
+   * `overrides` names (never values) any `CLAUDE_CREDENTIAL_OVERRIDE_VARS`
+   * present in the spawn env (see `detectClaudeCredentialOverrides` in
+   * claude-locator.ts) — set whenever EITHER the auth check succeeded OR an
+   * override is present, so a broken/misconfigured gateway (auth check fails)
+   * still surfaces which override is in effect instead of going silent.
+   * Undefined for a grok session, or when neither is true.
+   */
+  claudeAccount?: {
+    email?: string;
+    subscriptionType?: string;
+    authMethod?: string;
+    apiProvider?: string;
+    overrides?: string[];
+  };
 
   /** YOLO: auto-approve every permission request for this session. */
   autoApprove = false;
 
   /** Plan-mode gate is up for this session (client-side enforcement mirror). */
   planActive = false;
+
+  /**
+   * Reasoning effort this session spawns with (`--reasoning-effort`, see
+   * buildGrokAgentArgs) — per-session, not the old global `grok.defaultEffort`
+   * config (changing effort in one tab used to silently change every future
+   * tab). `undefined` means "not yet chosen for this session load": startSession
+   * seeds it from `grok.defaultEffort` (now just the default for NEW tabs) the
+   * first time this session spawns, and a restart started by setEffort skips
+   * that seeding because the field is already set — so the picked level
+   * survives a same-tab restart instead of reverting to the config default.
+   */
+  effort?: EffortLevel;
 
   /**
    * Deferred post-turn action. The CLI's exit_plan_mode arrives *during* an

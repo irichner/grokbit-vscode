@@ -232,6 +232,9 @@ The full pedagogical write-up lives in
 | [src/sessions.ts](../src/sessions.ts) | Disk-driven session listing/delete + name overrides (pure) — `indexSessions` (stat-only ordering), `readSessionEntries` (windowed read), `listSessions` (whole-list), `clearSessions` |
 | [src/file-ref.ts](../src/file-ref.ts) | Open-file ref parsing + large-file inline-read guard (pure) |
 | [src/plan-review.ts](../src/plan-review.ts) | Plan-snapshot Markdown filename generation (pure) |
+| [src/skill-suite.ts](../src/skill-suite.ts) | The bundled Grokbit skill suite (pure) — the manifest (`SUITE_SKILL_NAMES`), where it is provisioned (`suiteTargets`), whether a copy is stale (`shouldProvision`), and which discovered items are suite members (`applySuiteKind`). The recursive copy itself lives in `extension.ts`'s `provisionSkillSuite`. See § Design choices → Grokbit Actions |
+| [src/capabilities.ts](../src/capabilities.ts) | Capability discovery (pure) — what the selected backend CLI can actually do: slash commands (via ACP), skills, and agents/subagents, read from grok's/Claude's documented on-disk roots and merged with `AcpClient.availableCommands` into an ordered `CapabilityGroup[]` the webview renders. See § Design choices → Capability browser |
+| [src/token-metrics.ts](../src/token-metrics.ts) | **Generated + committed** data module (no imports, no logic) — `DEV_TOKENS_TOTAL`/`DEV_TOKENS_GENERATED_AT`/`DEV_TOKENS_SESSIONS`, Grokbit's own development cost, baked in at build time and posted verbatim to the launcher header. Written at dev time by `scripts/aggregate_token_usage.py` (`npm run metrics:tokens`); the shipped extension computes no tokens for this figure at all. See [ADR 0003](adr/0003-development-token-ledger.md) |
 | [src/voice.ts](../src/voice.ts) | Voice-input pure helpers — STT request/response, ffmpeg args, device parsing, key resolution |
 | [src/voice-recorder.ts](../src/voice-recorder.ts) | Batch capture (`ffmpeg` → WAV) + STT REST upload |
 | [src/voice-streamer.ts](../src/voice-streamer.ts) | Live capture (ffmpeg PCM → WebSocket STT) |
@@ -323,6 +326,61 @@ the steady-state fix.
   content-based and agent-agnostic — `extractUserQueries` counts both
   `<user_query>`-wrapped prompts and the unwrapped ones grok/composer sends for slash
   commands — so it's safe for the `grok-build` and `cursor` (composer) agents alike.
+- **Grokbit Actions: two mounts, one pure builder, host-side discovery.** A new
+  session's welcome canvas and a top-bar **Grokbit Actions** popover both show
+  the bundled Grokbit workflow (`src/skill-suite.ts` — four skills that ship in
+  the vsix and are provisioned onto both CLIs' home-tier skill paths at
+  activation, so the group is present and identical on either backend) followed
+  by what the selected CLI already had — its skills (including model-only ones
+  the slash menu hides), agents/subagents, and its own built-in slash commands.
+  The webview posts `{type:"listCapabilities"}`; the host walks the backend's
+  documented on-disk roots (`src/capabilities.ts`'s `CAPABILITY_ROOTS`, keyed per
+  **kind** as well as per backend — grok's agent definitions resolve from
+  `.grok/agents` only, while its skill roots also read the `.claude`/`.cursor`
+  vendor-compat dirs), merges in `AcpClient.availableCommands` (the disk item's
+  `kind` AND `hint` win when non-empty; an ACP command with no disk match becomes
+  the CLI's own builtin), and replies `{type:"capabilities", groups, …}` via
+  `postTo` — never buffered, since a replayed stale capability list would be
+  wrong the moment the user adds a skill. Between the scan and the grouping,
+  `applySuiteKind` re-keys provisioned suite members to `kind: "grokbit"` —
+  after `dedupeByPriority` (which keys on `kind|name`) rather than before, or a
+  workspace and a home copy of the same suite skill would stop collapsing and
+  render twice; and only for items whose path is inside a directory the
+  extension itself wrote, so a repo cannot ship a lookalike into the group the
+  UI presents as Grokbit's own. Groups are ordered grokbit → skill → agent →
+  command (`CAPABILITY_KIND_ORDER`) — the bundled workflow leads, then the
+  user's own skills, with the CLI's own `/new`/`/compact`/`/resume` plumbing
+  last. The webview's
+  `capabilityGroupsView` (in `webview-helpers.js`) is the one pure view-model
+  rendered into both mounts: a row's primary text is always the item's plain
+  name (never the slash token), with the `/command` form and any argument hint
+  shown beside it as small chips; clicking a row seeds the composer (invocable),
+  opens its source file (non-invocable with a path), or does nothing (grok's
+  built-in agent types, which have neither). A second door lives beside the
+  composer (`#add-btn`'s popover → "Browse Grokbit Actions…") for
+  after the welcome canvas is gone. Both mounts carry a **Refresh** that re-posts
+  the same `listCapabilities` message — discovery re-scans the user's disk every
+  time, but the canvas renders from the payload that arrived at
+  `initialState`/reveal, so without it a skill written mid-session (by the user
+  *or* by the agent, which fires no editor save event) stayed invisible until a
+  tab switch. Off with `grok.showCapabilities`. See
+  [docs/plans/capability-surfacing-and-history-ux.md](../docs/plans/capability-surfacing-and-history-ux.md),
+  [docs/plans/session-tab-ux-overhaul.md](../docs/plans/session-tab-ux-overhaul.md),
+  and [docs/plans/actions-panel-layout-and-dynamic-capabilities.md](../docs/plans/actions-panel-layout-and-dynamic-capabilities.md).
+- **Toggle-shaped actions are a row SHAPE, not a capability kind.** The Actions
+  popover leads with a "Session controls" group holding an **Auto-accept**
+  switch. It is built by the pure `sessionToggleGroup` (`webview-helpers.js`) at
+  render time from the webview's own `state.currentModeId` and posts the existing
+  `setMode` — the host never produces this group, `src/capabilities.ts` is
+  untouched, and there is no fourth copy of the mode to keep in sync.
+  `buildCapabilityRow` branches on `item.control === "switch"`, deliberately
+  **not** on `item.kind`, preserving the rule that the renderer never knows the
+  kind strings. Auto-accept is one value of a tri-state mode, so the item names
+  its OFF target explicitly (`on` → `agent`, `off` → `yolo`; turning it on from
+  Plan mode is allowed and the description says so). **Popover only** — on the
+  welcome canvas the Session setup card's Mode row is directly beside the Actions
+  panel, and two controls for one piece of state on one screen is the thing this
+  mount policy exists to avoid.
 - **Generated media is path-based, not an ACP image block.** `/imagine` and
   `/imagine-video` write a file into the session dir and report its *path* as
   JSON-in-text on the completed tool result. The host parses the path, classifies

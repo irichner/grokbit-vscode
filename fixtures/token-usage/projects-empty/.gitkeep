@@ -1,0 +1,2 @@
+# An intentionally empty Claude projects root: proves a scan that finds nothing
+# leaves the committed ledger untouched instead of overwriting it with zeros.

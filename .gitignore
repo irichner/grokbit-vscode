@@ -7,3 +7,24 @@ out/
 .env
 __pycache__/
 *.py[cod]
+
+# Agent harness config — local-only, never committed and never shipped.
+# The suite this extension ships lives in resources/skills/ and is the only
+# skill set it distributes (docs/plans/grokbit-actions-and-bundled-skill-suite.md
+# § D4). These two directories are ALSO the provisioning target for that suite
+# at the home tier, so a workspace copy here is always a local override.
+# Both are excluded from the vsix by .vscodeignore as well.
+.claude/
+.grok/
+
+# Environment & secrets
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Dependencies / build output (adjust for your stack)
+dist/
+build/
+.venv/
+target/

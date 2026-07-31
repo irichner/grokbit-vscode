@@ -6,18 +6,21 @@ import {
   carrySessionName,
   classifyUserQueries,
   clearSessions,
+  composeTabTitle,
   deleteSessionDir,
   extractUserQueries,
   fallbackName,
   indexSessions,
   isEmptyPrimerSession,
+  isSafeSessionId,
+  isWithinDir,
   listSessions,
   readSessionEntries,
   readSessionTokenUsage,
-  readWorkspaceTokenUsage,
   sessionTokenEstimate,
-  mergeWorkspaceTokenUsage,
   sessionsDirFor,
+  shortEffort,
+  shortModelName,
   tabTitleFor,
   NEW_TAB_TITLE,
 } from "../src/sessions";
@@ -438,6 +441,71 @@ describe("readSessionEntries", () => {
   });
 });
 
+// LOW finding: an id from a webview `deleteSession` message reaches
+// path.join(dir, id) before a destructive rmSync/unlinkSync. path.join
+// normalizes ".." segments, so an unvalidated id could resolve OUTSIDE the
+// intended session directory. Not reachable today (ids come from readdirSync,
+// and CSP blocks script injection) — defense-in-depth, covering both stores
+// (grok's deleteSessionDir here; Claude's ClaudeSessionStore.remove in
+// session-store.test.ts).
+describe("isSafeSessionId", () => {
+  it("accepts a plain UUID-shaped id", () => {
+    expect(isSafeSessionId("0199a1b2-3c4d-7e5f-8a9b-0c1d2e3f4a5b")).toBe(true);
+  });
+
+  it("rejects a path separator (either OS's)", () => {
+    expect(isSafeSessionId("a/b")).toBe(false);
+    expect(isSafeSessionId("a\\b")).toBe(false);
+  });
+
+  it("rejects a crafted \"..\" traversal id", () => {
+    expect(isSafeSessionId("../../etc")).toBe(false);
+  });
+
+  it("rejects exactly \".\" and \"..\"", () => {
+    expect(isSafeSessionId(".")).toBe(false);
+    expect(isSafeSessionId("..")).toBe(false);
+  });
+
+  it("rejects an empty string", () => {
+    expect(isSafeSessionId("")).toBe(false);
+  });
+
+  it("rejects an embedded null byte", () => {
+    expect(isSafeSessionId("a\0b")).toBe(false);
+  });
+
+  it("accepts an id containing dots that aren't the whole segment (e.g. a filename-shaped id)", () => {
+    expect(isSafeSessionId("a.b.c")).toBe(true);
+  });
+});
+
+describe("isWithinDir", () => {
+  const dir = "/home/user/.grok/sessions/proj";
+
+  it("true for a direct child", () => {
+    expect(isWithinDir(path.join(dir, "abc"), dir)).toBe(true);
+  });
+
+  it("false for the dir itself", () => {
+    expect(isWithinDir(dir, dir)).toBe(false);
+  });
+
+  it("false for a parent-escaping path", () => {
+    expect(isWithinDir(path.join(dir, "..", "other-proj"), dir)).toBe(false);
+  });
+
+  it("false for a fully unrelated absolute path", () => {
+    expect(isWithinDir("/etc/passwd", dir)).toBe(false);
+  });
+
+  it("does not false-positive on a sibling whose name merely starts with \"..\" as text (not a real .. segment)", () => {
+    // path.relative(dir, dir/"..foo") = "..foo" — must NOT be treated as an
+    // escape just because the string happens to start with "..".
+    expect(isWithinDir(path.join(dir, "..foo"), dir)).toBe(true);
+  });
+});
+
 describe("deleteSessionDir", () => {
   it("removes the on-disk session directory", () => {
     const sessDir = dirFor("a");
@@ -453,6 +521,18 @@ describe("deleteSessionDir", () => {
   it("is a no-op when the directory is missing", () => {
     const fs = buildFs({});
     expect(() => deleteSessionDir({ fs, grokHome, cwd, id: "missing" })).not.toThrow();
+  });
+
+  it("refuses to delete outside the session directory for a crafted \"..\" id", () => {
+    const sessDir = sessionsDirFor(grokHome, cwd);
+    const victimDir = path.join(path.dirname(sessDir), "victim-project"); // a SIBLING of sessDir
+    const fs = buildFs({
+      [sessDir]: { isDir: true },
+      [victimDir]: { isDir: true },
+      [path.join(victimDir, "summary.json")]: { isDir: false, content: "{}" },
+    });
+    deleteSessionDir({ fs, grokHome, cwd, id: path.join("..", "victim-project") });
+    expect(fs.existsSync(victimDir)).toBe(true); // must survive — the crafted id was rejected
   });
 });
 
@@ -503,78 +583,6 @@ describe("sessionTokenEstimate", () => {
 
   it("ignores non-numeric values", () => {
     expect(sessionTokenEstimate({ contextTokensUsed: "12" as unknown as number })).toBe(0);
-  });
-});
-
-describe("readWorkspaceTokenUsage", () => {
-  const root = sessionsDirFor(grokHome, cwd);
-
-  it("sums every session's signals estimate for the workspace", () => {
-    const fs = buildFs({
-      [root]: { isDir: true },
-      [dirFor("a")]: { isDir: true },
-      [dirFor("b")]: { isDir: true },
-      [path.join(dirFor("a"), "signals.json")]: {
-        isDir: false,
-        content: JSON.stringify({ contextTokensUsed: 1000, totalTokensBeforeCompaction: 200 }),
-      },
-      [path.join(dirFor("b"), "signals.json")]: {
-        isDir: false,
-        content: JSON.stringify({ contextTokensUsed: 500 }),
-      },
-    });
-    const u = readWorkspaceTokenUsage({ fs, grokHome, cwd });
-    expect(u.total).toBe(1700);
-    expect(u.byId).toEqual({ a: 1200, b: 500 });
-  });
-
-  it("returns zero when the sessions root is missing", () => {
-    expect(readWorkspaceTokenUsage({ fs: buildFs({}), grokHome, cwd })).toEqual({
-      total: 0,
-      byId: {},
-    });
-  });
-
-  it("skips sessions without signals or with unreadable JSON", () => {
-    const fs = buildFs({
-      [root]: { isDir: true },
-      [dirFor("ok")]: { isDir: true },
-      [dirFor("bad")]: { isDir: true },
-      [dirFor("empty")]: { isDir: true },
-      [path.join(dirFor("ok"), "signals.json")]: {
-        isDir: false,
-        content: JSON.stringify({ contextTokensUsed: 10 }),
-      },
-      [path.join(dirFor("bad"), "signals.json")]: { isDir: false, content: "{not json" },
-    });
-    expect(readWorkspaceTokenUsage({ fs, grokHome, cwd })).toEqual({
-      total: 10,
-      byId: { ok: 10 },
-    });
-  });
-});
-
-describe("mergeWorkspaceTokenUsage", () => {
-  it("lifts the total when a live session exceeds its disk estimate", () => {
-    const disk = { total: 1000, byId: { a: 1000 } };
-    expect(mergeWorkspaceTokenUsage(disk, [{ id: "a", tokens: 1500 }])).toBe(1500);
-  });
-
-  it("adds live-only sessions not yet on disk", () => {
-    const disk = { total: 1000, byId: { a: 1000 } };
-    expect(mergeWorkspaceTokenUsage(disk, [{ id: "new", tokens: 250 }])).toBe(1250);
-  });
-
-  it("ignores lower live values and invalid entries", () => {
-    const disk = { total: 1000, byId: { a: 1000 } };
-    expect(
-      mergeWorkspaceTokenUsage(disk, [
-        { id: "a", tokens: 500 },
-        { id: null, tokens: 99 },
-        { tokens: 99 },
-        { id: "b", tokens: NaN },
-      ]),
-    ).toBe(1000);
   });
 });
 
@@ -663,6 +671,138 @@ describe("tabTitleFor", () => {
     // Truncation landing on a word boundary must not leave "word …".
     const title = tabTitleFor("twenty-three characters and then some more");
     expect(title).not.toMatch(/\s…$/);
+  });
+});
+
+// Compact model-family prefix for composeTabTitle's settings prefix. Model ids
+// aren't a clean [a-z-]+ charset (Claude's opus[1m] has brackets, grok's carries
+// a version suffix), so this takes the leading run of letters.
+describe("shortModelName", () => {
+  it("maps known ids to their family name", () => {
+    expect(shortModelName("grok-build")).toBe("Grok");
+    expect(shortModelName("sonnet")).toBe("Sonnet");
+    expect(shortModelName("haiku")).toBe("Haiku");
+  });
+
+  it("handles a bracketed id (opus[1m]) by stopping at the first non-letter", () => {
+    expect(shortModelName("opus[1m]")).toBe("Opus");
+  });
+
+  it("handles grok's versioned-id gotcha (grok-build-0.1) the same as the base id", () => {
+    expect(shortModelName("grok-build-0.1")).toBe("Grok");
+  });
+
+  it("falls back to the neutral default for an unknown/empty id", () => {
+    expect(shortModelName("123-no-leading-letters")).toBe("Grok");
+    expect(shortModelName("")).toBe("Grok");
+    expect(shortModelName(undefined)).toBe("Grok");
+  });
+
+  // Code-review finding: a fresh/resumed Claude tab used to read "Grok" until its
+  // first modelChanged (modelChanged is only emitted from setModel, never
+  // newSession/loadSession) — the fallback must be backend-aware, not always "Grok".
+  it("falls back to the CLAUDE backend's own neutral default when told it's a Claude tab", () => {
+    expect(shortModelName(undefined, "claude")).toBe("Claude");
+    expect(shortModelName("", "claude")).toBe("Claude");
+    expect(shortModelName("123-no-leading-letters", "claude")).toBe("Claude");
+  });
+
+  it("a known model id wins over the backend fallback regardless of backend", () => {
+    expect(shortModelName("sonnet", "claude")).toBe("Sonnet");
+    expect(shortModelName("grok-build", "claude")).toBe("Grok");
+  });
+
+  it("defaults to the grok fallback when backend is omitted (existing callers unaffected)", () => {
+    expect(shortModelName(undefined)).toBe("Grok");
+  });
+});
+
+describe("shortEffort", () => {
+  it("mirrors media/chat.js's shortEffort mapping", () => {
+    expect(shortEffort("minimal")).toBe("min");
+    expect(shortEffort("medium")).toBe("med");
+    expect(shortEffort("xhigh")).toBe("xhi");
+    expect(shortEffort("high")).toBe("hig"); // no special case — first 3 chars
+    expect(shortEffort("low")).toBe("low");
+    expect(shortEffort("none")).toBe("non");
+  });
+
+  it("empty/undefined (CLI default) yields no abbreviation", () => {
+    expect(shortEffort("")).toBe("");
+    expect(shortEffort(undefined)).toBe("");
+  });
+});
+
+// The tab-title settings prefix (Model·effort — Name). VS Code truncates tab
+// titles from the end, so the prefix must survive a narrow tab — the opposite
+// of the bare tabTitleFor, where the name is what's protected.
+describe("composeTabTitle", () => {
+  it("composes model·effort — name for a normal session", () => {
+    expect(composeTabTitle({ name: "Fix login bug", model: "sonnet", effort: "high" }))
+      .toBe("Sonnet·hig — Fix login bug");
+  });
+
+  it("renders the documented unnamed-session example (Grok·med — New)", () => {
+    expect(composeTabTitle({ name: undefined, model: "grok-build", effort: "medium" }))
+      .toBe("Grok·med — New");
+  });
+
+  it("omits the effort segment (and the middle dot) when effort is missing/empty", () => {
+    expect(composeTabTitle({ name: "Fix login bug", model: "grok-build", effort: "" }))
+      .toBe("Grok — Fix login bug");
+    expect(composeTabTitle({ name: "Fix login bug", model: "grok-build", effort: undefined }))
+      .toBe("Grok — Fix login bug");
+  });
+
+  it("truncates a very long session name but keeps the prefix intact", () => {
+    const long = "refactor the authentication helper across the whole API layer";
+    const title = composeTabTitle({ name: long, model: "grok-build", effort: "medium" });
+    expect(title.startsWith("Grok·med — ")).toBe(true);
+    expect(title).toContain("…");
+    expect(title.length).toBeLessThanOrEqual(34);
+  });
+
+  it("bounds a pathologically long model id instead of letting it crowd out the name", () => {
+    const wildModel = "reallylongmodelidentifierwithoutanydashesorbrackets";
+    const title = composeTabTitle({ name: "Fix login bug", model: wildModel, effort: "medium" });
+    // The prefix itself is capped …
+    const [prefix, rest] = title.split(" — ");
+    expect(prefix.length).toBeLessThanOrEqual(14);
+    // … and the name still gets a usable share of the title, not squeezed to nothing.
+    expect(rest).toBe("Fix login bug");
+  });
+
+  it("defaults to the new-tab placeholder when nothing is known yet", () => {
+    expect(composeTabTitle({})).toBe("Grok — New");
+  });
+
+  // Code-review finding: the three call sites that open a panel pass no model
+  // (it isn't known until the first modelChanged), so a fresh/resumed Claude tab
+  // must not read "Grok — New" — the backend field must flow into shortModelName.
+  it("renders the Claude backend's own fallback when no model is known yet", () => {
+    expect(composeTabTitle({ backend: "claude" })).toBe("Claude — New");
+    expect(composeTabTitle({ name: "Fix login bug", backend: "claude" })).toBe("Claude — Fix login bug");
+  });
+
+  it("still prefers a known model id over the backend fallback", () => {
+    expect(composeTabTitle({ name: "Fix login bug", model: "sonnet", effort: "high", backend: "claude" }))
+      .toBe("Sonnet·hig — Fix login bug");
+  });
+
+  it("defaults to the grok backend when omitted (existing callers unaffected)", () => {
+    expect(composeTabTitle({ name: "Fix login bug", effort: "medium" })).toBe("Grok·med — Fix login bug");
+  });
+
+  it("respects a custom maxLen for the total budget", () => {
+    const title = composeTabTitle({
+      name: "a very long session name that would normally run on and on",
+      model: "sonnet",
+      effort: "medium",
+      maxLen: 20,
+    });
+    expect(title.startsWith("Sonnet·med — ")).toBe(true);
+    // Even with a tight budget the name keeps its minimum share.
+    expect(title.length).toBeGreaterThan("Sonnet·med — ".length);
   });
 });
 

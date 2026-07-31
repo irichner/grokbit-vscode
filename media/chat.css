@@ -194,7 +194,7 @@ code {
 }
 .welcome-tagline {
   margin: 0;
-  max-width: 320px;
+  max-width: min(100%, 60ch);
   font-size: 12px;
   line-height: 1.45;
   color: var(--vscode-descriptionForeground);
@@ -206,109 +206,6 @@ code {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: 2px;
   border-radius: 2px;
-}
-
-/* Welcome starter cards — compact, progressive-disclosure entry points for
-   non-technical users. Power users can ignore and type. */
-.welcome-starters {
-  width: 100%;
-  max-width: 360px;
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  text-align: left;
-}
-.welcome-starters[hidden] { display: none; }
-.welcome-starters-heading {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--vscode-descriptionForeground);
-  text-align: center;
-}
-.welcome-starters-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.welcome-starter {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  width: 100%;
-  margin: 0;
-  padding: 9px 12px;
-  text-align: left;
-  font-family: inherit;
-  font-size: 12px;
-  line-height: 1.35;
-  color: var(--vscode-foreground);
-  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, #444));
-  border-radius: var(--radius, 6px);
-  cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
-}
-.welcome-starter:hover {
-  background: var(--vscode-list-hoverBackground);
-  border-color: var(--vscode-focusBorder, var(--vscode-editorWidget-border));
-}
-.welcome-starter:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
-  outline-offset: 1px;
-}
-.welcome-starter:active {
-  background: var(--vscode-list-activeSelectionBackground, var(--vscode-list-hoverBackground));
-}
-.welcome-starter:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-.welcome-starter-title {
-  font-weight: 600;
-  font-size: 12px;
-  color: var(--vscode-foreground);
-}
-.welcome-starter-desc {
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-}
-
-/* Studio E1 — business task chips under welcome starters */
-.welcome-tasks-heading {
-  margin-top: 4px;
-}
-.welcome-task-chips {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 6px;
-}
-.welcome-task-chip {
-  margin: 0;
-  padding: 5px 10px;
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1.3;
-  color: var(--vscode-foreground);
-  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, #444));
-  border-radius: 999px;
-  cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
-}
-.welcome-task-chip:hover {
-  background: var(--vscode-list-hoverBackground);
-  border-color: var(--vscode-focusBorder, var(--vscode-editorWidget-border));
-}
-.welcome-task-chip:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
-  outline-offset: 1px;
 }
 
 /* Studio E2 — Docs top-bar button + popover */
@@ -505,12 +402,6 @@ code {
   color: inherit;
 }
 
-/* Brief pulse when a starter points at the mic button. */
-.mic-btn.starter-pulse {
-  box-shadow: 0 0 0 2px var(--vscode-focusBorder);
-  border-radius: 50%;
-}
-
 /* Animated trailing ellipsis for transient status text ("Starting", "Thinking",
    "Updating Grok Build CLI", "Summarizing"). The dots are a pseudo-element so the
    element's textContent stays clean (the literal "..." is stripped at the call
@@ -538,7 +429,7 @@ code {
   gap: 10px;
   margin-top: 16px;
   text-align: left;
-  max-width: 320px;
+  max-width: min(100%, 560px);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -634,8 +525,10 @@ code {
 }
 .msg.user {
   align-self: flex-end;
-  min-width: 40%;
-  max-width: 80%;
+  /* A one-word message shouldn't render a 1200px slab on a 3000px-wide canvas
+     — clamp both bounds to a character measure alongside the percentage. */
+  min-width: min(40%, 32ch);
+  max-width: min(80%, 95ch);
   background: transparent;
   border: none;
   padding: 0;
@@ -1247,6 +1140,19 @@ body.thinking-hidden .msg.thinking { display: none; }
 /* ---- markdown in agent messages ---- */
 
 .msg.agent .body { white-space: normal; line-height: 1.55; }
+/* The one deliberate residual measure on an otherwise full-canvas tab (see
+   docs/plans/session-tab-ux-overhaul.md § Approach A3): continuous prose past
+   ~95 characters is genuinely hard to read at full canvas width. LEFT-ALIGNED
+   ONLY — margin-inline: 0, never `auto`. A centred cap is exactly the
+   ribbon-with-two-lakes this work exists to remove; this just stops a
+   paragraph from wrapping too wide while every sibling element (cards, tool
+   rows, code blocks, tables) still spans the full tab. */
+.msg.agent .body > p,
+.msg.agent .body li,
+.msg.agent .body > blockquote {
+  max-width: 95ch;
+  margin-inline: 0;
+}
 .msg.agent .body h1,
 .msg.agent .body h2,
 .msg.agent .body h3 {
@@ -1696,6 +1602,21 @@ textarea#input {
 .model-label-btn:hover { color: var(--vscode-foreground); }
 .model-label-btn[hidden] { display: none; }
 
+/* Backend chip (Grok Build / Claude Code) beside the model chip — click opens a
+   small popover to flip agents (see openBackendPopover in chat.js). Same sizing
+   idiom as .model-label-btn; `[hidden]` needs the same explicit override. */
+.backend-label-btn {
+  color: var(--vscode-descriptionForeground);
+  max-width: 90px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+.backend-label-btn:hover { color: var(--vscode-foreground); }
+.backend-label-btn[hidden] { display: none; }
+/* Claude tabs get a quiet accent so the two backends are scannable at a glance
+   without a loud badge — mirrors backendBadgeLabel's "quiet for grok" idiom. */
+.backend-label-btn.backend-claude { color: var(--vscode-charts-purple, var(--vscode-descriptionForeground)); }
+
 /* ---- gear popover: model + effort row ---- */
 
 .gear-popover { min-width: 230px; }
@@ -1849,6 +1770,412 @@ textarea#input {
 .mode-popover-item.disabled { opacity: 0.45; cursor: not-allowed; }
 .mode-popover-item.disabled:hover { background: transparent; }
 .mode-item-disabled-note { display: block; font-size: 10px; color: var(--vscode-descriptionForeground); opacity: 0.85; margin-top: 3px; line-height: 1.3; white-space: normal; }
+
+/* Three-line guide strip above #welcome-grid (docs/plans/
+   session-tab-ux-overhaul.md § Approach C) — plain-English orientation for a
+   user who won't type `/`, built from the pure welcomeGuide() in
+   media/webview-helpers.js. Its own intrinsic grid, same auto-fit/
+   min(100%, …) pattern as .welcome-grid just below, so the three lines sit
+   side by side on a wide canvas instead of stacking into a tall left margin —
+   deliberately no media-query breakpoint (see the .welcome-grid comment for
+   why one would lie under grok.chatFontScale's zoom). Rows are plain text,
+   never interactive. */
+.welcome-guide {
+  width: 100%;
+  text-align: left; /* .welcome sets text-align: center */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 4px 14px;
+  margin-bottom: 4px;
+}
+.welcome-guide[hidden] { display: none; }
+.welcome-guide-row {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* ---- welcome canvas: full-tab-width flex row ----
+   docs/plans/session-tab-ux-overhaul.md § Approach A1/A2 +
+   docs/plans/actions-panel-layout-and-dynamic-capabilities.md (WP1). The tab
+   uses the whole editor canvas by default — no width setting, no cap.
+
+   This was an auto-fit grid, which GAPPED: auto-fit only collapses EMPTY
+   repetitions, so with exactly two children there were always two equal 1fr
+   tracks of (W − 10)/2, while the setup card is capped at its 420px form
+   measure. The dead space was (W − 10)/2 − 420 — zero up to W ≈ 850px, ~185px
+   at 1200px, ~545px at 1920px. A wrapping flex row instead lets the card
+   freeze at its cap and hands ALL the remaining width to the Actions panel,
+   with no threshold of its own to keep in sync.
+
+   min(100%, …) in the flex-basis is mandatory for the same reason it was
+   mandatory inside minmax(): a bare 300px basis overflows a ~250px
+   split-editor tab. align-items: stretch is deliberate, not the default we
+   inherited — the two panels share a height so the pair reads as one flush
+   rectangle. The extra height lands inside whichever card is shorter
+   (normally the setup card); its content stays top-pinned because it is a
+   flex column with the default justify-content: flex-start, so do NOT add a
+   justify-content or a growing spacer to "fill" it. Stacked layout is
+   unaffected — align-items applies per flex LINE, and a wrapped item is alone
+   on its line. No media queries, ever (body { zoom } makes breakpoints lie —
+   and the source check counts the literal at-rule token, so don't type it). */
+.welcome-grid {
+  width: 100%;
+  text-align: left; /* .welcome sets text-align: center */
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: stretch;
+}
+.welcome-grid > .session-setup-card {
+  flex: 1 1 min(100%, 300px);
+  max-width: 420px; /* form measure — see survey */
+}
+.welcome-grid > .capabilities-panel {
+  flex: 1 1 min(100%, 300px);
+  min-width: 0; /* absorbs everything the capped card leaves behind */
+}
+
+/* ---- per-tab session settings (Agent / Model / Thinking / Mode) ----
+   Shared rows rendered from the ONE sessionSetupModel builder (see
+   media/webview-helpers.js) into TWO mounts: the new-tab welcome card
+   (.session-setup-card) and the composer quick-settings popover
+   (.session-settings-popover) — docs/plans/claude-code-backend.md § WP7. */
+
+.session-setup-card {
+  width: 100%;
+  min-width: 0;
+  margin-top: 10px;
+  padding: 10px 12px 12px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, #444));
+  border-radius: var(--radius, 6px);
+}
+.session-setup-card[hidden] { display: none; }
+.session-setup-heading {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+}
+.session-setup-footer {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* ---- capability browser (slash commands, skills, agents) ----
+   Two mounts, one pure builder (capabilityGroupsView in webview-helpers.js):
+   the new-tab welcome canvas (.capabilities-panel, below .session-setup-card)
+   and the top-bar Actions popover (.capabilities-popover, reusing the
+   .toolbar-popover/.history-popover/.studio-popover chrome the Docs popover
+   already uses) — docs/plans/session-tab-ux-overhaul.md § Approach B.
+   Both mounts share .capability-group/.capability-row for the actual rows.
+   `#capabilities-btn[hidden]` needs an explicit display:none, the same
+   `.toolbar-btn` / `[hidden]` gotcha documented above for `.model-label-btn` —
+   grok.showCapabilities: false hides it via the `hidden` attribute. */
+#capabilities-btn[hidden] { display: none; }
+
+.capabilities-panel {
+  width: 100%;
+  min-width: 0;
+  margin-top: 10px;
+  padding: 8px 10px 10px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, #444));
+  border-radius: var(--radius, 6px);
+}
+.capabilities-panel[hidden] { display: none; }
+/* Heading + one-line explainer above the first group — says what clicking a
+   row actually does, which was previously invisible (docs/plans/
+   session-tab-ux-overhaul.md § Approach B bullet 4). Heading mirrors
+   .session-setup-heading's treatment so the two welcome-canvas cards read as
+   one family; the explainer relies on the .muted utility class for color. */
+.capabilities-heading {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+}
+/* Heading row: the heading text plus a Refresh affordance. Discovery already
+   scans the user's own disk on every request, but the welcome canvas renders
+   from a payload that arrived at initialState/reveal time — so a skill the
+   user (or the agent) writes while the canvas is on screen was invisible
+   until they switched tabs and back. The button re-posts the existing
+   listCapabilities message; there is no new host plumbing behind it. */
+.capabilities-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.capabilities-refresh {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 10.5px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--vscode-textLink-foreground, var(--vscode-descriptionForeground));
+  cursor: pointer;
+}
+.capabilities-refresh:hover { text-decoration: underline; }
+.capabilities-refresh:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+/* The shared .studio-popover-head is a plain text block; only the Actions
+   popover puts an action in it, so the flex row is a modifier rather than a
+   change to every popover head. */
+.studio-popover-head.with-action {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.capabilities-explainer {
+  margin: 0;
+  padding: 0 2px;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+.capabilities-empty {
+  margin: 0;
+  padding: 2px 2px 0;
+  font-size: 11px;
+}
+
+.capability-group { display: flex; flex-direction: column; gap: 2px; }
+.capability-group-title {
+  margin: 0;
+  padding: 2px 2px 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+}
+/* Intrinsic grid, not a flex column — this is what actually fills a wide
+   canvas: a group with 14 skills lays out as 14 rows across N columns
+   instead of one tall column. min(100%, …) inside minmax() is mandatory
+   (see .welcome-grid above); degrades to a single column below the min
+   track, byte-for-byte today's flex-column rendering. */
+.capability-group-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 2px 14px;
+}
+.capability-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.capability-row:hover { background: var(--vscode-list-hoverBackground); }
+/* An inert row (no invoke, no path — e.g. a built-in agent type) has no click
+   handler at all; a hover highlight would still make it look clickable. */
+.capability-row.inert { cursor: default; }
+.capability-row.inert:hover { background: none; }
+/* Locked (rendered during the startup/priming window instead of hiding the
+   panel — docs/plans/session-tab-ux-overhaul.md § Approach C) gets the exact
+   same no-pointer/no-hover treatment as .inert: the row has no click handler
+   installed yet, so a hover affordance would be a lie. */
+.capability-row.locked { cursor: default; }
+.capability-row.locked:hover { background: none; }
+/* A toggle row is flipped in place rather than seeded into the composer, so
+   the switch sits at the row's trailing edge. Layout only — the switch visuals
+   are the gear popover's existing .popover-switch, reused verbatim. */
+.capability-row-toggle .capability-row-head { justify-content: space-between; }
+.capability-row-toggle .popover-switch { flex: none; }
+/* Plain name (primary) + the slash form beside it as a small teaching chip —
+   never the reverse (docs/plans/session-tab-ux-overhaul.md § Approach B
+   bullet 2). min-width: 0 lets .capability-row-name still ellipsis inside
+   this flex row instead of forcing the chip off the edge. */
+.capability-row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.capability-row-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--vscode-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.capability-row-cmd {
+  flex-shrink: 0;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 10.5px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+}
+.capability-row-desc {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Argument hint (frontmatter argument-hint / the ACP command's input.hint) —
+   without this a click seeds a bare "/adr " with no clue what to type next. */
+.capability-row-hint {
+  font-size: 10.5px;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Workspace-tier provenance — same small-chip idiom as .history-row-backend
+   (VS Code badge tokens), shown only for a "Project (…)" item since
+   dedupeByPriority is workspace-first and a repo-authored skill can silently
+   shadow a same-named one under the user's home dir. */
+.capability-row-source {
+  align-self: flex-start;
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  white-space: nowrap;
+}
+.capability-more {
+  margin: 0;
+  padding: 3px 6px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.75;
+}
+/* Centred below a group's rows, past its featured count (docs/plans/
+   actions-panel-featured-capabilities.md). Appended AFTER
+   .capability-group-items, not inside it — the items container is an
+   auto-fit grid, so an in-grid link would render as a stray cell. No
+   breakpoint media query — this element has no pixel floor to clamp in
+   the first place (see the standing zoom rule at the top of this file). */
+.capability-expand {
+  width: 100%;
+  margin: 2px 0 4px;
+  padding: 3px 6px;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: center;
+  font-size: 11px;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+}
+.capability-expand:hover {
+  color: var(--vscode-textLink-activeForeground);
+  text-decoration: underline;
+}
+/* Parity with .capabilities-refresh above — keyboard focus is otherwise
+   invisible on this button. */
+.capability-expand:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.session-settings-popover { min-width: 260px; padding: 8px 10px; }
+
+.session-settings-rows { display: flex; flex-direction: column; gap: 8px; }
+.session-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.session-settings-label {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--vscode-descriptionForeground);
+}
+.session-settings-control {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+/* Segmented control (Agent / Mode rows) — reads as one connected unit. */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--vscode-editorWidget-border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.segmented-btn {
+  padding: 3px 8px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--vscode-editorWidget-border);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.segmented-btn:last-child { border-right: none; }
+.segmented-btn:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
+.segmented-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.segmented-btn.active {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+}
+.segmented-btn.disabled,
+.segmented-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Model dropdown (Model row) — a native <select> for built-in keyboard support.
+   The closed box ellipsizes a long model name instead of overflowing the row
+   (VS Code webviews are always Chromium, which supports this on <select>). */
+.session-settings-select {
+  max-width: 150px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 3px 6px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-dropdown-background, var(--vscode-input-background));
+  border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border, var(--vscode-editorWidget-border)));
+  border-radius: 4px;
+}
+.session-settings-select:hover { border-color: var(--vscode-focusBorder, var(--vscode-dropdown-border)); }
+.session-settings-select:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.session-settings-select.disabled,
+.session-settings-select:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ---- chips (inline in toolbar-left) ---- */
 
@@ -2497,7 +2824,15 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
 .history-row-dot.dot-unread { background: var(--vscode-charts-green); }
 .history-row-dot.dot-error { background: var(--vscode-errorForeground); }
 .history-row-main { flex: 1; min-width: 0; }
+.history-row-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
 .history-row-name {
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
   color: var(--vscode-foreground);
   overflow: hidden;
@@ -2506,6 +2841,21 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
 }
 .history-row.active .history-row-name {
   color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+}
+/* Backend badge on a merged history row (grok + Claude Code) — labels BOTH
+   backends (see backendBadgeLabel), a deliberate reversal of the original
+   "quiet for grok" idiom, for this row only: an interleaved list needs
+   per-row disambiguation. The status-bar HUD stays quiet for grok on purpose
+   (see CLAUDE.md § Status-bar HUD) — the two surfaces diverge intentionally. */
+.history-row-backend {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  white-space: nowrap;
 }
 .history-row-meta {
   font-size: 11px;
@@ -2768,6 +3118,15 @@ mjx-container[display="true"] {
   max-height: none;
   overflow-y: auto;
 }
+/* Muted notice at the bottom of the Recent list once LAUNCHER_MAX_ROWS is hit —
+   mirrors .history-more's quiet, centered styling. */
+.launcher-list-notice {
+  padding: 8px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  text-align: center;
+  opacity: 0.7;
+}
 
 /* The black hole logo lives inside the New session button (left of the label).
    currentColor ink so it follows the button's own foreground in any theme. */
@@ -2784,4 +3143,50 @@ mjx-container[display="true"] {
   background-color: currentColor;
   -webkit-mask: var(--logo) center / contain no-repeat;
   mask: var(--logo) center / contain no-repeat;
+}
+
+/* New-session split button: the primary "New session" action plus a caret that
+   opens an explicit Grok/Claude choice (docs/plans/claude-code-backend.md §
+   WP3) — same idea as VS Code's own split "New File" buttons. */
+.launcher-new-split {
+  position: relative;
+  display: flex;
+}
+.launcher-new-split .launcher-new-btn {
+  flex: 1 1 auto;
+  /* Overrides .launcher-head .onb-action's width:100% (same specificity, later
+     in the cascade) — this button shares its row with the caret button now. */
+  width: auto;
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+/* Deliberately NOT .onb-action — that class is forced to width:100% inside
+   .launcher-head (higher-specificity descendant selector), which would fight
+   this button's fixed width. Same colors/radius, styled standalone instead. */
+.launcher-new-caret {
+  flex: 0 0 auto;
+  width: 22px;
+  min-width: 22px;
+  padding: 0;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  border-left: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-right-radius: 4px;
+  border-bottom-right-radius: 4px;
+  cursor: pointer;
+}
+.launcher-new-caret:hover { background: var(--vscode-button-hoverBackground); }
+.launcher-new-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  left: auto;
+  min-width: 180px;
+  max-width: none;
 }

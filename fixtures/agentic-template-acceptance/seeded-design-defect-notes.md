@@ -17,7 +17,7 @@ Against **sample-ui** (preferred in this repo) or any real frontend component:
 
 ## Run
 
-1. `/post-change-accuracy-protocol` on the branch — UI changed, so the UI verification
+1. `/implement` accuracy protocol on the branch — UI changed, so the UI verification
    step is required (not skippable).
 2. Whoever judges design must `read_file` `.grok/docs/ui-design-standards.md` first.
 3. Observable check: open `sample-ui/index.html` and inspect the seeded state.

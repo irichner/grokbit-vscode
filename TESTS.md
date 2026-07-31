@@ -257,12 +257,28 @@ happy-dom test locking in the native-Windows regressions this build fixed (plus 
 
 ---
 
+## Python aggregator (`scripts/aggregate_token_usage.py`)
+
+The development-token ledger behind the launcher's `N tokens` figure is produced by a Python script (`npm run metrics:tokens`), and is verified by its **own fixture suite**, run by hand:
+
+```bash
+python scripts/verify_token_aggregator.py     # 13 checks, stdlib only, ~instant
+```
+
+It drives `fixtures/token-usage/` — a synthetic Claude transcripts tree plus a synthetic grok sessions tree, with numbers small enough to check by hand (see that directory's README for the expected totals) — and writes only into a temp directory. It covers the cases that actually bite: streaming responses deduped to one count, all four `usage` fields summed (omitting the two cache fields understates by orders of magnitude), nested `subagents/**` and `subagents/workflows/wf_*/**` transcripts included, a *same-named* subagent file under two parent sessions attributed to each record's own `sessionId` rather than to the file path, `encodeURIComponent` workspace-key decoding with case-variant and subdirectory roots, merge monotonicity (a pruned transcript never lowers the committed total) and idempotency, an empty scan writing nothing at all, malformed/blank/non-assistant lines skipped without raising, the generated `.ts` staying a data-only module, and — load-bearing for a public repo — the ledger carrying **no free text**.
+
+**It is deliberately not in `npm test`, and CI stays Python-free.** CI runs `npm ci && npm test && npm run package` on a clean Ubuntu box with no Python guarantee and, more importantly, no transcripts to aggregate; adding a Python step would put a maintainer-machine-only tool on the critical path of every push for a number that only changes at release time. Layer 1's guard against a bad generator run is `test/token-metrics.test.ts`, which asserts the *committed* constant's shape (finite non-negative integers, a parseable ISO stamp, no logic in the module) — that runs everywhere, every time.
+
+---
+
 ## Running
 
 ```bash
 npm test            # layer 1 — grok-free, what CI runs
 npm run test:watch  # TDD loop
 npm run test:live   # layer 2 — real grok, on-demand pre-release gate (run on request)
+
+python scripts/verify_token_aggregator.py   # token-ledger tooling — manual, not in CI
 ```
 
 Layer 1 runs in a few seconds with no network, no `grok` binary, and no fixtures, so it's suitable for pre-commit hooks and CI. Layer 2 needs an authenticated `grok` on PATH (or `GROK_BIN=<path>`), network, and a subscription for the media tests — it's the **pre-release** checklist, run on request, never on commit.

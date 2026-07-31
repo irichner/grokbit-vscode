@@ -5,8 +5,22 @@ import * as path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { AcpClient, EffortLevel, ExitPlanRequest, PermissionRequest, QuestionRequest } from "./acp";
+import { BackendId, CLAUDE_BACKEND, GROK_BACKEND, backendSpec, buildGrokAgentArgs } from "./backends";
+import {
+  buildClaudeAdapterArgv,
+  buildClaudeAdapterEnv,
+  checkClaudeAuthStatus,
+  defaultClaudeAdapterSearchRoots,
+  detectClaudeCredentialOverrides,
+  installClaudeAdapter,
+  locateClaudeAdapter,
+  maskEmail,
+  redactNpmOutput,
+  truncateTail,
+} from "./claude-locator";
+import { filterDotEnv } from "./env-filter";
 import { Session, SessionStatus } from "./session";
-import { computeDot, Dot } from "./session-pool";
+import { computeDot, Dot, shouldRecycleEmptySession } from "./session-pool";
 import { PanelRouter } from "./panel-router";
 import { resolveVoiceKey, parseVoiceCommand, DEFAULT_SEND_PHRASE } from "./voice";
 import { VoiceRecorder, transcribeAudio, resolveWindowsAudioDevice } from "./voice-recorder";
@@ -51,7 +65,7 @@ import {
   toggleChip,
 } from "./chips";
 import { buildPrompt } from "./prompt-builder";
-import { parseFileRef, shouldReadFileInline } from "./file-ref";
+import { isUsableFilePath, parseFileRef, shouldReadFileInline } from "./file-ref";
 import { pickRejectOption, shouldRejectPermission } from "./plan-gate";
 import {
   selectWorkspaceDocs,
@@ -63,28 +77,45 @@ import { appendPlanEntry, decideRestoreState } from "./plan-restore";
 import { planReviewFileBaseName, sanitizePlanReviewFilePart } from "./plan-review";
 import { GROK_PRIMER, isPrimerText } from "./grok-primer";
 import {
-  SessionListEntry,
   SessionMetaOverrides,
   carrySessionName,
-  clearSessions,
+  composeTabTitle,
   defaultFs,
   deleteSessionDir,
   fallbackName,
   indexSessions,
   isEmptyPrimerSession,
-  mergeWorkspaceTokenUsage,
-  readSessionEntries,
   readSessionTokenUsage,
-  readWorkspaceTokenUsage,
   resolveGrokHome,
   sessionsDirFor,
-  tabTitleFor,
 } from "./sessions";
+import { DEV_TOKENS_GENERATED_AT, DEV_TOKENS_TOTAL } from "./token-metrics";
+import {
+  ClaudeSessionStore,
+  GrokSessionStore,
+  SessionStore,
+  SessionStoreListEntry,
+  buildMergedSessionsPage,
+  daysToSinceMs,
+  defaultClaudeFs,
+  resolveClaudeHome,
+} from "./session-store";
+import {
+  CAPABILITY_ROOTS,
+  CapabilityDirEntry,
+  CapabilityFsLike,
+  buildCapabilityGroups,
+  scanCapabilityRoots,
+} from "./capabilities";
+import { applySuiteKind, suiteTargets } from "./skill-suite";
 
 type WebviewMsg =
   | { type: "ready" }
   | { type: "send"; text: string; chips: FileChip[] }
-  | { type: "newSession" }
+  | { type: "newSession"; backend?: BackendId }
+  | { type: "switchBackend"; backend: BackendId }
+  | { type: "installClaudeAdapter" }
+  | { type: "runClaudeLogin" }
   | { type: "cancel" }
   | { type: "pickModel" }
   | { type: "setMode"; modeId: "agent" | "plan" | "yolo" }
@@ -112,16 +143,17 @@ type WebviewMsg =
   | { type: "logout" }
   | { type: "checkGrokUpdate" }
   | { type: "updateGrok" }
-  | { type: "recheckConnection" }
+  | { type: "recheckConnection"; backend?: BackendId }
   | { type: "listSessions"; offset?: number; limit?: number; query?: string }
-  | { type: "resumeSession"; id: string }
+  | { type: "resumeSession"; id: string; backend?: BackendId }
   | { type: "renameSession"; id: string; name: string }
-  | { type: "deleteSession"; id: string; name?: string }
+  | { type: "deleteSession"; id: string; name?: string; backend?: BackendId }
   | { type: "clearAllSessions" }
   | { type: "pickFile" }
   | { type: "voiceStart" }
   | { type: "voiceStop" }
-  | { type: "listWorkspaceDocs" };
+  | { type: "listWorkspaceDocs" }
+  | { type: "listCapabilities" };
 
 const SESSION_META_KEY = "grok.sessionMeta";
 /** globalState key for the anonymous per-install telemetry GUID (survives updates). */
@@ -131,8 +163,17 @@ const STATUS_BAR_COMMAND = "grok.revealActiveSession";
 
 // History pagination: rows fetched per "page" (initial open + each load-more / search page).
 const SESSION_PAGE_SIZE = 100;
-/** Activity-bar launcher shows a short recent list only (full history lives in the chat popover). */
-const LAUNCHER_HISTORY_LIMIT = 7;
+/** Activity-bar launcher's default page size — it pages through its windowed history
+ *  (see `launcherHistoryDays`) rather than the old hard 7-row cap. */
+const LAUNCHER_PAGE_SIZE = 50;
+/** Hard ceiling on rows the launcher will ever render/auto-load, even inside the
+ *  window — stops unbounded DOM growth without a virtualization layer (see the
+ *  plan's "What bounds the list"). Also the cap `postLauncherSessions` applies to
+ *  the CLIENT's own requested `limit` — the sticky-window refresh (see
+ *  `media/launcher.js`) re-requests the WHOLE loaded window in one call, so the cap
+ *  here must be this ceiling, not `LAUNCHER_PAGE_SIZE`, or that refresh would
+ *  silently truncate a scrolled-in window back to one page. */
+const LAUNCHER_MAX_ROWS = 500;
 
 // Records the extension version at the last grok-CLI auto-update check, so the
 // silent `grok update` fires once per extension upgrade and never on a fresh
@@ -195,18 +236,15 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
   /** Session↔panel delivery core (ready gate, buffer, replay, opening dedupe). */
   private router = new PanelRouter<Session>();
   /**
-   * Cache of parsed session metadata for the history popover, keyed by session id. Each value
-   * remembers the `summary.json` mtime it was read at, so a cheap `indexSessions` stat pass can
-   * tell which entries are stale and re-read only those — the rest are reused across popover opens,
-   * load-more pages, and searches. Invalidated per id on rename/delete; the whole map is disposable
-   * (it's just a read cache, never a source of truth).
+   * Cache of parsed session metadata for the history popover, keyed by session id — shared across
+   * BOTH backends (grok + Claude ids don't collide, each carries its own `backend` field via
+   * {@link SessionStoreListEntry}). Each value remembers the mtime it was read at (grok:
+   * `summary.json`, Claude: the `.jsonl` itself), so a cheap stat-only index pass can tell which
+   * entries are stale and re-read only those — the rest are reused across popover opens, load-more
+   * pages, and searches. Invalidated per id on rename/delete; the whole map is disposable (it's
+   * just a read cache, never a source of truth).
    */
-  private sessionCache = new Map<string, { mtimeMs: number; entry: SessionListEntry }>();
-  /**
-   * Cached project-lifetime token estimate for the launcher header. Refreshed
-   * on launcher ready / turn complete / session delete — not on every status-bar tick.
-   */
-  private lifetimeTokensCache?: number;
+  private sessionCache = new Map<string, { mtimeMs: number; entry: SessionStoreListEntry }>();
   /**
    * Soft bound on live `grok agent stdio` processes. An open tab is a visible,
    * user-owned thing, so nothing is ever silently killed (the old time/LRU
@@ -301,9 +339,17 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
       if (e.affectsConfiguration("grok.compactActivity")) {
         this.postCompactActivity();
       }
-      if (e.affectsConfiguration("grok.defaultEffort")) {
-        this.updateStatusBar(); // the HUD shows the effort level
+      if (e.affectsConfiguration("grok.showCapabilities")) {
+        this.postShowCapabilities();
       }
+      if (e.affectsConfiguration("grok.launcherHistoryDays")) {
+        // Re-push the launcher's window immediately — a settings edit shouldn't
+        // need a reload to take effect.
+        this.postLauncherSessions();
+      }
+      // grok.defaultEffort is now only the seed for a brand-new tab's
+      // session.effort (see startSession) — the status bar reads the focused
+      // session's own effort, so a config change alone no longer changes it.
     });
   }
 
@@ -330,65 +376,297 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
     switch (msg.type) {
       case "ready":
         this.postLauncherSessions();
-        this.postLauncherMeta({ refresh: true });
+        this.postLauncherMeta();
         break;
       case "listSessions":
-        // Always hard-cap the activity-bar list (ignore a larger client limit).
+        // Honor the client's own offset/limit — normal paging AND the sticky-window
+        // refresh (which re-requests the whole loaded window in one call);
+        // postLauncherSessions caps the limit at LAUNCHER_MAX_ROWS regardless.
         this.postLauncherSessions({
           offset: msg.offset,
-          limit: LAUNCHER_HISTORY_LIMIT,
+          limit: msg.limit,
           query: msg.query,
         });
         break;
       case "resumeSession":
-        await this.openTabForId(msg.id);
+        await this.openTabForId(msg.id, msg.backend);
         break;
       case "newSession":
-        await this.newTab();
+        // Explicit backend (the launcher's split New menu) wins; a bare click
+        // (the primary button) falls through to newTab's own default resolution.
+        await this.newTab(msg.backend);
         break;
       case "renameSession":
         this.renameSession(msg.id, msg.name);
         break;
       case "deleteSession":
-        await this.deleteSession(msg.id, msg.name);
+        await this.deleteSession(msg.id, msg.name, msg.backend);
         break;
       case "clearAllSessions":
         await this.clearAllSessions();
         break;
       case "runInstallCmd":
       case "runGrokLogin":
-        // Session-free onboarding actions (open a terminal) — share the panel path.
+      case "installClaudeAdapter":
+      case "runClaudeLogin":
+        // Session-free onboarding actions (open a terminal / run the adapter
+        // install) — share the panel path.
         await this.onMessage(msg, new Session());
         break;
       case "recheckConnection":
-        // Signed-out/missing-CLI recheck from the launcher: open a fresh tab —
+        // Signed-out/missing-CLI/missing-adapter recheck from the launcher: open
+        // a fresh tab on the SAME backend the failing onboarding card was for —
         // its startSession is the connection check, and it shows the outcome.
-        await this.newTab();
+        await this.newTab(msg.backend);
         break;
     }
   }
 
   // ---------- panel (editor tab) lifecycle ----------
 
-  /** Open a fresh session in a new editor tab and spawn its grok process. */
-  async newTab(): Promise<void> {
+  /** `grok.defaultBackend` for a tab that didn't get an explicit backend (the
+   *  panel's own "+" button, `grok.newSession`, etc.) — the launcher's split New
+   *  menu always passes an explicit choice instead of going through this. */
+  private defaultBackend(): BackendId {
+    const v = vscode.workspace.getConfiguration("grok").get<string>("defaultBackend", GROK_BACKEND.id);
+    return v === CLAUDE_BACKEND.id ? CLAUDE_BACKEND.id : GROK_BACKEND.id;
+  }
+
+  /**
+   * Seed `session.effort` from `grok.defaultEffort` — `undefined` is the "not
+   * yet chosen" marker, so an already-seeded session (a same-tab restart
+   * triggered by `setEffort`, or a repeat call) keeps its own value instead of
+   * reverting to the config default. No-op for Claude (`CLAUDE_EFFORT_LEVELS`
+   * is empty — no effort axis at all).
+   *
+   * Called from `newTab`/`openTabForId`/`restorePanel` BEFORE the panel opens,
+   * in addition to `startSession`'s own identical seeding (kept there too, so
+   * a caller that reaches `startSession` WITHOUT going through those three
+   * entry points — `switchBackend`'s post-flip restart, which resets `effort`
+   * to `undefined` first — still reseeds correctly). The early call matters
+   * for a `pendingStart` tab (serializer-restored background tab, CLI-update
+   * respawn): `postPanelConfig`'s `initialState.effort` is posted on the very
+   * first `ready`, which fires BEFORE the deferred `startSession` — without
+   * seeding this early, a restored background tab showed no effort on the
+   * composer chip/tab title until its first reveal actually spawned it, even
+   * though the eventual spawn used the right `--reasoning-effort` all along.
+   */
+  private seedSessionEffort(session: Session): void {
+    if (session.backend !== GROK_BACKEND.id || session.effort !== undefined) return;
+    const defaultEffortStr = vscode.workspace.getConfiguration("grok").get<string>("defaultEffort", "");
+    session.effort = defaultEffortStr ? (defaultEffortStr as EffortLevel) : undefined;
+  }
+
+  /** Extension-managed install dir for the `@zed-industries/claude-code-acp`
+   *  adapter (~120 MB, never bundled — see src/claude-locator.ts § Packaging
+   *  decision). Provisioned on demand by the missing-adapter onboarding card's
+   *  Install action, once per machine. */
+  private claudeAdapterInstallRoot(): string {
+    return path.join(this.context.globalStorageUri.fsPath, "claude-adapter");
+  }
+
+  /**
+   * Best-effort `claude auth status --json` snapshot for the composer's backend
+   * chip, so it's evident the user's SUBSCRIPTION — not an inherited API key —
+   * is what's being billed (see docs/plans/claude-code-backend.md §
+   * Authentication). Spawns the real `claude` CLI (or the configured
+   * `grok.claude.executablePath`); failures are swallowed — the chip just
+   * falls back to showing the backend label with no account detail.
+   *
+   * **Async, void-fired.** `checkClaudeAuthStatus` used to spawn synchronously
+   * (`execFileSync`), which froze the WHOLE extension host for ~0.5–2s on
+   * every Claude session start for a value that only ever feeds a tooltip.
+   * `gen` guards the async result against a session that restarted or was
+   * torn down while the check was in flight (same pattern `startSession`
+   * already uses for every other post-await step).
+   *
+   * **`env` must be the SAME env this session was actually spawned with**
+   * (`startSession`'s `buildClaudeAdapterEnv` result) — checking with the raw
+   * extension-host env instead is a consistency bug: it could report
+   * API-key auth from an inherited `ANTHROPIC_API_KEY` even though the real
+   * spawn had that key stripped and used OAuth. It also feeds
+   * `detectClaudeCredentialOverrides` so the disclosure reflects what's
+   * REALLY in effect, not what merely happened to be inherited pre-strip.
+   *
+   * **Disclosure over silence.** `session.claudeAccount` is set whenever
+   * EITHER the auth check succeeds OR a credential/routing override is
+   * present — not just on a successful login — so a broken/misconfigured
+   * gateway (auth check fails, `ANTHROPIC_BASE_URL` still set) still surfaces
+   * which override is active instead of going silent.
+   */
+  private async refreshClaudeAccount(session: Session, gen: number, env: NodeJS.ProcessEnv): Promise<void> {
+    try {
+      const claudeBin = vscode.workspace.getConfiguration("grok").get<string>("claude.executablePath", "") || undefined;
+      const status = await checkClaudeAuthStatus(claudeBin, env);
+      if (gen !== session.gen) return;
+      const overrides = detectClaudeCredentialOverrides(env);
+      session.claudeAccount = status.loggedIn || overrides.length
+        ? {
+            email: status.email,
+            subscriptionType: status.subscriptionType,
+            authMethod: status.authMethod,
+            apiProvider: status.apiProvider,
+            overrides,
+          }
+        : undefined;
+      if (session.claudeAccount) {
+        const overrideNote = overrides.length ? ` — env overrides in effect: ${overrides.join(", ")}` : "";
+        this.output.appendLine(
+          // Masked — an email is PII a user might paste unredacted into a bug
+          // report; the composer chip's tooltip still shows it in full.
+          `[claude] signed in as ${maskEmail(session.claudeAccount.email) ?? "?"} (${session.claudeAccount.subscriptionType ?? "unknown plan"})${overrideNote}`,
+        );
+        // Same shape as replayInto's derived backendChanged — one webview
+        // handler covers both the initial ready and this later live update.
+        this.postTo(session, {
+          type: "backendChanged",
+          backend: session.backend,
+          label: backendSpec(session.backend).label,
+          account: session.claudeAccount,
+        });
+      }
+    } catch (e) {
+      this.output.appendLine(`[claude] account status check failed: ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * Provision the `@zed-industries/claude-code-acp` adapter on demand (the
+   * missing-adapter onboarding card's Install action) — a measured ~120 MB
+   * download, never bundled in the vsix (see src/claude-locator.ts). The install
+   * is awaited, not spawned synchronously: blocking the extension host for a
+   * multi-minute download would freeze every extension in the window. Does not
+   * retry the session itself — the user clicks "Re-check connection" (already on
+   * the same card) once it's done.
+   */
+  private async installClaudeAdapterOnDemand(): Promise<void> {
+    const root = this.claudeAdapterInstallRoot();
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "Installing the Claude Code adapter (~120 MB, downloaded once) — this can take a minute.",
+      },
+      async () => {
+        try {
+          fs.mkdirSync(root, { recursive: true });
+          await installClaudeAdapter(root);
+          this.output.appendLine(`[claude] adapter installed into ${root}`);
+          void vscode.window.showInformationMessage(
+            'Claude Code adapter installed. Click "Re-check connection" to continue.',
+          );
+        } catch (e) {
+          // npm's captured stdout/stderr (installClaudeAdapter runs with
+          // encoding:"utf8" — see claude-locator.ts) can carry registry URLs,
+          // and with credentials in .npmrc, credential-bearing URLs — redact
+          // before it lands anywhere. The FULL redacted text goes to the
+          // output channel; the notification gets exit code + a bounded tail
+          // only, so a verbose npm failure doesn't dump megabytes into a toast.
+          const err = e as { code?: unknown; message?: string; stdout?: unknown; stderr?: unknown };
+          const asText = (v: unknown): string =>
+            typeof v === "string" ? v : v instanceof Buffer ? v.toString("utf8") : "";
+          const raw = [asText(err.stderr), asText(err.stdout)].filter(Boolean).join("\n").trim() || err.message || "unknown error";
+          const redacted = redactNpmOutput(raw);
+          const exitCode = err.code != null ? String(err.code) : "?";
+          this.output.appendLine(`[claude] adapter install failed (exit ${exitCode}): ${redacted}`);
+          void vscode.window.showErrorMessage(
+            `Claude Code adapter install failed (exit ${exitCode}): ${truncateTail(redacted)}`,
+          );
+        }
+      },
+    );
+  }
+
+  /**
+   * Flip `session` to `backend` and restart its process on it — history cannot
+   * carry across (different agents, different on-disk stores), so a tab with
+   * real history gets a modal confirm; an empty/primer-only tab restarts
+   * transparently, same as the model/effort empty-session fast path. The
+   * abandoned pre-flip session (only ever reachable when it had no history) is
+   * discarded from its OWN backend's store so repeated flips don't pile up
+   * empty sessions, mirroring `discardRestartedEmptySession`.
+   */
+  private async switchBackend(session: Session, backend: BackendId): Promise<void> {
+    if (session.backend === backend || session.priming) return;
+    const targetLabel = backendSpec(backend).label;
+    if (session.hasHistory) {
+      const choice = await vscode.window.showWarningMessage(
+        `Switch this tab to ${targetLabel}? History can't carry over between backends — ` +
+          `this tab will start a fresh ${targetLabel} session.`,
+        { modal: true },
+        "Switch",
+      );
+      if (choice !== "Switch") return;
+    }
+    const oldBackend = session.backend;
+    const oldId = session.activeSessionId;
+    const wasEmpty = !session.hasHistory;
+    session.backend = backend;
+    session.effort = undefined; // let startSession reseed for the new backend
+    // Post the flip BEFORE startSession, not after: a failed start (missing
+    // adapter, auth required) must not leave the webview showing the OLD
+    // backend's chip/label — that wedges the tab, since both the host (this
+    // function's own `session.backend === backend` early-return above) and
+    // the webview (the backend popover's own "already active" no-op) would
+    // then treat re-picking either backend as a silent no-op until the tab
+    // happens to hide + reveal (which re-runs replayInto and resyncs it).
+    this.postTo(session, {
+      type: "backendChanged",
+      backend: session.backend,
+      label: backendSpec(backend).label,
+      account: session.claudeAccount,
+    });
+    await this.startSession(session);
+    if (wasEmpty) this.discardAbandonedBackendSession(session, oldBackend, oldId);
+  }
+
+  /** Backend-aware counterpart to `discardRestartedEmptySession` — deletes an
+   *  abandoned empty session from ITS OWN backend's store (a backend flip's old
+   *  id lives in a different store than the new one) and carries any rename. */
+  private discardAbandonedBackendSession(session: Session, oldBackend: BackendId, oldId: string | undefined): void {
+    const newId = session.activeSessionId;
+    if (!oldId || oldId === newId) return;
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    try {
+      (oldBackend === CLAUDE_BACKEND.id ? this.claudeSessionStore() : this.grokSessionStore()).remove(cwd, oldId);
+    } catch (e) {
+      this.output.appendLine(`[sessions] could not discard abandoned ${oldBackend} session ${oldId}: ${(e as Error).message}`);
+    }
+    const overrides = this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {});
+    void this.context.globalState.update(SESSION_META_KEY, carrySessionName(overrides, oldId, newId));
+    this.sessionCache.delete(oldId);
+    if (newId) this.sessionCache.delete(newId);
+    this.updateTabTitle(session); // the carried rename survives on the tab too
+    this.broadcastSessionsList();
+  }
+
+  /** Open a fresh session in a new editor tab and spawn its process. `backend`
+   *  defaults to `grok.defaultBackend` (itself defaulting to Grok — Grok stays
+   *  the default for every new tab, see docs/plans/claude-code-backend.md § WP3). */
+  async newTab(backend?: BackendId): Promise<void> {
     const session = new Session();
+    session.backend = backend ?? this.defaultBackend();
+    this.seedSessionEffort(session);
     if (vscode.workspace.getConfiguration("grok").get<boolean>("includeActiveFileByDefault", true)) {
       this.addActiveEditorChip(session); // lands in session.chips; ready's replay paints it
     }
-    this.openPanel(session, tabTitleFor(undefined));
+    this.openPanel(session, composeTabTitle({ backend: session.backend }));
     this.maybeWarnLiveCount();
     await this.startSession(session);
   }
 
   /**
-   * Open the session with grok id `id`: reveal its tab if one is already open,
-   * else cold-load it from grok's on-disk history into a new tab. All entry
-   * points that can materialize a panel for an id (launcher row, a panel's
-   * history dropdown, serializer restore) funnel through the shared `opening`
-   * guard so two racing opens can't produce two tabs.
+   * Open the session with id `id`: reveal its tab if one is already open, else
+   * cold-load it from history into a new tab on the RIGHT backend's agent —
+   * `backend` comes from the row that was clicked (launcher, a panel's history
+   * dropdown, or serializer-restored state), since a session id alone doesn't
+   * say which store/agent it belongs to (see docs/plans/claude-code-backend.md
+   * § WP5). Missing/undefined `backend` falls back to `Session`'s own grok
+   * default — the pre-WP5 behavior for any caller that hasn't been updated to
+   * pass one. All entry points that can materialize a panel for an id (launcher
+   * row, a panel's history dropdown, serializer restore) funnel through the
+   * shared `opening` guard so two racing opens can't produce two tabs.
    */
-  private async openTabForId(id: string): Promise<void> {
+  private async openTabForId(id: string, backend?: BackendId): Promise<void> {
     for (const s of this.panels) {
       if (s.activeSessionId === id && s.panel) {
         s.panel.reveal(undefined, false);
@@ -400,7 +678,9 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
     try {
       const session = new Session();
       session.activeSessionId = id;
-      this.openPanel(session, tabTitleFor(this.displayNameForId(id)));
+      if (backend) session.backend = backend;
+      this.seedSessionEffort(session);
+      this.openPanel(session, composeTabTitle({ name: this.displayNameForId(id, session.backend), backend: session.backend }));
       this.maybeWarnLiveCount();
       await this.startSession(session, id);
       this.markRead(session); // opening a cold session clears its unread badge
@@ -446,7 +726,14 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
       dark: vscode.Uri.joinPath(this.context.extensionUri, "resources", "blackhole-icon-white.svg"),
     };
     panel.webview.html = this.getHtml(panel.webview);
-    panel.webview.onDidReceiveMessage((m: WebviewMsg) => void this.onMessage(m, session));
+    panel.webview.onDidReceiveMessage((m: WebviewMsg) => {
+      // A malformed/unexpected payload (e.g. a non-string field a handler
+      // assumes is a string) must not become an unhandled rejection in the
+      // extension host — log it and keep the panel alive instead.
+      this.onMessage(m, session).catch((e) => {
+        this.output.appendLine(`[onMessage] "${m?.type}" failed: ${e instanceof Error ? e.message : String(e)}`);
+      });
+    });
     panel.onDidChangeViewState((e) => {
       if (e.webviewPanel.visible) {
         // The rebuilt webview re-fires `ready` (retainContextWhenHidden:false),
@@ -462,15 +749,20 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
   }
 
   /**
-   * Re-bind a serializer-restored panel after a window reload. Stashes only the
-   * grok session id in webview state; history reloads via the normal
-   * `startSession(session, id)` cold-load path. LAZY: only a visible restored
-   * tab spawns immediately — a background tab defers its spawn to first reveal
-   * (`pendingStart`), so N restored tabs don't spawn N processes at once. Goes
-   * through the shared `opening` guard — a restore can race a launcher click for
-   * the same id.
+   * Re-bind a serializer-restored panel after a window reload. The webview
+   * stashes `{id, backend}` in its VS Code webview state on every `session`
+   * event (see chat.js); `backend` picks the right agent/store to resume
+   * against (docs/plans/claude-code-backend.md § WP5) — a tab that was running
+   * Claude before the reload must respawn Claude, not fall back to grok.
+   * `session.backend` is set on the in-memory `Session` immediately (host-side,
+   * independent of any webview code running), so it survives untouched through
+   * the LAZY path too: only a visible restored tab spawns immediately — a
+   * background tab defers its spawn to first reveal (`pendingStart`), so N
+   * restored tabs don't spawn N processes at once, and each still resumes on
+   * its own backend once revealed. Goes through the shared `opening` guard — a
+   * restore can race a launcher click for the same id.
    */
-  async restorePanel(panel: vscode.WebviewPanel, id: string | undefined): Promise<void> {
+  async restorePanel(panel: vscode.WebviewPanel, id: string | undefined, backend?: BackendId): Promise<void> {
     if (id && !this.router.beginOpen(id)) {
       // Another entry point is already materializing this session — don't
       // double-open; that tab will exist momentarily.
@@ -489,9 +781,14 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
       }
       const session = new Session();
       session.activeSessionId = id;
+      if (backend) session.backend = backend;
+      this.seedSessionEffort(session);
       this.bindPanel(session, panel);
       // Title from the disk entry immediately, before any spawn.
-      panel.title = tabTitleFor(id ? this.displayNameForId(id) : undefined);
+      panel.title = composeTabTitle({
+        name: id ? this.displayNameForId(id, session.backend) : undefined,
+        backend: session.backend,
+      });
       if (panel.visible) {
         void this.startSession(session, id);
       } else {
@@ -523,7 +820,17 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
     // mirroring the startup sweep's customName protection.
     const overrides = this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {});
     const renamed = !!(id && overrides[id]?.customName);
-    const emptyPrimerOnly = !session.hasHistory && !session.afterTurn && !busy && !renamed;
+    // emptyPrimerSweep is grok-only (BackendQuirks.emptyPrimerSweep) — Claude has
+    // no hidden primer, so it never leaves an abandoned "primer-only" session to
+    // recycle on close; see docs/plans/claude-code-backend.md § WP3/WP5. Policy
+    // is the pure, unit-tested shouldRecycleEmptySession (session-pool.ts).
+    const emptyPrimerOnly = shouldRecycleEmptySession({
+      emptyPrimerSweep: backendSpec(session.backend).quirks.emptyPrimerSweep,
+      hasHistory: session.hasHistory,
+      hasAfterTurn: !!session.afterTurn,
+      busy,
+      renamed,
+    });
     const exited = this.disposeSession(session);
     if (emptyPrimerOnly && id) {
       // grok re-persists its session dir while shutting down, so deleting
@@ -578,36 +885,26 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
   }
 
   /**
-   * Extension version + **project lifetime** token estimate for the launcher
-   * header (above "New session"). Lifetime = sum of every on-disk session's
-   * signals.json estimate for this workspace, lifted by any live session's
-   * in-memory context that has not flushed yet. Not the active-session donut.
+   * Extension version + the **development cost of Grokbit itself** for the
+   * launcher header (above "New session"): every token every maintainer has
+   * spent, in any agent session, changing this repository.
+   *
+   * It is a build-time constant (`src/token-metrics.ts`, generated by
+   * `npm run metrics:tokens` from the committed `docs/metrics/token-usage.json`
+   * ledger). Identical for every user, and **no user activity can move it** —
+   * the extension performs no token computation at all, so there is nothing to
+   * refresh, cache or invalidate here. This is deliberately NOT the viewer's own
+   * usage: the active session's context lives in the composer donut and the
+   * status-bar percentage, which are a different quantity entirely.
    */
-  private postLauncherMeta(opts?: { refresh?: boolean }): void {
+  private postLauncherMeta(): void {
     if (!this.view) return;
-    if (opts?.refresh || this.lifetimeTokensCache === undefined) {
-      this.lifetimeTokensCache = this.computeLifetimeTokens();
-    }
     void this.view.webview.postMessage({
       type: "launcherMeta",
       extVersion: (this.context.extension.packageJSON as { version?: string })?.version ?? "",
-      totalTokens: this.lifetimeTokensCache,
+      totalTokens: DEV_TOKENS_TOTAL,
+      generatedAt: DEV_TOKENS_GENERATED_AT,
     });
-  }
-
-  /** Sum disk session estimates + live in-memory context lifts. */
-  private computeLifetimeTokens(): number {
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-    const grokHome = resolveGrokHome(process.env);
-    const disk = readWorkspaceTokenUsage({ fs: defaultFs, grokHome, cwd });
-    const live: { id?: string | null; tokens?: number | null }[] = [];
-    for (const s of this.pool) {
-      live.push({
-        id: s.activeSessionId,
-        tokens: s.client?.lastMeta?.totalTokens,
-      });
-    }
-    return mergeWorkspaceTokenUsage(disk, live);
   }
 
   /** Recompute the status-bar HUD from current active-session state. Cheap and
@@ -623,8 +920,9 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
       : undefined;
     const view = computeStatusBar({
       hasActive: !!active,
+      backend: active?.backend,
       modelName: this.modelNameFor(active),
-      effort: vscode.workspace.getConfiguration("grok").get<string>("defaultEffort", ""),
+      effort: active?.effort ?? "",
       mode: active ? this.displayMode(active) : undefined,
       usedTokens: client?.lastMeta?.totalTokens,
       contextWindow,
@@ -1074,8 +1372,17 @@ See design doc for the full state machine diagram.`;
    *  Idempotent: returns the existing in-flight promise so a fast send doesn't
    *  start a second primer; resolves immediately once primed. Best-effort — a
    *  failed primer clears the promise so the next send retries, and never throws
-   *  to the caller (the plan-gate, not the primer, is the actual enforcement). */
+   *  to the caller (the plan-gate, not the primer, is the actual enforcement).
+   *
+   *  planPrimer is grok-only (BackendQuirks.planPrimer) — Claude must never
+   *  receive this text, so every call site (including the ones inside
+   *  handleExitPlan's afterTurn, which only ever runs off grok's x.ai/exit_plan_mode)
+   *  is made a no-op here in one place rather than gated at each call site. */
   private ensurePrimed(client: AcpClient, session: Session, gen: number): Promise<void> {
+    if (!backendSpec(session.backend).quirks.planPrimer) {
+      session.primed = true;
+      return Promise.resolve();
+    }
     if (session.primed) return Promise.resolve();
     if (session.primingPromise) return session.primingPromise;
     const promise = (async () => {
@@ -1306,24 +1613,43 @@ See design doc for the full state machine diagram.`;
   }
 
   /**
-   * Sign out of the Grok CLI (`grok logout` — clears `~/.grok/auth.json`). The
-   * CLI owns auth, so we shell out to it, tear down the live session, and drop
-   * the webview back to the auth-required onboarding state. Resolves issue #13.
+   * Sign out of one backend's CLI (`grok logout` clears `~/.grok/auth.json`;
+   * `claude auth logout` clears Claude's credential store) and tear down only
+   * THAT backend's live sessions/tabs — a Claude tab beside a signed-out grok
+   * tab (or vice versa) is unaffected. `backend` defaults to grok: the gear
+   * menu's palette command (`grok.logout`, no session context) has no tab to
+   * read a backend from, and grok is the extension-wide default backend
+   * everywhere else too. Resolves issue #13 (grok) and the WP3-flagged
+   * inconsistency where a Claude tab's "Log out" silently signed the user out
+   * of grok instead (docs/plans/claude-code-backend.md § WP5).
    */
+  async logout(backend: BackendId = GROK_BACKEND.id): Promise<void> {
+    if (backend === CLAUDE_BACKEND.id) {
+      await this.logoutClaude();
+    } else {
+      await this.logoutGrok();
+    }
+  }
+
   /**
-   * Sign out of the Grok CLI. Tears the whole pool down, then force-closes every
-   * open session panel (`panel.dispose()` → onPanelClosed runs its normal
-   * cleanup; `this.active` goes undefined). Logout never touches disk, so the
-   * launcher keeps listing the full session history — that's where the user
-   * picks up after signing back in (a row clicked while signed out opens a tab
-   * showing the auth-required onboarding; after re-login rows reopen with full
-   * replay). The launcher itself shows the signed-out state.
+   * Sign out of the Grok CLI. Tears down only grok's live sessions, then
+   * force-closes only grok's open panels (`panel.dispose()` → onPanelClosed
+   * runs its normal cleanup) — any open Claude tab is untouched. Logout never
+   * touches disk, so the launcher keeps listing the full session history —
+   * that's where the user picks up after signing back in (a row clicked while
+   * signed out opens a tab showing the auth-required onboarding; after
+   * re-login rows reopen with full replay).
    */
-  async logout(): Promise<void> {
+  private async logoutGrok(): Promise<void> {
     const cliPath = this.cliPath || locateGrokCli(
       vscode.workspace.getConfiguration("grok").get<string>("cliPath", ""),
     );
     if (!cliPath) {
+      // Unlike the auth-required branch below, no grok panel has been closed
+      // yet at this point — a launcher-only post (as this used to be) leaves
+      // an already-open grok tab showing nothing when the user clicks Log out.
+      // Broadcast fans out to every ready panel AND the launcher, matching
+      // updateGrokCliOnDemand's identical missing-cli early return.
       this.broadcast({ type: "onboarding", state: "missing-cli", platform: process.platform });
       return;
     }
@@ -1333,14 +1659,57 @@ See design doc for the full state machine diagram.`;
       "Sign Out",
     );
     if (choice !== "Sign Out") return;
-    // Tear down every live session first so no client's `exit` (or in-flight
-    // turn) races the signed-out state, then close the tabs.
-    await this.disposePool();
-    for (const s of [...this.panels]) s.panel?.dispose(); // → onPanelClosed each
-    this.active = undefined;
-    const term = vscode.window.createTerminal("Grok Logout");
-    term.sendText(`"${cliPath}" logout`);
-    this.broadcast({ type: "onboarding", state: "auth-required" });
+    // Tear down grok's live sessions first so no client's `exit` (or in-flight
+    // turn) races the signed-out state, then close only grok's tabs.
+    await this.disposePool(GROK_BACKEND.id);
+    for (const s of [...this.panels]) {
+      if (s.backend === GROK_BACKEND.id) s.panel?.dispose(); // → onPanelClosed each
+    }
+    if (this.active?.backend === GROK_BACKEND.id) this.active = undefined;
+    // Run grok as the terminal's own process (shellPath/shellArgs) rather than
+    // typing a quoted path into the user's shell — same reasoning as
+    // runMcpList: naive `` `"${cliPath}" logout` `` string interpolation both
+    // mis-parses on PowerShell (Windows' default terminal) and, for a path
+    // containing a literal `"`, lets the shell string break out entirely
+    // (e.g. `x" & calc & "`). shellPath/shellArgs sidesteps shell quoting.
+    vscode.window.createTerminal({ name: "Grok Logout", shellPath: cliPath, shellArgs: ["logout"] });
+    // Launcher-only (not a fan-out broadcast): every grok panel was just
+    // closed above, and a still-open Claude tab must never show grok's
+    // signed-out card — see logoutClaude's mirror image of this same concern.
+    if (this.view) void this.view.webview.postMessage({ type: "onboarding", state: "auth-required" });
+    this.broadcastSessionsList();
+    this.updateStatusBar();
+  }
+
+  /**
+   * Sign out of Claude Code (`claude auth logout`, mirroring the grok CLI's
+   * own `logout` — see claude-locator.ts's `checkClaudeAuthStatus` for the
+   * matching `claude auth status --json` invocation shape). Tears down only
+   * Claude's live sessions/tabs; a grok tab open beside it is unaffected.
+   */
+  private async logoutClaude(): Promise<void> {
+    const choice = await vscode.window.showWarningMessage(
+      "Sign out of Claude Code? This clears the CLI's cached credentials.",
+      { modal: true },
+      "Sign Out",
+    );
+    if (choice !== "Sign Out") return;
+    await this.disposePool(CLAUDE_BACKEND.id);
+    for (const s of [...this.panels]) {
+      if (s.backend === CLAUDE_BACKEND.id) s.panel?.dispose(); // → onPanelClosed each
+    }
+    if (this.active?.backend === CLAUDE_BACKEND.id) this.active = undefined;
+    const claudeBin = vscode.workspace.getConfiguration("grok").get<string>("claude.executablePath", "");
+    // shellPath/shellArgs, not string interpolation — see logoutGrok's comment.
+    if (claudeBin) {
+      vscode.window.createTerminal({ name: "Claude Logout", shellPath: claudeBin, shellArgs: ["auth", "logout"] });
+    } else {
+      vscode.window.createTerminal("Claude Logout").sendText("claude auth logout");
+    }
+    // Launcher-only — see logoutGrok's mirror-image comment.
+    if (this.view) {
+      void this.view.webview.postMessage({ type: "onboarding", state: "claude-auth-required", backend: CLAUDE_BACKEND.id });
+    }
     this.broadcastSessionsList();
     this.updateStatusBar();
   }
@@ -1748,42 +2117,94 @@ See design doc for the full state machine diagram.`;
     this.emit(session, { type: "setBusy", value: true, locked: true });
 
     const cfg = vscode.workspace.getConfiguration("grok");
-    const cliPath = locateGrokCli(cfg.get<string>("cliPath", ""));
-    this.cliPath = cliPath || undefined;
-    if (!cliPath) {
-      if (gen !== session.gen) return undefined;
-      this.pool.delete(session);
-      session.priming = false;
-      this.emit(session, { type: "setBusy", value: false });
-      this.emit(session, { type: "onboarding", state: "missing-cli", platform: process.platform });
-      // Mirror on the launcher so the missing CLI is visible without a tab.
-      if (this.view) {
-        void this.view.webview.postMessage({ type: "onboarding", state: "missing-cli", platform: process.platform });
+    const spec = backendSpec(session.backend);
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+
+    let command: string;
+    let args: string[];
+    let env: NodeJS.ProcessEnv;
+    // Hoisted so the catch block's grok-only Windows-regression branch can still
+    // read it below — it's only ever set (and only ever read) on the grok path.
+    let cliPath: string | undefined;
+
+    if (session.backend === CLAUDE_BACKEND.id) {
+      // Claude has no reasoning-effort axis at all (CLAUDE_EFFORT_LEVELS is
+      // empty in src/backends.ts) — never carry a grok-flavored value across a
+      // backend flip.
+      session.effort = undefined;
+      const adapterPath = locateClaudeAdapter(cfg.get<string>("claude.adapterPath", ""), {
+        managedInstallRoot: this.claudeAdapterInstallRoot(),
+        ...defaultClaudeAdapterSearchRoots(),
+      });
+      if (!adapterPath) {
+        if (gen !== session.gen) return undefined;
+        this.pool.delete(session);
+        session.priming = false;
+        this.emit(session, { type: "setBusy", value: false });
+        this.emit(session, { type: "onboarding", state: "missing-claude-adapter", backend: CLAUDE_BACKEND.id });
+        // Mirror on the launcher so the missing adapter is visible without a tab.
+        if (this.view) {
+          void this.view.webview.postMessage({ type: "onboarding", state: "missing-claude-adapter", backend: CLAUDE_BACKEND.id });
+        }
+        return undefined;
       }
-      return undefined;
+      command = process.execPath; // Electron run as plain Node (ELECTRON_RUN_AS_NODE) — see claude-locator.ts
+      args = buildClaudeAdapterArgv(adapterPath);
+      env = buildClaudeAdapterEnv({
+        baseEnv: this.buildEnv(cwd),
+        claudeExecutablePath: cfg.get<string>("claude.executablePath", "") || undefined,
+        allowInheritedApiKey: cfg.get<boolean>("claude.allowInheritedApiKey", false),
+      });
+    } else {
+      cliPath = locateGrokCli(cfg.get<string>("cliPath", ""));
+      this.cliPath = cliPath || undefined;
+      if (!cliPath) {
+        if (gen !== session.gen) return undefined;
+        this.pool.delete(session);
+        session.priming = false;
+        this.emit(session, { type: "setBusy", value: false });
+        this.emit(session, { type: "onboarding", state: "missing-cli", platform: process.platform });
+        // Mirror on the launcher so the missing CLI is visible without a tab.
+        if (this.view) {
+          void this.view.webview.postMessage({ type: "onboarding", state: "missing-cli", platform: process.platform });
+        }
+        return undefined;
+      }
+
+      // If our extension was upgraded, silently bring the CLI up to date *before*
+      // spawning it (once per activation). Bail if a newer start superseded us.
+      await this.maybeUpdateCliOnUpgrade(cliPath, session);
+      if (gen !== session.gen) return undefined;
+
+      // If the (possibly just-updated) CLI is on a build with the Windows stdio
+      // regression (issue #22, builds 0.2.61–0.2.70), pin it to the supported version
+      // (0.2.72) before we spawn — otherwise the ACP handshake hangs forever. Runs after
+      // the silent update so it corrects an upgrade that landed on a still-broken build.
+      // grok-only (#22 never applied to the Claude adapter) — see BackendQuirks.windowsVersionPin.
+      if (spec.quirks.windowsVersionPin) {
+        await this.maybePinBrokenCli(cliPath);
+        if (gen !== session.gen) return undefined;
+      }
+
+      // `session.effort` is per-tab state (see session.ts). Usually already
+      // seeded by now (newTab/openTabForId/restorePanel call seedSessionEffort
+      // before the panel even opens, so postPanelConfig's initialState reflects
+      // it immediately) — idempotent here too, since a caller that reaches
+      // startSession WITHOUT going through those three entry points
+      // (switchBackend's post-flip restart, which resets effort to undefined
+      // first) still needs this to reseed the new backend's default.
+      this.seedSessionEffort(session);
+      command = cliPath;
+      args = buildGrokAgentArgs(session.effort);
+      env = this.buildEnv(cwd);
     }
 
-    // If our extension was upgraded, silently bring the CLI up to date *before*
-    // spawning it (once per activation). Bail if a newer start superseded us.
-    await this.maybeUpdateCliOnUpgrade(cliPath, session);
-    if (gen !== session.gen) return undefined;
-
-    // If the (possibly just-updated) CLI is on a build with the Windows stdio
-    // regression (issue #22, builds 0.2.61–0.2.70), pin it to the supported version
-    // (0.2.72) before we spawn — otherwise the ACP handshake hangs forever. Runs after
-    // the silent update so it corrects an upgrade that landed on a still-broken build.
-    await this.maybePinBrokenCli(cliPath);
-    if (gen !== session.gen) return undefined;
-
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-    const env = this.buildEnv(cwd);
-    const effortStr = cfg.get<string>("defaultEffort", "");
-    const effort = effortStr ? (effortStr as EffortLevel) : undefined;
     const client = new AcpClient({
-      cliPath,
+      command,
+      args,
       cwd,
       env,
-      effort,
+      quirks: spec.quirks,
       log: (msg) => this.output.appendLine(msg),
     });
     session.client = client;
@@ -1831,11 +2252,18 @@ See design doc for the full state machine diagram.`;
         sessionId: res.sessionId,
         models: client.availableModels,
         currentModelId: client.currentModelId,
+        // Authoritative even mid-flip: replayInto's own backendChanged (posted
+        // only on `ready`) can lag a live backend switch, so the webview must
+        // not read back its own possibly-stale state.backend when stashing
+        // {id, backend} for the panel serializer — see the "session" handler
+        // in chat.js (docs/plans/claude-code-backend.md § WP5).
+        backend: session.backend,
       });
     });
     client.on("modelChanged", (id) => {
       if (gen !== session.gen) return;
       this.emit(session, { type: "modelChanged", modelId: id });
+      this.updateTabTitle(session); // the settings prefix follows a live model switch
       if (session === this.active) this.updateStatusBar();
     });
     client.on("modeChanged", (id) => {
@@ -1856,6 +2284,10 @@ See design doc for the full state machine diagram.`;
     client.on("commandsUpdate", (cmds) => {
       if (gen !== session.gen) return;
       this.emit(session, { type: "commandsUpdate", commands: cmds });
+      // Re-derive the capability panel now that ACP command names are known —
+      // buildCapabilityGroups is stable across this transition (same Skills
+      // group, just enriched), so re-scanning here is safe, not a reorganize.
+      this.listCapabilities(session);
     });
     client.on("messageChunk", (text: string) => {
       if (gen !== session.gen) return;
@@ -1959,8 +2391,6 @@ See design doc for the full state machine diagram.`;
       if (typeof meta?.totalTokens === "number") {
         this.emit(session, { type: "tokenUsage", totalTokens: meta.totalTokens });
       }
-      // Lifetime total for the launcher may have moved with this turn.
-      this.postLauncherMeta({ refresh: true });
       if (session === this.active) this.updateStatusBar(); // refresh context %
     });
     client.on("xaiNotification", (u) => {
@@ -1972,8 +2402,11 @@ See design doc for the full state machine diagram.`;
       // While planning, decline any mutating permission outright. Agent mode
       // skips this prompt for edits it deems safe — the fs/terminal gate is the
       // real backstop — but if the CLI *does* ask, we say no without bothering
-      // the user.
-      if (session.planActive && shouldRejectPermission(req.toolCall?.kind, {
+      // the user. clientPlanGate is grok-only (BackendQuirks.clientPlanGate) —
+      // Claude enforces plan mode natively, so this pre-emptive decline must
+      // never engage for it (it would block Claude's own legitimate plan-mode
+      // permission asks). See docs/plans/claude-code-backend.md § Non-goals.
+      if (spec.quirks.clientPlanGate && session.planActive && shouldRejectPermission(req.toolCall?.kind, {
         active: true,
         workspaceRoot: cwd,
       })) {
@@ -2122,13 +2555,21 @@ See design doc for the full state machine diagram.`;
         session.hasHistory = resumedRealHistory;
         if (!resumedRealHistory) this.updateTabTitle(session); // not the primer-derived disk name
 
-        // session/load carries no token meta, so a resumed tab's context donut /
-        // status bar would read 0 until the next turn completes. grok persists
-        // the real usage in the session dir's signals.json — seed lastMeta and
-        // the (buffered, replay-safe) webview counter from it.
-        const usedTokens = readSessionTokenUsage({
-          fs: defaultFs, grokHome: resolveGrokHome(process.env), cwd, id: resumeId,
-        });
+        // session/load carries no token meta on EITHER backend (verified for
+        // Claude too — research/claude-code-backend.md § Resume), so a resumed
+        // tab's context donut / status bar would read 0 until the next turn
+        // completes. grok persists the real usage in the session dir's
+        // signals.json; routed through the matching store so a Claude resume
+        // reads its own (currently unwired — see the research doc) source
+        // instead of silently falling through to grok's file layout. Claude's
+        // `readTokenUsage` returning undefined here degrades gracefully: no
+        // emit below, so the donut just shows nothing rather than a misleading
+        // 0% — the same behavior a grok resume gets when signals.json is
+        // missing (docs/plans/claude-code-backend.md § WP5).
+        const usedTokens =
+          session.backend === CLAUDE_BACKEND.id
+            ? this.claudeSessionStore().readTokenUsage(cwd, resumeId)
+            : readSessionTokenUsage({ fs: defaultFs, grokHome: resolveGrokHome(process.env), cwd, id: resumeId });
         if (usedTokens) {
           client.lastMeta = { totalTokens: usedTokens };
           this.emit(session, { type: "tokenUsage", totalTokens: usedTokens });
@@ -2139,11 +2580,21 @@ See design doc for the full state machine diagram.`;
         // events during loadSession, which our modeChanged handler honors by
         // raising the gate. Override that here with the actual verdict-driven
         // decision (see plan-restore.ts) so a Cancelled or Approved session
-        // doesn't come back stuck in Plan mode.
-        const decision = decideRestoreState(saved);
-        this.setPlanActive(session, decision.planActive);
-        const targetMode = decision.cliMode === "plan" ? "plan" : ACT_MODE_ID;
-        try { await client.setMode(targetMode); } catch { /* best-effort */ }
+        // doesn't come back stuck in Plan mode. clientPlanGate-gated (grok
+        // only): this whole override exists because grok's own exit_plan_mode
+        // is unreliable, so its replayed mode can't be trusted — Claude has no
+        // such bug and enforces plan mode for real, so a resumed Claude session
+        // must keep whatever mode its own (genuine) replayed
+        // current_mode_update already restored via the modeChanged handler
+        // above, not get silently forced back to act mode here (`saved` is
+        // always empty for Claude anyway — nothing ever persists a grok-style
+        // plan verdict for it). See docs/plans/claude-code-backend.md § WP5.
+        if (spec.quirks.clientPlanGate) {
+          const decision = decideRestoreState(saved);
+          this.setPlanActive(session, decision.planActive);
+          const targetMode = decision.cliMode === "plan" ? "plan" : ACT_MODE_ID;
+          try { await client.setMode(targetMode); } catch { /* best-effort */ }
+        }
       } else {
         await client.newSession(defaultModel || undefined);
         session.activeSessionId = client.sessionId;
@@ -2168,17 +2619,35 @@ See design doc for the full state machine diagram.`;
       this.pool.add(session);
       this.touch(session);
       // Observable for the lazy-start guarantee (reload restore / CLI update):
-      // the Output channel shows exactly which tabs spawned and when.
-      this.output.appendLine(`spawned grok (pid ${client.pid ?? "?"}) — ${this.pool.size} live`);
-      // Connection works — clear any signed-out/missing-CLI banner on the
-      // launcher (launcher-only; panels manage their own onboarding views).
+      // the Output channel shows exactly which tabs spawned and when. Backend
+      // ids ARE their own log word ("grok"/"claude"), so this is byte-identical
+      // to the pre-WP3 grok-only message for a grok session.
+      this.output.appendLine(`spawned ${session.backend} (pid ${client.pid ?? "?"}) — ${this.pool.size} live`);
+      // Connection works — clear any signed-out/missing-CLI/missing-adapter
+      // banner on the launcher (launcher-only; panels manage their own
+      // onboarding views).
       if (this.view) void this.view.webview.postMessage({ type: "onboarding", state: "" });
       this.emit(session, { type: "setBusy", value: false });
+      // planPrimer (grok only) — ensurePrimed no-ops immediately for Claude
+      // (see its own guard) rather than branching on the quirk here too.
       void this.ensurePrimed(client, session, gen);
-      // One-shot legacy cleanup of empty primer-only sessions, once the first
-      // session is live (so this one is excluded from the sweep). Guarded to a
-      // single run per activation inside the sweep itself.
-      this.sweepEmptyPrimerSessions();
+      if (session.backend === CLAUDE_BACKEND.id) {
+        // Best-effort: surface which Claude account/plan is actually being
+        // billed (subscription, not an inherited API key) — see
+        // docs/plans/claude-code-backend.md § Authentication. Async,
+        // void-fired — never blocks the extension host on a CLI spawn. `env`
+        // is the SAME (already-stripped) env this session was spawned with —
+        // see refreshClaudeAccount's own doc for why that consistency matters.
+        void this.refreshClaudeAccount(session, gen, env);
+      }
+      // emptyPrimerSweep (grok only) — Claude has no primer, so no primer-only
+      // sessions to sweep; see BackendQuirks.emptyPrimerSweep.
+      if (spec.quirks.emptyPrimerSweep) {
+        // One-shot legacy cleanup of empty primer-only sessions, once the first
+        // session is live (so this one is excluded from the sweep). Guarded to a
+        // single run per activation inside the sweep itself.
+        this.sweepEmptyPrimerSessions();
+      }
     } catch (err) {
       if (gen !== session.gen) { client.dispose(); return undefined; }
       const msg = (err as any).message ?? String(err);
@@ -2187,7 +2656,23 @@ See design doc for the full state machine diagram.`;
       this.pool.delete(session);
       session.priming = false;
       this.emit(session, { type: "setBusy", value: false });
-      if (/auth|unauthor|forbidden|401|403|api[_\s-]?key|credential|sign.?in/i.test(msg)) {
+      const authLike = /auth|unauthor|forbidden|401|403|api[_\s-]?key|credential|sign.?in/i.test(msg);
+      if (session.backend === CLAUDE_BACKEND.id) {
+        // Claude has neither the Windows stdio regression (#22, grok-only) nor
+        // grok's inferred-auth heuristics beyond the same keyword sniff — the
+        // adapter's own `session/new` throws RequestError.authRequired() on a
+        // missing credential store, which this regex already catches.
+        if (authLike) {
+          this.emit(session, { type: "onboarding", state: "claude-auth-required", backend: CLAUDE_BACKEND.id });
+          if (this.view) {
+            void this.view.webview.postMessage({ type: "onboarding", state: "claude-auth-required", backend: CLAUDE_BACKEND.id });
+          }
+        } else {
+          this.emit(session, { type: "error", text: `Failed to start Claude Code: ${msg}` });
+        }
+        return undefined;
+      }
+      if (authLike) {
         this.emit(session, { type: "onboarding", state: "auth-required" });
         // Mirror the signed-out state on the launcher so it's visible without a tab.
         if (this.view) void this.view.webview.postMessage({ type: "onboarding", state: "auth-required" });
@@ -2202,12 +2687,13 @@ See design doc for the full state machine diagram.`;
         // rename it). We switch to 0.2.72 on the observed failure and retry the spawn
         // once. After the pin the version is 0.2.72, so shouldReactivelyDowngrade()
         // can't loop; a later manual re-upgrade above 0.2.72 re-arms the recovery.
-        const version = await this.readGrokVersion(cliPath);
+        // cliPath is only unset on the Claude branch, which already returned above.
+        const version = await this.readGrokVersion(cliPath!);
         if (!this.reactiveDowngradeInFlight && shouldReactivelyDowngrade(version, process.platform)) {
           this.reactiveDowngradeInFlight = true;
           try {
             const detected = parseGrokVersion(version)?.join(".") ?? version;
-            if (await this.downgradeBrokenCli(cliPath, detected, "reactive")) {
+            if (await this.downgradeBrokenCli(cliPath!, detected, "reactive")) {
               return await this.startSession(session, resumeId); // retry the spawn on the supported build
             }
           } finally {
@@ -2280,6 +2766,13 @@ See design doc for the full state machine diagram.`;
         this.postChips(session);
         break;
       case "openFile": {
+        // Defense-in-depth (correct regardless of the capability browser): a row
+        // with neither `invoke` nor `path` (e.g. a built-in agent) is rendered
+        // inert with no click handler, but a missing/blank/non-string path
+        // reaching here would otherwise hit parseFileRef(...) -> raw.match(...),
+        // which throws a TypeError on anything that isn't a string — see
+        // isUsableFilePath's doc comment.
+        if (!isUsableFilePath(msg.path)) break;
         const ref = parseFileRef(msg.path);
         let p = ref.path;
         if (!path.isAbsolute(p)) {
@@ -2357,10 +2850,16 @@ See design doc for the full state machine diagram.`;
       case "setModel":
         await this.switchModel(session, msg.modelId);
         break;
+      case "switchBackend":
+        await this.switchBackend(session, msg.backend);
+        break;
       case "setEffort": {
         if (session.priming) break; // ignore changes fired mid-session-start (see switchModel)
+        // Claude has no reasoning-effort axis (CLAUDE_EFFORT_LEVELS is empty in
+        // src/backends.ts) — the composer chip never offers effort dots for a
+        // Claude tab, so this is only a defensive no-op for a stray message.
+        if (backendSpec(session.backend).effortLevels.length === 0) break;
         const newLevel = msg.level;
-        const cfg2 = vscode.workspace.getConfiguration("grok");
 
         if (!session.hasHistory || !session.client) {
           // As with a model switch on an empty session: restart without the summarize-vs-restart
@@ -2368,16 +2867,19 @@ See design doc for the full state machine diagram.`;
           // history (a dead client on a session WITH history must keep that history).
           const wasEmpty = !session.hasHistory;
           const discardId = session.activeSessionId;
-          await cfg2.update("defaultEffort", newLevel, vscode.ConfigurationTarget.Global);
+          // Per-session, not global — see session.ts. startSession reads it back below.
+          session.effort = newLevel ? (newLevel as EffortLevel) : undefined;
           await this.startSession(session);
-          if (wasEmpty) this.discardRestartedEmptySession(session, discardId);
+          if (wasEmpty) this.discardRestartedEmptySession(session, discardId); // also retitles the tab
+          else this.updateTabTitle(session);
           break;
         }
 
         const mode = await this.pickRestartMode("Changing reasoning effort requires restarting the session.");
         if (!mode) break; // dismissed
-        await cfg2.update("defaultEffort", newLevel, vscode.ConfigurationTarget.Global);
+        session.effort = newLevel ? (newLevel as EffortLevel) : undefined;
         await this.restartSession(session, mode);
+        this.updateTabTitle(session);
         break;
       }
       case "openGlobalConfig": {
@@ -2455,16 +2957,28 @@ See design doc for the full state machine diagram.`;
           this.broadcast({ type: "onboarding", state: "missing-cli" });
           break;
         }
-        const term = vscode.window.createTerminal("Grok Login");
+        // shellPath/shellArgs, not string interpolation — see logoutGrok's comment.
+        const term = vscode.window.createTerminal({ name: "Grok Login", shellPath: cliPath, shellArgs: ["/login"] });
         term.show();
-        term.sendText(`"${cliPath}" /login`);
+        break;
+      }
+      case "installClaudeAdapter":
+        await this.installClaudeAdapterOnDemand();
+        break;
+      case "runClaudeLogin": {
+        const claudeBin = vscode.workspace.getConfiguration("grok").get<string>("claude.executablePath", "");
+        const term = claudeBin
+          ? vscode.window.createTerminal({ name: "Claude Login", shellPath: claudeBin, shellArgs: ["auth", "login"] })
+          : vscode.window.createTerminal("Claude Login");
+        term.show();
+        if (!claudeBin) term.sendText("claude auth login");
         break;
       }
       case "recheckConnection":
         await this.startSession(session);
         break;
       case "logout":
-        await this.logout();
+        await this.logout(session.backend);
         break;
       case "checkGrokUpdate":
         await this.checkGrokUpdate(session);
@@ -2478,13 +2992,13 @@ See design doc for the full state machine diagram.`;
         this.replySessionsList(session, { offset: msg.offset, limit: msg.limit, query: msg.query });
         break;
       case "resumeSession":
-        await this.openTabForId(msg.id);
+        await this.openTabForId(msg.id, msg.backend);
         break;
       case "renameSession":
         this.renameSession(msg.id, msg.name);
         break;
       case "deleteSession":
-        await this.deleteSession(msg.id, msg.name);
+        await this.deleteSession(msg.id, msg.name, msg.backend);
         break;
       case "clearAllSessions":
         await this.clearAllSessions();
@@ -2494,6 +3008,9 @@ See design doc for the full state machine diagram.`;
         break;
       case "listWorkspaceDocs":
         await this.listWorkspaceDocs(session);
+        break;
+      case "listCapabilities":
+        this.listCapabilities(session);
         break;
       case "voiceStart":
         await this.handleVoiceStart(session);
@@ -2559,61 +3076,173 @@ See design doc for the full state machine diagram.`;
     }
   }
 
+  /** Real-`fs`-backed {@link CapabilityFsLike} — the only place `src/capabilities.ts`'s
+   *  scan touches the actual filesystem. Bounded head-only reads (open/read/close),
+   *  never a whole-file `readFileSync` — a SKILL.md is small, but this keeps the same
+   *  discipline as `defaultClaudeFs.readSlice` in session-store.ts regardless.
+   *  `readdirSync` asks for `Dirent`s (`withFileTypes: true`) so the scan never needs
+   *  a separate `statSync` per entry, and `realpathSync` backs the scan's symlink-
+   *  containment check (a checked-in repo can commit a capability root, or an entry
+   *  inside one, AS a symlink with an absolute target outside the workspace/home). */
+  private capabilityFs(): CapabilityFsLike {
+    return {
+      existsSync: (p) => fs.existsSync(p),
+      readdirSync: (p) => fs.readdirSync(p, { withFileTypes: true }) as unknown as CapabilityDirEntry[],
+      readHead: (p, length) => {
+        const fd = fs.openSync(p, "r");
+        try {
+          const buf = Buffer.alloc(length);
+          const bytesRead = fs.readSync(fd, buf, 0, length, 0);
+          return buf.toString("utf8", 0, bytesRead);
+        } finally {
+          fs.closeSync(fd);
+        }
+      },
+      realpathSync: (p) => fs.realpathSync(p),
+    };
+  }
+
   /**
-   * Send one page of session history to the webview. The cheap `indexSessions` stat pass orders
-   * every session by last activity without reading content; only the visible window (or, for a
-   * search, the matched window) is parsed — and even those come from {@link sessionCache} unless
-   * their `summary.json` changed. So opening the popover is O(page) reads regardless of how many
-   * thousands of sessions exist on disk; the multi-second full-scan stall is gone.
+   * Scan `session.backend`'s capability roots (commands/skills/agents) and
+   * reply to the requesting panel only — `postTo`, NEVER `emit`: this is
+   * derived, refreshable state, not transcript content, and must never enter
+   * `Session.buffer` (a replayed stale capability list would be wrong after
+   * the user adds a skill). No cache in v1 — a scan is tens of small bounded
+   * reads on an explicit user action or a tab reveal.
+   */
+  private listCapabilities(session: Session): void {
+    if (!this.showCapabilities()) return; // grok.showCapabilities: false — no scan, no payload
+    const workspaceDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    // CAPABILITY_ROOTS' `dir` strings already carry the .grok/.claude/.cursor/
+    // .agents prefix for BOTH tiers (see § Root spec — "~/.grok/…" means home
+    // dir + .grok, not grokHome + .grok), so `homeDir` must be the raw home
+    // directory, not grokHome/claudeHome itself. HOME/USERPROFILE mirrors
+    // resolveGrokHome's own lookup, plus an os.homedir() fallback (like
+    // cli-locator.ts's effectiveHome) for the rare case neither is set —
+    // resolveGrokHome itself has no such fallback (it's a pure function kept
+    // testable without mutating process.env), so path.dirname(resolveGrokHome(...))
+    // would otherwise yield "." and resolve home roots against the extension
+    // host's cwd instead of the user's actual home directory.
+    const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
+    try {
+      const scan = scanCapabilityRoots({
+        fs: this.capabilityFs(),
+        roots: CAPABILITY_ROOTS[session.backend],
+        backend: session.backend,
+        workspaceDir,
+        homeDir,
+        env: process.env,
+      });
+      // Re-key the provisioned Grokbit suite into its own leading group. This
+      // runs AFTER scanCapabilityRoots (whose dedupeByPriority keys on
+      // `kind|name`) and BEFORE buildCapabilityGroups — see the ordering note
+      // on dedupeByPriority in capabilities.ts. `suiteTargets` is the same
+      // manifest extension.ts provisions from, so the two can't drift.
+      const suiteItems = applySuiteKind(scan.items, {
+        managedDirs: suiteTargets(homeDir).map((t) => t.dir),
+      });
+      const groups = buildCapabilityGroups(suiteItems, session.client?.availableCommands ?? []);
+      this.postTo(session, {
+        type: "capabilities",
+        backend: session.backend,
+        groups,
+        scannedRoots: scan.scannedRoots,
+        truncated: scan.truncated,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.postTo(session, {
+        type: "capabilities",
+        backend: session.backend,
+        groups: [],
+        scannedRoots: 0,
+        truncated: false,
+        error: msg || "scan-failed",
+      });
+    }
+  }
+
+  /** grok's session store for the current process — see {@link claudeSessionStore}. Constructed
+   *  fresh per call (cheap: it just wraps `fs`/`grokHome`/a log sink, no I/O at construction). */
+  private grokSessionStore(): GrokSessionStore {
+    return new GrokSessionStore({ fs: defaultFs, grokHome: resolveGrokHome(process.env), log: (m) => this.output.appendLine(m) });
+  }
+
+  /** Claude Code's session store for the current process. See `src/session-store.ts` for the
+   *  flat-file-per-session layout and title-derivation details. */
+  private claudeSessionStore(): ClaudeSessionStore {
+    return new ClaudeSessionStore({ fs: defaultClaudeFs, claudeHome: resolveClaudeHome(process.env), log: (m) => this.output.appendLine(m) });
+  }
+
+  /** One store per backend, newest-first merge order handled by {@link buildMergedSessionsPage}. */
+  private sessionStores(): SessionStore[] {
+    return [this.grokSessionStore(), this.claudeSessionStore()];
+  }
+
+  /**
+   * Send one page of MERGED session history (grok + Claude) to the webview. Each backend's cheap
+   * stat-only index pass orders its own sessions by last activity without reading content; only the
+   * visible window (or, for a search, the matched window) is parsed — and even those come from
+   * {@link sessionCache} unless the underlying file changed. So opening the popover is O(page) reads
+   * regardless of how many thousands of sessions exist on disk; the multi-second full-scan stall is
+   * gone. See CLAUDE.md § History pagination.
    *
    * `offset === 0` is a fresh list/search (the webview replaces); `offset > 0` is load-more (the
-   * webview appends). A non-empty `query` filters by display name across ALL sessions (it warms the
-   * cache once so search stays complete, not just over what's already loaded).
+   * webview appends). A non-empty `query` filters by display name across ALL sessions of BOTH
+   * backends (it warms the cache once so search stays complete, not just over what's already loaded).
+   *
+   * `sinceMs`/`pinnedIds` window the result (the launcher's 30-day-default history — see
+   * `launcherHistoryDays`/`livePinnedIds`); omitted entirely by the chat popover's
+   * `replySessionsList`, which deliberately keeps full, unwindowed history.
    */
-  private buildSessionsMessage(opts?: { offset?: number; limit?: number; query?: string }): any {
+  private buildSessionsMessage(opts?: {
+    offset?: number;
+    limit?: number;
+    query?: string;
+    sinceMs?: number;
+    pinnedIds?: ReadonlySet<string>;
+  }): any {
     const offset = Math.max(0, opts?.offset ?? 0);
     const limit = opts?.limit ?? SESSION_PAGE_SIZE;
     const query = (opts?.query ?? "").trim().toLowerCase();
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-    const grokHome = resolveGrokHome(process.env);
     const overrides = this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {});
-    const log = (m: string) => this.output.appendLine(m);
 
-    const index = indexSessions({ fs: defaultFs, grokHome, cwd, log });
-    const mtimeById = new Map(index.map((e) => [e.id, e.mtimeMs]));
-
-    let pageEntries: SessionListEntry[];
-    let total: number;
-    if (query) {
-      // Search needs names for everything, so read (cache-backed) the whole list once, then filter.
-      const all = this.readEntriesCached(index.map((e) => e.id), mtimeById, overrides, cwd, grokHome, log);
-      all.sort((a, b) => b.updatedAt - a.updatedAt);
-      const matched = all.filter((e) => e.displayName.toLowerCase().includes(query));
-      total = matched.length;
-      pageEntries = matched.slice(offset, offset + limit);
-    } else {
-      total = index.length;
-      const pageIds = index.slice(offset, offset + limit).map((e) => e.id);
-      pageEntries = this.readEntriesCached(pageIds, mtimeById, overrides, cwd, grokHome, log);
-      // mtime is an approximate sort key; re-order the loaded page by exact updated_at.
-      pageEntries.sort((a, b) => b.updatedAt - a.updatedAt);
-    }
-
-    // hasMore is governed purely by what's on disk (load-more pages disk-only); compute it before
+    const page = buildMergedSessionsPage({
+      stores: this.sessionStores(),
+      cwd,
+      offset,
+      limit,
+      query,
+      sinceMs: opts?.sinceMs,
+      pinnedIds: opts?.pinnedIds,
+      readEntries: (store, ids, mtimeById) => this.readEntriesCached(store, ids, mtimeById, overrides, cwd),
+    });
+    let pageEntries = page.entries;
+    const total = page.total;
+    // hasMore is governed purely by what's on disk (load-more pages disk-only); computed before
     // injecting any live-only rows below so an injected entry can't be mistaken for another page.
-    const hasMore = offset + pageEntries.length < total;
+    const hasMore = page.hasMore;
+    // The AUTHORITATIVE load-more cursor: rows this page actually pulled from disk, before the
+    // live/synthetic injection below. The rendered `entries` array below is NOT usable for this —
+    // it gets a synthesized live row prepended, so a client computing its next offset from the
+    // rendered row count would overshoot by that row's count and permanently skip a real session
+    // at every page boundary (docs/plans/capability-surfacing-and-history-ux.md § Thread 3).
+    const nextOffset = offset + page.diskCount;
 
-    // A brand-new live session has no summary.json yet, so the disk-scan index misses it. Without
-    // this, opening history the moment a session goes live drops the active row entirely (and the
-    // old top session masquerades as the whole list) until grok flushes the file — exactly the
-    // "open too early" glitch. Synthesize a row from in-memory state for any live pool session not
-    // yet on disk, pinned newest-first. Only on the first, unfiltered page: later pages are
-    // disk-only, and a nameless not-yet-persisted session can't be matched by a search query.
-    // These ids are never on disk, so they can't duplicate onto a later page when the user scrolls.
+    // A brand-new live session has no on-disk record yet — grok's summary.json, or Claude's .jsonl,
+    // before its first flush — so the disk-scan index misses it. Without this, opening history the
+    // moment a session goes live drops the active row entirely (and the old top session masquerades
+    // as the whole list) until the backend flushes its file — exactly the "open too early" glitch.
+    // Synthesize a row from in-memory state for any live pool session not yet on disk (tagged with
+    // ITS OWN backend — liveSessionEntry reads session.backend, so a live Claude row is never
+    // mistaken for grok's), pinned newest-first. Only on the first, unfiltered page: later pages are
+    // disk-only, and a nameless not-yet-persisted session can't be matched by a search query. These
+    // ids are never on disk, so they can't duplicate onto a later page when the user scrolls.
     if (!query && offset === 0) {
-      const onDisk = new Set(index.map((e) => e.id));
+      const onDisk = new Set(page.index.map((e) => e.id));
       const seen = new Set(pageEntries.map((e) => e.id));
-      const synthetic: SessionListEntry[] = [];
+      const synthetic: SessionStoreListEntry[] = [];
       for (const s of this.pool) {
         const id = s.activeSessionId;
         if (!id || onDisk.has(id) || seen.has(id)) continue;
@@ -2674,23 +3303,36 @@ See design doc for the full state machine diagram.`;
       dots,
       offset,
       total,
+      // Unwindowed total — only the "Clear all" footer keys off this (clearAllSessions
+      // deletes every session, not just in-window ones); NEVER the ceiling notice.
+      totalAll: page.totalAll,
+      windowDays: this.launcherHistoryDays(),
+      nextOffset,
       hasMore,
       query: opts?.query ?? "",
     };
   }
 
-  /** Dropdown reply: one page to the panel that asked for it. */
+  /** Dropdown reply: one page to the panel that asked for it. Deliberately passes no
+   *  `sinceMs`/`pinnedIds` — the chat popover intentionally keeps full, unwindowed
+   *  history (only the launcher's Recent list is windowed). */
   private replySessionsList(session: Session, opts?: { offset?: number; limit?: number; query?: string }): void {
     this.postTo(session, this.buildSessionsMessage(opts));
   }
 
-  /** One page to the launcher view (its own request/refresh). Always capped. */
+  /** One page to the launcher view (its own request/refresh) — windowed to
+   *  `launcherHistoryDays()` (with every live session pinned in regardless of its
+   *  on-disk mtime) and capped at LAUNCHER_MAX_ROWS regardless of what the client
+   *  asked for (the sticky-window refresh legitimately asks for up to that many in
+   *  one call — see media/launcher.js). */
   private postLauncherSessions(opts?: { offset?: number; limit?: number; query?: string }): void {
     if (!this.view) return;
     void this.view.webview.postMessage(
       this.buildSessionsMessage({
         ...opts,
-        limit: Math.min(opts?.limit ?? LAUNCHER_HISTORY_LIMIT, LAUNCHER_HISTORY_LIMIT),
+        limit: Math.min(opts?.limit ?? LAUNCHER_PAGE_SIZE, LAUNCHER_MAX_ROWS),
+        sinceMs: this.launcherSinceMs(),
+        pinnedIds: this.livePinnedIds(),
       }),
     );
   }
@@ -2701,20 +3343,25 @@ See design doc for the full state machine diagram.`;
   private broadcastSessionsList(): void {
     const message = this.buildSessionsMessage();
     this.router.broadcast(message);
-    // Launcher stays at its short cap (chat history popover keeps full pages).
+    // An unfiltered first page — if the launcher has more than one page loaded, its
+    // own sticky-window guard re-requests the whole window instead of rendering
+    // this truncated one (see media/launcher.js).
     this.postLauncherSessions();
   }
 
-  /** Synthesize a list entry for a live session grok hasn't written a `summary.json` for yet (a
-   *  brand-new one). The disk-scan index can't see it, so without this the active row would vanish
-   *  from history when the popover is opened the instant a session goes live. Uses the best name we
-   *  have in memory: a renamed `customName`, else the latest user prompt, else a placeholder. */
+  /** Synthesize a list entry for a live session whose backend hasn't written its on-disk record for
+   *  yet (a brand-new one — grok's `summary.json`, or Claude's `.jsonl`, before its first flush). The
+   *  disk-scan index can't see it, so without this the active row would vanish from history when the
+   *  popover is opened the instant a session goes live. Uses the best name we have in memory: a
+   *  renamed `customName`, else the latest user prompt, else a placeholder. `session.backend` decides
+   *  which store this entry belongs to — both backends can have a live, not-yet-persisted session in
+   *  `this.pool`. */
   private liveSessionEntry(
     session: Session,
     id: string,
     cwd: string,
     overrides: SessionMetaOverrides,
-  ): SessionListEntry {
+  ): SessionStoreListEntry {
     const now = Date.now();
     const customName = overrides[id]?.customName?.trim() || undefined;
     const latestMsg = (session.latestUserMessageForTitle || "").trim();
@@ -2730,32 +3377,33 @@ See design doc for the full state machine diagram.`;
       createdAt: ts,
       numMessages: session.userMessageCount,
       modelId: undefined,
+      backend: session.backend,
     };
   }
 
-  /** Read entries for the given ids, serving unchanged ones from {@link sessionCache} and re-reading
-   *  only those whose `summary.json` mtime moved (or that aren't cached). Keeps the popover's
-   *  steady-state cost near zero across opens, load-more, and search. */
+  /** Read entries for the given ids from ONE backend's store, serving unchanged ones from
+   *  {@link sessionCache} and re-reading only those whose mtime moved (or that aren't cached). Keeps
+   *  the popover's steady-state cost near zero across opens, load-more, and search — for both
+   *  backends, since the cache is shared by id (see {@link sessionCache}). */
   private readEntriesCached(
+    store: SessionStore,
     ids: string[],
     mtimeById: Map<string, number>,
     overrides: SessionMetaOverrides,
     cwd: string,
-    grokHome: string,
-    log: (m: string) => void,
-  ): SessionListEntry[] {
+  ): SessionStoreListEntry[] {
     const stale: string[] = [];
     for (const id of ids) {
       const cached = this.sessionCache.get(id);
       if (!cached || cached.mtimeMs !== (mtimeById.get(id) ?? -1)) stale.push(id);
     }
     if (stale.length) {
-      const fresh = readSessionEntries({ fs: defaultFs, grokHome, cwd, ids: stale, overrides, log });
+      const fresh = store.readEntries(cwd, stale, overrides);
       for (const e of fresh) {
         this.sessionCache.set(e.id, { mtimeMs: mtimeById.get(e.id) ?? 0, entry: e });
       }
     }
-    return ids.map((id) => this.sessionCache.get(id)?.entry).filter((e): e is SessionListEntry => !!e);
+    return ids.map((id) => this.sessionCache.get(id)?.entry).filter((e): e is SessionStoreListEntry => !!e);
   }
 
   private renameSession(id: string, name: string): void {
@@ -2783,7 +3431,7 @@ See design doc for the full state machine diagram.`;
     this.broadcastSessionsList();
   }
 
-  private async deleteSession(id: string, name?: string): Promise<void> {
+  private async deleteSession(id: string, name?: string, backend?: BackendId): Promise<void> {
     const label = name ? `session "${name}"` : "this session";
     const choice = await vscode.window.showWarningMessage(
       `Delete ${label}? This cannot be undone.`,
@@ -2792,13 +3440,12 @@ See design doc for the full state machine diagram.`;
     );
     if (choice !== "Delete") return;
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    // The webview always knows a row's backend from the merged list it rendered; a missing value
+    // (an older cached client, or a message sent before this landed) defaults to grok, today's only
+    // backend in practice.
+    const store: SessionStore = backend === "claude" ? this.claudeSessionStore() : this.grokSessionStore();
     try {
-      deleteSessionDir({
-        fs: defaultFs,
-        grokHome: resolveGrokHome(process.env),
-        cwd,
-        id,
-      });
+      store.remove(cwd, id);
     } catch (e) {
       this.output.appendLine(`[sessions] delete failed for ${id}: ${(e as Error).message}`);
     }
@@ -2820,7 +3467,6 @@ See design doc for the full state machine diagram.`;
       if (live) this.disposeSession(live);
     }
     this.broadcastSessionsList();
-    this.postLauncherMeta({ refresh: true });
   }
 
   /** Delete every session in this workspace's history except EVERY open panel's
@@ -2829,15 +3475,16 @@ See design doc for the full state machine diagram.`;
    *  Tears down any live process it deletes and purges their overrides. */
   private async clearAllSessions(): Promise<void> {
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-    const grokHome = resolveGrokHome(process.env);
+    const stores = this.sessionStores();
     const exceptIds = new Set<string>();
     for (const s of this.panels) {
       if (s.activeSessionId) exceptIds.add(s.activeSessionId);
     }
-    // Count via the cheap stat-only index — no need to parse every summary just to confirm.
-    const clearableCount = indexSessions({ fs: defaultFs, grokHome, cwd }).filter(
-      (e) => !exceptIds.has(e.id),
-    ).length;
+    // Count via each backend's cheap stat-only index — no need to parse every summary just to confirm.
+    const clearableCount = stores.reduce(
+      (n, store) => n + store.index(cwd).filter((e) => !exceptIds.has(e.id)).length,
+      0,
+    );
     if (clearableCount === 0) {
       void vscode.window.showInformationMessage("No history to clear.");
       return;
@@ -2851,7 +3498,7 @@ See design doc for the full state machine diagram.`;
 
     let removed: string[] = [];
     try {
-      removed = clearSessions({ fs: defaultFs, grokHome, cwd, exceptIds });
+      for (const store of stores) removed.push(...store.removeAll(cwd, exceptIds));
     } catch (e) {
       this.output.appendLine(`[sessions] clear-all failed: ${(e as Error).message}`);
     }
@@ -2879,7 +3526,6 @@ See design doc for the full state machine diagram.`;
       }
     }
     this.broadcastSessionsList();
-    this.postLauncherMeta({ refresh: true });
   }
 
   private async pickFileFromComputer(session: Session): Promise<void> {
@@ -2940,6 +3586,45 @@ See design doc for the full state machine diagram.`;
     this.broadcast({ type: "compactActivity", value: this.compactActivity() });
   }
 
+  /** grok.showCapabilities — whether the capability browser (slash commands,
+   *  skills, agents) renders on a new tab's welcome canvas and in the top-bar
+   *  Skills popover. On by default. */
+  private showCapabilities(): boolean {
+    return vscode.workspace.getConfiguration("grok").get<boolean>("showCapabilities", true);
+  }
+
+  private postShowCapabilities(): void {
+    this.broadcast({ type: "showCapabilities", value: this.showCapabilities() });
+  }
+
+  /** grok.launcherHistoryDays — how far back the launcher's Recent window reaches.
+   *  Clamped 0-365; `0` means unlimited (handled by {@link daysToSinceMs}, not here). */
+  private launcherHistoryDays(): number {
+    const raw = vscode.workspace.getConfiguration("grok").get<number>("launcherHistoryDays", 30);
+    const n = Number.isFinite(raw) ? (raw as number) : 30;
+    return Math.min(365, Math.max(0, Math.round(n)));
+  }
+
+  /** `sinceMs` cutoff for the launcher's windowed history query — undefined (no
+   *  window) when `launcherHistoryDays()` is 0. The `0`-day short-circuit lives in
+   *  the pure `daysToSinceMs` (src/session-store.ts) so it's unit-testable without
+   *  `vscode`. */
+  private launcherSinceMs(): number | undefined {
+    return daysToSinceMs(this.launcherHistoryDays());
+  }
+
+  /** Every live session's id — passed to `buildSessionsMessage` so a live session
+   *  with a stale on-disk mtime (a resumed old session, or a narrow
+   *  `launcherHistoryDays`) never falls out of the launcher's window along with its
+   *  status dot (docs/plans/capability-surfacing-and-history-ux.md § Thread 3). */
+  private livePinnedIds(): Set<string> {
+    const ids = new Set<string>();
+    for (const s of this.pool) {
+      if (s.activeSessionId) ids.add(s.activeSessionId);
+    }
+    return ids;
+  }
+
   /** Anonymous, per-install GUID — generated once and kept in globalState (so it
    *  survives extension updates). It's an opaque random id, not tied to any
    *  account or the grok login; it's sent only as an event property so distinct
@@ -2976,7 +3661,7 @@ See design doc for the full state machine diagram.`;
           installId: this.installId(),
           mode: this.displayMode(session),
           model: session.client?.currentModelId || cfg.get<string>("defaultModel", "") || "",
-          effort: cfg.get<string>("defaultEffort", ""),
+          effort: session.effort ?? "",
         },
         {
           appVersion,
@@ -3527,22 +4212,25 @@ See design doc for the full state machine diagram.`;
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
     this.postTo(session, {
       type: "initialState",
-      effort: cfg.get("defaultEffort", ""),
+      effort: session.effort ?? "",
       cwd,
       useCtrlEnter: cfg.get("useCtrlEnterToSend", false),
       extVersion: (this.context.extension.packageJSON as { version?: string })?.version ?? "",
       showThinking: cfg.get("showThinking", false),
       compactActivity: cfg.get("compactActivity", true),
+      showCapabilities: cfg.get("showCapabilities", true),
     });
     this.postTo(session, this.voiceConfiguredMessage());
   }
 
   /** Rebuild a panel's view: clear + buffer replay, then the DERIVED per-session
-   *  transients last (mode, chips — not buffered, so stale flips never replay). */
+   *  transients last (mode, chips, backend — not buffered, so a stale flip or
+   *  backend switch never replays as the old value on the next reveal). */
   private replayInto(session: Session): void {
     this.router.replayInto(session, [
       { type: "modeChanged", modeId: this.displayMode(session) },
       { type: "chips", chips: session.chips },
+      { type: "backendChanged", backend: session.backend, label: backendSpec(session.backend).label, account: session.claudeAccount },
     ]);
   }
 
@@ -3617,11 +4305,18 @@ See design doc for the full state machine diagram.`;
    * Keep a session's editor-tab title current. Precedence:
    * `customName` (user rename) → in-memory latest user prompt → disk displayName → "Grokbit New".
    * The in-memory prompt is updated on every send, so the tab title follows each new prompt.
-   * Formatting via the pure `tabTitleFor`.
+   * Formatting (incl. the `Model·effort — ` settings prefix) via the pure `composeTabTitle`;
+   * model/effort come from this session's own client/state, not global config, so two tabs
+   * can show two different settings.
    */
   private updateTabTitle(session: Session): void {
     if (!session.panel) return;
-    session.panel.title = tabTitleFor(this.bestNameFor(session));
+    session.panel.title = composeTabTitle({
+      name: this.bestNameFor(session),
+      model: session.client?.currentModelId,
+      effort: session.effort,
+      backend: session.backend,
+    });
   }
 
   private bestNameFor(session: Session): string | undefined {
@@ -3636,23 +4331,22 @@ See design doc for the full state machine diagram.`;
     // primer-derived summary — treat it as unnamed instead, mirroring the
     // launcher's "New session" override for live !hasHistory rows.
     if (!session.hasHistory) return undefined;
-    return id ? this.displayNameForId(id) : undefined;
+    return id ? this.displayNameForId(id, session.backend) : undefined;
   }
 
-  /** Display name for a session id from the read cache, else one disk read. */
-  private displayNameForId(id: string): string | undefined {
+  /** Display name for a session id from the (backend-agnostic, shared) read
+   *  cache, else one disk read against `backend`'s own store — a Claude id read
+   *  through the grok store (or vice versa) would just miss (see
+   *  docs/plans/claude-code-backend.md § WP5). `backend` defaults to grok, same
+   *  fallback `deleteSession` already uses for a caller that hasn't been
+   *  updated to pass one. */
+  private displayNameForId(id: string, backend?: BackendId): string | undefined {
     const cached = this.sessionCache.get(id)?.entry;
     if (cached) return cached.displayName;
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
     const overrides = this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {});
-    const entries = readSessionEntries({
-      fs: defaultFs,
-      grokHome: resolveGrokHome(process.env),
-      cwd,
-      ids: [id],
-      overrides,
-      log: (m) => this.output.appendLine(m),
-    });
+    const store: SessionStore = backend === CLAUDE_BACKEND.id ? this.claudeSessionStore() : this.grokSessionStore();
+    const entries = store.readEntries(cwd, [id], overrides);
     return entries[0]?.displayName;
   }
 
@@ -3831,18 +4525,21 @@ See design doc for the full state machine diagram.`;
     this.pushDot(session);
   }
 
-  /** Tear down every live session (logout, CLI update, extension teardown).
-   *  Resolves once every process has actually exited — the CLI-update path awaits
-   *  this so `grok update` doesn't race a still-locked grok.exe (see dispose()).
-   *  Fire-and-forget callers (the sync VS Code disposable) can drop the promise. */
-  private disposePool(): Promise<void> {
+  /** Tear down every live session (logout, CLI update, extension teardown), or
+   *  just one backend's (per-backend logout — see logoutGrok/logoutClaude).
+   *  Resolves once every torn-down process has actually exited — the CLI-update
+   *  path awaits this so `grok update` doesn't race a still-locked grok.exe (see
+   *  dispose()). Fire-and-forget callers (the sync VS Code disposable) can drop
+   *  the promise. */
+  private disposePool(backend?: BackendId): Promise<void> {
     const closing: Promise<void>[] = [];
-    for (const s of this.pool) {
+    for (const s of [...this.pool]) {
+      if (backend && s.backend !== backend) continue;
       s.gen++;
       if (s.client) closing.push(s.client.dispose());
       s.client = undefined;
+      this.pool.delete(s);
     }
-    this.pool.clear();
     return Promise.all(closing).then(() => undefined);
   }
 
@@ -3896,7 +4593,14 @@ See design doc for the full state machine diagram.`;
   }
 
   private buildEnv(cwd: string): NodeJS.ProcessEnv {
-    const dotEnv = this.readDotEnv(cwd);
+    const rawDotEnv = this.readDotEnv(cwd);
+    // A committed .env is attacker-controlled the moment a victim trusts the
+    // folder — filter the .env-SOURCED layer only (never the inherited real
+    // environment: users legitimately set these in their own shell) before
+    // merging it over process.env. Protects grok too, not just Claude — this
+    // builder is shared by both backends, and that's intended. See
+    // src/env-filter.ts for the full threat model + denylist.
+    const { env: dotEnv, dropped } = filterDotEnv(rawDotEnv);
     const env: NodeJS.ProcessEnv = { ...process.env, ...dotEnv };
 
     // XAI_API_KEY is the generic xAI key name; grok CLI needs GROK_CODE_XAI_API_KEY.
@@ -3907,6 +4611,11 @@ See design doc for the full state machine diagram.`;
 
     if (Object.keys(dotEnv).length > 0) {
       this.output.appendLine(`[env] loaded ${Object.keys(dotEnv).length} var(s) from .env`);
+    }
+    if (dropped.length > 0) {
+      // Names only — never values — so this is diagnosable without leaking
+      // whatever the .env actually set them to.
+      this.output.appendLine(`[env] ignored ${dropped.length} var(s) from .env (not allowed to override the environment): ${dropped.join(", ")}`);
     }
     return env;
   }
@@ -3932,8 +4641,10 @@ See design doc for the full state machine diagram.`;
     <button id="history-btn" class="toolbar-btn" title="Session history"></button>
     <button id="new-btn" class="toolbar-btn" title="New session"></button>
     <button id="docs-btn" class="toolbar-btn studio-top-btn" title="Workspace documents">Docs</button>
+    <button id="capabilities-btn" class="toolbar-btn studio-top-btn" title="Grokbit workflow, skills, commands & agents">Grokbit Actions</button>
     <div id="history-popover" class="toolbar-popover history-popover" hidden></div>
     <div id="docs-popover" class="toolbar-popover history-popover studio-popover" hidden></div>
+    <div id="capabilities-popover" class="toolbar-popover history-popover studio-popover" hidden></div>
   </header>
 
   <div id="plan-banner" class="plan-banner" hidden>
@@ -3947,7 +4658,11 @@ See design doc for the full state machine diagram.`;
       <h2>Grokbit</h2>
       <p class="welcome-tagline">Your AI coding partner in the editor — ask questions, plan safely, edit files, create images, and produce business documents without the terminal.</p>
       <p id="welcome-version" class="muted loading-dots">Starting</p>
-      <div id="welcome-starters" class="welcome-starters" hidden></div>
+      <div id="welcome-guide" class="welcome-guide" hidden></div>
+      <div id="welcome-grid" class="welcome-grid">
+        <div id="session-setup-card" class="session-setup-card" hidden></div>
+        <div id="capabilities-panel" class="capabilities-panel" hidden></div>
+      </div>
       <div id="welcome-onboarding"></div>
       <p class="welcome-byline muted"><a href="#" id="welcome-about-link" class="muted-link">About Grokbit</a></p>
     </div>
@@ -3974,15 +4689,17 @@ See design doc for the full state machine diagram.`;
           <span id="donut-label" class="small muted">0%</span>
         </div>
         <button id="model-label" class="toolbar-btn model-label-btn" title="Model & effort" hidden></button>
+        <button id="backend-label" class="toolbar-btn backend-label-btn" title="Agent backend" hidden></button>
         <div id="chips"></div>
       </div>
       <div class="toolbar-right">
-        <button id="model-label" class="toolbar-btn model-label" title="Pick model"></button>
         <button id="mode-btn" class="toolbar-btn" title="Pick mode"></button>
         <button id="send-btn" class="send"></button>
       </div>
     </div>
     <div id="mode-popover" class="toolbar-popover" hidden></div>
+    <div id="backend-popover" class="toolbar-popover" hidden></div>
+    <div id="session-settings-popover" class="toolbar-popover session-settings-popover" hidden></div>
     <div id="gear-popover" class="toolbar-popover gear-popover" hidden></div>
     <div id="add-popover" class="toolbar-popover" hidden></div>
     <div id="slash-popover" class="slash-popover" hidden></div>
@@ -4035,10 +4752,14 @@ See design doc for the full state machine diagram.`;
   <div class="launcher">
     <div class="launcher-head">
       <div id="launcher-meta" class="launcher-meta" hidden></div>
-      <button id="launcher-new" class="onb-action launcher-new-btn" type="button"><span class="launcher-logo" style="--logo:url('${resourceUri("blackhole-icon.svg")}')"></span>New session</button>
+      <div class="launcher-new-split">
+        <button id="launcher-new" class="onb-action launcher-new-btn" type="button"><span class="launcher-logo" style="--logo:url('${resourceUri("blackhole-icon.svg")}')"></span>New session</button>
+        <button id="launcher-new-caret" class="launcher-new-caret" type="button" title="Choose agent" aria-haspopup="true" aria-expanded="false"></button>
+        <div id="launcher-new-menu" class="toolbar-popover launcher-new-menu" hidden></div>
+      </div>
     </div>
-    <div class="launcher-history launcher-section collapsed">
-      <button id="launcher-history-toggle" class="launcher-section-toggle" type="button" aria-expanded="false" aria-controls="launcher-history-body" title="Expand section"></button>
+    <div class="launcher-history launcher-section expanded">
+      <button id="launcher-history-toggle" class="launcher-section-toggle" type="button" aria-expanded="true" aria-controls="launcher-history-body" title="Collapse section"></button>
       <div id="launcher-history-body" class="launcher-section-body launcher-history-body">
         <div id="launcher-list" class="history-list launcher-list"></div>
         <div id="launcher-footer" class="history-footer" hidden>

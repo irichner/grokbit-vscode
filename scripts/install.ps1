@@ -2,7 +2,7 @@
 # Usage:  pwsh scripts\install.ps1 [-VsixPath path\to.vsix] [-NoPublish]
 #
 # Default (no -VsixPath) = full REBUILD contract (all four, always):
-#   1. bump package.json patch  (scripts/bump_extension_version.py)
+#   1. bump package.json CalVer YYYY.M.N  (scripts/bump_extension_version.py)
 #   2. package a fresh .vsix    (npm run package; clears stale grokbit-*.vsix)
 #   3. reinstall into VS Code   (code --install-extension … --force)
 #   4. publish to Marketplace   (npx @vscode/vsce publish --packagePath …)
@@ -71,11 +71,25 @@ if (-not $VsixPath) {
     Write-Host "Rebuild: bump version → package → reinstall → publish..."
     Push-Location $repoRoot
     try {
-        # Every rebuild gets a new Marketplace version (package.json patch +1).
+        # Every rebuild gets a new Marketplace version (CalVer YYYY.M.N).
         # Independent of the agentic-template VERSION file (commit metrics).
         # Native commands do not throw on non-zero exit under $ErrorActionPreference=Stop.
         python scripts/bump_extension_version.py
         if ($LASTEXITCODE -ne 0) { throw "bump_extension_version failed (exit $LASTEXITCODE)." }
+        # Refresh the development-token ledger BEFORE packaging, so the vsix
+        # carries a constant no older than the build shipping it. Deliberately
+        # NON-FATAL: no Python, no transcripts, or an aggregator error must
+        # never be able to block a rebuild or a release — the committed
+        # constant just stays as it is.
+        Write-Host "Refreshing development-token ledger (non-fatal)..."
+        try {
+            python scripts/aggregate_token_usage.py --write
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "Token metrics refresh failed (exit $LASTEXITCODE); shipping the committed constant."
+            }
+        } catch {
+            Write-Warning "Token metrics refresh skipped: $($_.Exception.Message)"
+        }
         if (-not (Test-Path "node_modules")) {
             npm install
             if ($LASTEXITCODE -ne 0) { throw "npm install failed (exit $LASTEXITCODE)." }

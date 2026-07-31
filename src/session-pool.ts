@@ -33,3 +33,26 @@ export function computeDot(opts: {
   if (opts.unread) return opts.unreadError ? "error" : "unread";
   return "none";
 }
+
+/**
+ * Should a just-closed tab's on-disk session be recycled (deleted) — grok's
+ * empty-primer-session cleanup (#24: abandoning an untouched "New session"
+ * must not pile primer sessions into history)? `emptyPrimerSweep` is the
+ * backend's own quirk flag (`BackendSpec.quirks.emptyPrimerSweep` in
+ * `backends.ts`) — Claude never receives the hidden primer, so it has no
+ * "empty primer-only" session to recycle in the first place, and a closed
+ * Claude tab (empty or not) always keeps its history
+ * (docs/plans/claude-code-backend.md § WP5). Pure so the policy — not just the
+ * quirk *value* — is unit-tested directly, mirroring {@link computeDot};
+ * `sidebar.ts`'s `onPanelClosed` is the only caller (impure: globalState read,
+ * disk delete, timers).
+ */
+export function shouldRecycleEmptySession(opts: {
+  emptyPrimerSweep: boolean;
+  hasHistory: boolean;
+  hasAfterTurn: boolean;
+  busy: boolean;
+  renamed: boolean;
+}): boolean {
+  return opts.emptyPrimerSweep && !opts.hasHistory && !opts.hasAfterTurn && !opts.busy && !opts.renamed;
+}

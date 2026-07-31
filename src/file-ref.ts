@@ -17,6 +17,19 @@ export interface FileRef {
  * the path instead of breaking the match. Line numbers are returned 1-based,
  * exactly as written.
  */
+/**
+ * Whether `value` is a usable file-ref path — a non-empty (post-trim) string.
+ * Guards `parseFileRef`'s call sites (e.g. the webview's "openFile" message)
+ * against a missing/blank/non-string payload: `parseFileRef` calls
+ * `raw.match(...)`, which throws a TypeError on anything that isn't a string
+ * (a number, `null`, an object, …) — a falsy-only check (`!value`) misses that
+ * case (a truthy non-string like `5` slips through) and also misses a
+ * whitespace-only string.
+ */
+export function isUsableFilePath(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 export function parseFileRef(raw: string): FileRef {
   const m = raw.match(/^(.*?)(?:#L(\d+)(?:-L?(\d+))?)?$/i);
   if (!m) return { path: raw };

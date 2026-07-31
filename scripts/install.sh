@@ -3,7 +3,7 @@
 # Usage:  ./scripts/install.sh [path/to/file.vsix] [--no-publish]
 #
 # Default (no vsix argument) = full REBUILD contract (all four, always):
-#   1. bump package.json patch  (scripts/bump_extension_version.py)
+#   1. bump package.json CalVer YYYY.M.N  (scripts/bump_extension_version.py)
 #   2. package a fresh .vsix    (npm run package; clears stale grokbit-*.vsix)
 #   3. reinstall into VS Code   (code --install-extension … --force)
 #   4. publish to Marketplace   (npx @vscode/vsce publish --packagePath …)
@@ -79,6 +79,15 @@ if [ -z "$vsix" ]; then
     echo "Rebuild: bump version → package → reinstall → publish..."
     cd "$repo_root"
     python3 scripts/bump_extension_version.py || python scripts/bump_extension_version.py
+    # Refresh the development-token ledger BEFORE packaging, so the vsix carries
+    # a constant no older than the build shipping it. Deliberately NON-FATAL
+    # (note the trailing `|| true` under `set -e`): no Python, no transcripts, or
+    # an aggregator error must never be able to block a rebuild or a release —
+    # the committed constant just stays as it is.
+    echo "Refreshing development-token ledger (non-fatal)..."
+    (python3 scripts/aggregate_token_usage.py --write \
+        || python scripts/aggregate_token_usage.py --write \
+        || echo "Token metrics refresh skipped; shipping the committed constant." >&2) || true
     [ -d node_modules ] || npm install
     npm run package
     vsix=$(ls -t "$repo_root"/*.vsix | head -n1)

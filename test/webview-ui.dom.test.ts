@@ -218,6 +218,90 @@ describe("session rows (regression: only the label was clickable)", () => {
   });
 });
 
+describe("history popover backend badges (merged grok + Claude history, WP4; both-labeled since capability-surfacing-and-history-ux.md § Thread 4)", () => {
+  it("badges both a grok row and a Claude row", () => {
+    const h = bootWebview();
+    click(h.window, $(h.doc, "history-btn"));
+    h.posted.length = 0;
+    dispatch(h.window, {
+      type: "sessions",
+      entries: [
+        { id: "g1", displayName: "Grok session", updatedAt: Date.now(), backend: "grok" },
+        { id: "c1", displayName: "Claude session", updatedAt: Date.now(), backend: "claude" },
+      ],
+      activeId: null,
+    });
+    const rows = h.doc.querySelectorAll(".history-row");
+    const grokBadge = rows[0].querySelector(".history-row-backend");
+    expect(grokBadge).not.toBeNull();
+    expect(grokBadge!.textContent).toBe("Grok");
+    const claudeBadge = rows[1].querySelector(".history-row-backend");
+    expect(claudeBadge).not.toBeNull();
+    expect(claudeBadge!.textContent).toBe("Claude");
+  });
+
+  it("a row with no backend field (legacy) badges Grok — legacy rows predate the field", () => {
+    const h = bootWebview();
+    click(h.window, $(h.doc, "history-btn"));
+    dispatch(h.window, {
+      type: "sessions",
+      entries: [{ id: "s1", displayName: "Add subtract fn", numMessages: 4, updatedAt: Date.now() - 60000 }],
+      activeId: null,
+    });
+    const badge = h.doc.querySelector(".history-row-backend");
+    expect(badge).not.toBeNull();
+    expect(badge!.textContent).toBe("Grok");
+  });
+
+  it("delete posts the row's backend along with the id", () => {
+    const h = bootWebview();
+    click(h.window, $(h.doc, "history-btn"));
+    h.posted.length = 0;
+    dispatch(h.window, {
+      type: "sessions",
+      entries: [{ id: "c1", displayName: "Claude session", updatedAt: Date.now(), backend: "claude" }],
+      activeId: null,
+    });
+    const delBtn = h.doc.querySelector(".history-row .history-action-danger") as HTMLElement;
+    click(h.window, delBtn);
+    expect(h.posted).toContainEqual({ type: "deleteSession", id: "c1", name: "Claude session", backend: "claude" });
+  });
+
+  // docs/plans/claude-code-backend.md § WP5 — a Claude row must resume a
+  // Claude session, not a grok one; the row's own backend rides along.
+  it("resume (row click) posts the row's backend along with the id", () => {
+    const h = bootWebview();
+    click(h.window, $(h.doc, "history-btn"));
+    h.posted.length = 0;
+    dispatch(h.window, {
+      type: "sessions",
+      entries: [
+        { id: "g1", displayName: "Grok session", updatedAt: Date.now(), backend: "grok" },
+        { id: "c1", displayName: "Claude session", updatedAt: Date.now(), backend: "claude" },
+      ],
+      activeId: null,
+    });
+    const rows = h.doc.querySelectorAll(".history-row");
+    const meta = rows[1].querySelector(".history-row-meta") as HTMLElement;
+    click(h.window, meta);
+    expect(h.posted).toContainEqual({ type: "resumeSession", id: "c1", backend: "claude" });
+  });
+
+  it("resume for a legacy row (no backend field) posts no backend field", () => {
+    const h = bootWebview();
+    click(h.window, $(h.doc, "history-btn"));
+    h.posted.length = 0;
+    dispatch(h.window, {
+      type: "sessions",
+      entries: [{ id: "s1", displayName: "Old session", updatedAt: Date.now() }],
+      activeId: null,
+    });
+    const meta = h.doc.querySelector(".history-row .history-row-meta") as HTMLElement;
+    click(h.window, meta);
+    expect(h.posted).toContainEqual({ type: "resumeSession", id: "s1" });
+  });
+});
+
 describe("session history pagination", () => {
   const page1 = [
     { id: "p0", displayName: "Session 0", numMessages: 1, updatedAt: Date.now() - 1000 },
@@ -281,6 +365,39 @@ describe("session history pagination", () => {
       hasMore: true,
     });
     expect((h.doc.querySelector(".history-footer") as any).hidden).toBe(false);
+  });
+
+  // [R] Decision 4 option (b) — the popover pages off the host's authoritative
+  // nextOffset, not the rendered row count. The host prepends a synthesized live
+  // row for a not-yet-flushed session, so a page with 101 rendered rows can still
+  // mean only 100 came from disk (docs/plans/capability-surfacing-and-history-ux.md
+  // § Thread 3). Without this fix, scrolling here would request offset 101 and
+  // permanently skip disk row #101 at every page boundary.
+  it("[R] scroll-to-load requests the host's nextOffset, not entries.length", () => {
+    const h = openPopover();
+    const entries = Array.from({ length: 101 }, (_, i) => ({
+      id: `r${i}`,
+      displayName: `Session ${i}`,
+      updatedAt: Date.now() - i,
+    }));
+    dispatch(h.window, {
+      type: "sessions",
+      entries,
+      activeId: null,
+      offset: 0,
+      total: 500,
+      hasMore: true,
+      nextOffset: 100,
+    });
+    expect(h.doc.querySelectorAll(".history-row")).toHaveLength(101);
+
+    const list = h.doc.querySelector(".history-list") as HTMLElement;
+    Object.defineProperty(list, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(list, "clientHeight", { value: 300, configurable: true });
+    Object.defineProperty(list, "scrollTop", { value: 690, configurable: true, writable: true });
+    list.dispatchEvent(new h.window.Event("scroll"));
+
+    expect(h.posted).toContainEqual({ type: "listSessions", offset: 100, query: "" });
   });
 });
 
@@ -708,6 +825,41 @@ describe("welcome version line (session-start lifecycle)", () => {
     dispatch(window, { type: "onboarding", state: "auth-required" });
     expect(verEl(doc).hidden).toBe(false);
     expect(ver(doc)).toBe("Authentication required");
+  });
+});
+
+describe("Claude onboarding cards (docs/plans/claude-code-backend.md § WP3)", () => {
+  it("missing-adapter card offers Install + a backend-tagged recheck", () => {
+    const { window, posted, doc } = bootWebview();
+    dispatch(window, { type: "onboarding", state: "missing-claude-adapter", backend: "claude" });
+    const onb = $(doc, "welcome-onboarding");
+    expect(onb.textContent).toContain("Install the Claude Code adapter");
+
+    click(window, onb.querySelector('[data-act="installClaude"]') as HTMLElement);
+    expect(posted).toContainEqual({ type: "installClaudeAdapter" });
+
+    click(window, onb.querySelector('[data-act="recheck"]') as HTMLElement);
+    expect(posted).toContainEqual({ type: "recheckConnection", backend: "claude" });
+  });
+
+  it("auth-required card offers claude auth login + a backend-tagged recheck", () => {
+    const { window, posted, doc } = bootWebview();
+    dispatch(window, { type: "onboarding", state: "claude-auth-required", backend: "claude" });
+    const onb = $(doc, "welcome-onboarding");
+    expect(onb.textContent).toContain("Sign in to Claude Code");
+
+    click(window, onb.querySelector('[data-act="runClaudeLogin"]') as HTMLElement);
+    expect(posted).toContainEqual({ type: "runClaudeLogin" });
+
+    click(window, onb.querySelector('[data-act="recheck"]') as HTMLElement);
+    expect(posted).toContainEqual({ type: "recheckConnection", backend: "claude" });
+  });
+
+  it("grok's own onboarding cards recheck with no backend field (unaffected)", () => {
+    const { window, posted, doc } = bootWebview();
+    dispatch(window, { type: "onboarding", state: "missing-cli", platform: "linux" });
+    click(window, $(doc, "welcome-onboarding").querySelector('[data-act="recheck"]') as HTMLElement);
+    expect(posted.find((m) => m.type === "recheckConnection")).toEqual({ type: "recheckConnection" });
   });
 });
 

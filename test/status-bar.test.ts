@@ -2,6 +2,7 @@
 // the impure GrokSidebar gathers live state and feeds it into computeStatusBar.
 import { describe, it, expect } from "vitest";
 import { computeStatusBar } from "../src/status-bar";
+import { Session } from "../src/session";
 
 describe("computeStatusBar — the native status-bar HUD", () => {
   it("hides entirely when nothing is active and nobody is waiting", () => {
@@ -84,5 +85,70 @@ describe("computeStatusBar — the native status-bar HUD", () => {
   it("falls back to a neutral model label when the name is blank", () => {
     const v = computeStatusBar({ hasActive: true, modelName: "", mode: "agent" });
     expect(v.text).toContain("Grok");
+  });
+
+  // The bug this fixes: effort used to come from the shared `grok.defaultEffort`
+  // config, so every tab's HUD showed the same value. sidebar.ts's updateStatusBar
+  // now reads the focused session's own `effort` field (session.ts) instead —
+  // simulate two focused tabs by feeding each session's own field straight in.
+  it("reflects the focused session's own effort, not a value shared across tabs", () => {
+    const sessionA = new Session();
+    sessionA.effort = "high";
+    const sessionB = new Session();
+    sessionB.effort = "low";
+    expect(sessionA.effort).not.toBe(sessionB.effort);
+
+    const viewA = computeStatusBar({ hasActive: true, modelName: "Grok", effort: sessionA.effort, mode: "agent" });
+    const viewB = computeStatusBar({ hasActive: true, modelName: "Grok", effort: sessionB.effort, mode: "agent" });
+    expect(viewA.text).toContain("High");
+    expect(viewA.text).not.toContain("Low");
+    expect(viewB.text).toContain("Low");
+    expect(viewB.text).not.toContain("High");
+  });
+
+  it("shows CLI default for a session that never had an explicit effort", () => {
+    const session = new Session();
+    const v = computeStatusBar({ hasActive: true, modelName: "Grok", effort: session.effort ?? "", mode: "agent" });
+    expect(v.tooltip).toContain("Effort: CLI default");
+  });
+
+  it("Session.backend defaults to grok — grok is the default backend for every new tab", () => {
+    expect(new Session().backend).toBe("grok");
+  });
+
+  // Claude Code is the second backend (docs/plans/claude-code-backend.md § WP3) —
+  // the default `backend` (undefined) behaves exactly like grok, so every test
+  // above is unaffected; these cover the explicit "claude" field.
+  describe("backend field (Claude Code)", () => {
+    it("defaults to the grok label when backend is undefined (every pre-WP3 caller)", () => {
+      const v = computeStatusBar({ hasActive: true, modelName: "", mode: "agent" });
+      expect(v.text).toContain("Grok");
+      expect(v.text).not.toContain("Claude");
+    });
+
+    it("calls out Claude explicitly — grok stays the quiet default", () => {
+      const v = computeStatusBar({ hasActive: true, backend: "claude", modelName: "Sonnet 4.5", mode: "agent" });
+      expect(v.text).toContain("Claude");
+      expect(v.text).toContain("Sonnet 4.5");
+      expect(v.tooltip).toContain("Backend: Claude Code");
+    });
+
+    it("falls back to a neutral Claude label when the model name is blank", () => {
+      const v = computeStatusBar({ hasActive: true, backend: "claude", modelName: "", mode: "agent" });
+      expect(v.text).toContain("Claude");
+    });
+
+    it("omits the whole effort segment/tooltip line for Claude (it has no effort axis at all)", () => {
+      const v = computeStatusBar({ hasActive: true, backend: "claude", modelName: "Sonnet", effort: "", mode: "agent" });
+      expect(v.text).not.toContain("·  ·"); // no dangling empty segment
+      expect(v.text.split(" · ").every((p) => p.trim().length > 0)).toBe(true);
+      expect(v.tooltip).not.toContain("Effort:");
+    });
+
+    it("still shows effort for grok when explicitly backend:'grok'", () => {
+      const v = computeStatusBar({ hasActive: true, backend: "grok", modelName: "Grok Build", effort: "medium", mode: "agent" });
+      expect(v.text).toContain("Medium");
+      expect(v.tooltip).toContain("Effort: Medium");
+    });
   });
 });

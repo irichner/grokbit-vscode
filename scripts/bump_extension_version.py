@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Bump the extension Marketplace version in package.json (patch +1).
+"""Bump the extension Marketplace version in package.json (CalVer).
+
+Scheme: **YYYY.M.N** (calendar versioning, semver-compatible for vsce):
+  - YYYY — calendar year (major)
+  - M    — calendar month 1–12 (minor; no leading zero — semver forbids them)
+  - N    — rebuild sequence within that month (patch), starting at 1
+
+Each rebuild either increments N for the current year/month, or resets to
+`YYYY.M.1` when the calendar month rolls (or when migrating from legacy
+semver like `3.0.20`).
 
 This is the **product** version (`package.json` → Marketplace / vsix name).
 It is independent of the agentic-template `VERSION` file (commit metrics).
@@ -17,6 +26,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 
@@ -35,9 +45,23 @@ def parse_semver(version: str) -> tuple[int, int, int]:
     return nums[0], nums[1], nums[2]
 
 
-def bump_patch(version: str) -> str:
+def format_calver(year: int, month: int, seq: int) -> str:
+    if not (1 <= month <= 12):
+        raise ValueError(f"month must be 1–12, got {month}")
+    if seq < 1:
+        raise ValueError(f"sequence must be >= 1, got {seq}")
+    # No zero-padding: node-semver / vsce reject leading zeros.
+    return f"{year}.{month}.{seq}"
+
+
+def bump_calver(version: str, today: date | None = None) -> str:
+    """Next CalVer for *today*, incrementing the in-month sequence when already on it."""
+    d = today or date.today()
+    year, month = d.year, d.month
     major, minor, patch = parse_semver(version)
-    return f"{major}.{minor}.{patch + 1}"
+    if major == year and minor == month and patch >= 1:
+        return format_calver(year, month, patch + 1)
+    return format_calver(year, month, 1)
 
 
 # Match "version": "X.Y.Z" only at the top-level package.json key (first occurrence).
@@ -47,19 +71,23 @@ _VERSION_RE = re.compile(
 )
 
 
-def bump_package_json_text(raw: str) -> tuple[str, str, str]:
+def bump_package_json_text(
+    raw: str, today: date | None = None
+) -> tuple[str, str, str]:
     """Return (new_text, old_version, new_version). Raises ValueError if no version key."""
     m = _VERSION_RE.search(raw)
     if not m:
         raise ValueError('no "version" field found in package.json')
     old = m.group(2)
-    new = bump_patch(old)
+    new = bump_calver(old, today=today)
     new_text = raw[: m.start()] + m.group(1) + new + m.group(3) + raw[m.end() :]
     return new_text, old, new
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Bump package.json patch version for rebuilds.")
+    p = argparse.ArgumentParser(
+        description="Bump package.json to the next CalVer (YYYY.M.N) for rebuilds."
+    )
     p.add_argument("--root", type=Path, default=None, help="Repo root (default: parent of scripts/)")
     p.add_argument("--dry-run", action="store_true", help="Print new version without writing")
     args = p.parse_args()

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain JS module, no types
-import { looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, activityPeek, activityPosText } from "../media/webview-helpers.js";
+import { looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, formatLauncherMetaTooltip, activityPeek, activityPosText, backendBadgeLabel, inferPermissionKind, permissionDiffFromRawInput, sessionSetupModel, capabilityGroupsView, sessionToggleGroup, welcomeGuide, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK } from "../media/webview-helpers.js";
 import { buildPrompt } from "../src/prompt-builder";
 import { makeExplicitChip, makeImplicitChip } from "../src/chips";
 
@@ -508,6 +508,21 @@ describe("formatTokenCount", () => {
     expect(formatTokenCount(1_503_035)).toBe("1.5M");
   });
 
+  it("uses one decimal for billions", () => {
+    expect(formatTokenCount(1_000_000_000)).toBe("1.0B");
+    expect(formatTokenCount(1_183_097_859)).toBe("1.2B");
+    expect(formatTokenCount(12_500_000_000)).toBe("12.5B");
+  });
+
+  // Each tier is selected before rounding, so a value a hair under the next
+  // threshold rounds up INTO it and renders as "1000.0<lower unit>". Long-
+  // standing at the K/M boundary; the B tier inherits it rather than growing a
+  // special case for a one-in-a-billion display edge.
+  it("rounds up within the lower tier at a boundary", () => {
+    expect(formatTokenCount(999_999)).toBe("1000.0K");
+    expect(formatTokenCount(999_999_999)).toBe("1000.0M");
+  });
+
   it("rejects non-finite / negative inputs", () => {
     expect(formatTokenCount(NaN)).toBe("");
     expect(formatTokenCount(-1)).toBe("");
@@ -549,6 +564,49 @@ describe("formatLauncherMeta", () => {
   });
 });
 
+describe("formatLauncherMetaTooltip", () => {
+  it("names the scope, dates the figure, and denies it is your usage", () => {
+    expect(
+      formatLauncherMetaTooltip({
+        extVersion: "2.0.4",
+        totalTokens: 42_700_000,
+        generatedAt: "2026-07-30T12:34:56Z",
+      }),
+    ).toBe(
+      "Grokbit v2.0.4 — 42,700,000 tokens spent developing this extension " +
+        "(all maintainers, all sessions, as of 2026-07-30). This is not your usage.",
+    );
+  });
+
+  it("drops the as-of clause when the stamp is missing or unparseable", () => {
+    for (const generatedAt of [undefined, "", "not-a-date"]) {
+      const tip = formatLauncherMetaTooltip({
+        extVersion: "2.0.4",
+        totalTokens: 1234,
+        generatedAt,
+      });
+      expect(tip).not.toContain("as of");
+      expect(tip).toContain("1,234 tokens spent developing this extension");
+      expect(tip).toContain("This is not your usage.");
+    }
+  });
+
+  it("falls back to the bare version when no token constant shipped", () => {
+    expect(formatLauncherMetaTooltip({ extVersion: "2.0.4" })).toBe("Extension v2.0.4");
+    expect(formatLauncherMetaTooltip({})).toBe("");
+    expect(
+      formatLauncherMetaTooltip(undefined as unknown as { extVersion?: string }),
+    ).toBe("");
+  });
+
+  it("omits the version segment when the host has none", () => {
+    expect(formatLauncherMetaTooltip({ totalTokens: 5 })).toBe(
+      "Grokbit — 5 tokens spent developing this extension " +
+        "(all maintainers, all sessions). This is not your usage.",
+    );
+  });
+});
+
 // Activity-carousel peek state machine — view -1 means "live" (follow latest).
 describe("activityPeek", () => {
   it("steps back from live to the second-newest step", () => {
@@ -582,5 +640,621 @@ describe("activityPosText", () => {
 
   it("empty carousel shows nothing", () => {
     expect(activityPosText(-1, 0)).toBe("");
+  });
+});
+
+// Labels BOTH backends (docs/plans/capability-surfacing-and-history-ux.md § Thread
+// 4) — a deliberate reversal of the original "quiet for grok" idiom, for the
+// history row only (the status-bar HUD keeps that idiom — see test/status-bar.test.ts,
+// unchanged by this reversal).
+describe("backendBadgeLabel", () => {
+  it("labels a grok row", () => {
+    expect(backendBadgeLabel("grok")).toBe("Grok");
+  });
+
+  it("labels a Claude row", () => {
+    expect(backendBadgeLabel("claude")).toBe("Claude");
+  });
+
+  it("defaults a missing/legacy backend field to Grok (rows that predate the field)", () => {
+    expect(backendBadgeLabel(undefined)).toBe("Grok");
+    expect(backendBadgeLabel("")).toBe("Grok");
+  });
+
+  it("never invents a label for a backend it doesn't recognize", () => {
+    expect(backendBadgeLabel("something-else")).toBe("");
+  });
+});
+
+// Claude's session/request_permission carries no toolCall.kind at all — see
+// docs/plans/claude-code-backend.md § WP3.
+describe("inferPermissionKind", () => {
+  it("prefers the payload's own kind when present (grok always has one)", () => {
+    expect(inferPermissionKind("edit", "execute", { file_path: "a", content: "x" })).toBe("edit");
+  });
+
+  it("falls back to a kind already seen for this toolCallId (Claude's preceding tool_call)", () => {
+    expect(inferPermissionKind(undefined, "edit", {})).toBe("edit");
+    expect(inferPermissionKind("", "execute", { command: "npm test" })).toBe("execute");
+  });
+
+  it("infers Write from file_path + content when nothing else is known", () => {
+    expect(inferPermissionKind(undefined, "", { file_path: "notes.txt", content: "hello" })).toBe("write");
+  });
+
+  it("infers Edit from file_path + old_string + new_string when nothing else is known", () => {
+    expect(inferPermissionKind(undefined, "", {
+      file_path: "notes.txt", old_string: "hello", new_string: "goodbye",
+    })).toBe("edit");
+  });
+
+  it("returns empty when nothing correlates (e.g. a command permission)", () => {
+    expect(inferPermissionKind(undefined, "", { command: "npm test" })).toBe("");
+    expect(inferPermissionKind(undefined, "", undefined)).toBe("");
+    expect(inferPermissionKind(undefined, "", null)).toBe("");
+  });
+});
+
+describe("permissionDiffFromRawInput", () => {
+  it("builds an Edit preview from old_string/new_string", () => {
+    expect(permissionDiffFromRawInput(
+      { file_path: "src/foo.ts", old_string: "hello", new_string: "goodbye" },
+      "edit",
+    )).toEqual({ path: "src/foo.ts", oldText: "hello", newText: "goodbye" });
+  });
+
+  it("builds a Write preview as an all-added file (no 'before' available client-side)", () => {
+    expect(permissionDiffFromRawInput(
+      { file_path: "notes.txt", content: "line one\nline two" },
+      "write",
+    )).toEqual({ path: "notes.txt", oldText: "", newText: "line one\nline two" });
+  });
+
+  it("returns null for a non-edit kind (e.g. a command)", () => {
+    expect(permissionDiffFromRawInput({ command: "npm test" }, "execute")).toBeNull();
+  });
+
+  it("returns null when rawInput has no file_path", () => {
+    expect(permissionDiffFromRawInput({ old_string: "a", new_string: "b" }, "edit")).toBeNull();
+  });
+
+  it("returns null when rawInput is missing entirely", () => {
+    expect(permissionDiffFromRawInput(undefined, "edit")).toBeNull();
+    expect(permissionDiffFromRawInput(null, "write")).toBeNull();
+  });
+});
+
+// Pure view-model shared by the new-tab "Session setup" card and the composer
+// quick-settings popover — docs/plans/claude-code-backend.md § WP7.
+describe("sessionSetupModel", () => {
+  const MODELS = [
+    { modelId: "grok-build", name: "Grok Build" },
+    { modelId: "grok-code", name: "Grok Code" },
+  ];
+  const GROK_EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"];
+
+  it("grok: renders all four rows in order (Agent, Model, Thinking, Mode)", () => {
+    const m = sessionSetupModel({
+      backend: "grok", modelId: "grok-build", availableModels: MODELS,
+      effort: "medium", effortLevels: GROK_EFFORT_LEVELS, mode: "agent",
+    });
+    expect(m.backend).toBe("grok");
+    expect(m.rows.map((r) => r.id)).toEqual(["agent", "model", "thinking", "mode"]);
+  });
+
+  it("claude: omits the Thinking row entirely (no effort axis) rather than rendering it empty", () => {
+    const m = sessionSetupModel({
+      backend: "claude", modelId: "sonnet",
+      availableModels: [{ modelId: "sonnet", name: "Sonnet" }],
+      effort: "", effortLevels: [], mode: "agent",
+    });
+    expect(m.rows.map((r) => r.id)).toEqual(["agent", "model", "mode"]);
+    expect(m.rows.find((r) => r.id === "thinking")).toBeUndefined();
+  });
+
+  it("Agent row selects the current backend and offers both", () => {
+    const m = sessionSetupModel({ backend: "claude", effortLevels: [] });
+    const agent = m.rows.find((r) => r.id === "agent")!;
+    expect(agent.kind).toBe("segmented");
+    expect(agent.selectedId).toBe("claude");
+    expect(agent.options).toEqual([
+      { id: "grok", label: "Grok Build", selected: false },
+      { id: "claude", label: "Claude Code", selected: true },
+    ]);
+  });
+
+  it("Model row resolves the selected option from availableModels", () => {
+    const m = sessionSetupModel({
+      backend: "grok", modelId: "grok-code", availableModels: MODELS, effortLevels: GROK_EFFORT_LEVELS,
+    });
+    const model = m.rows.find((r) => r.id === "model")!;
+    expect(model.kind).toBe("dropdown");
+    expect(model.selectedId).toBe("grok-code");
+    expect(model.options).toEqual([
+      { id: "grok-build", label: "Grok Build", selected: false },
+      { id: "grok-code", label: "Grok Code", selected: true },
+    ]);
+  });
+
+  it("Model row: an unknown/stale model id echoes selectedId but marks no option selected", () => {
+    const m = sessionSetupModel({
+      backend: "grok", modelId: "stale-id", availableModels: MODELS, effortLevels: GROK_EFFORT_LEVELS,
+    });
+    const model = m.rows.find((r) => r.id === "model")!;
+    expect(model.selectedId).toBe("stale-id");
+    expect(model.options.every((o) => !o.selected)).toBe(true);
+  });
+
+  it("Model row: a missing model id / empty model list degrades to an empty options list", () => {
+    const m = sessionSetupModel({ backend: "grok", effortLevels: GROK_EFFORT_LEVELS });
+    const model = m.rows.find((r) => r.id === "model")!;
+    expect(model.selectedId).toBe("");
+    expect(model.options).toEqual([]);
+  });
+
+  it("Thinking row fills dots up to the selected level and labels xhigh specially", () => {
+    const m = sessionSetupModel({ backend: "grok", effort: "high", effortLevels: GROK_EFFORT_LEVELS });
+    const thinking = m.rows.find((r) => r.id === "thinking")!;
+    expect(thinking.kind).toBe("dots");
+    expect(thinking.selectedId).toBe("high");
+    expect(thinking.selectedIndex).toBe(4); // ["none","minimal","low","medium","high","xhigh"]
+    expect(thinking.options.find((o) => o.id === "xhigh")!.label).toBe("XHigh");
+    expect(thinking.options.filter((o) => o.selected)).toEqual([{ id: "high", label: "High", selected: true }]);
+  });
+
+  it("Thinking row: no effort chosen selects nothing (selectedIndex -1)", () => {
+    const m = sessionSetupModel({ backend: "grok", effort: "", effortLevels: GROK_EFFORT_LEVELS });
+    const thinking = m.rows.find((r) => r.id === "thinking")!;
+    expect(thinking.selectedIndex).toBe(-1);
+    expect(thinking.options.every((o) => !o.selected)).toBe(true);
+  });
+
+  it("Mode row selects the current mode among Agent/Plan/Auto accept", () => {
+    const m = sessionSetupModel({ backend: "grok", mode: "plan", effortLevels: GROK_EFFORT_LEVELS });
+    const mode = m.rows.find((r) => r.id === "mode")!;
+    expect(mode.kind).toBe("segmented");
+    expect(mode.selectedId).toBe("plan");
+    expect(mode.options.map((o) => o.id)).toEqual(["agent", "plan", "yolo"]);
+    expect(mode.options.find((o) => o.id === "plan")!.selected).toBe(true);
+  });
+
+  it("defaults an unrecognized backend to grok and mode to agent", () => {
+    const m = sessionSetupModel({ backend: "not-a-backend", effortLevels: [] });
+    expect(m.backend).toBe("grok");
+    expect(m.rows.find((r) => r.id === "agent")!.selectedId).toBe("grok");
+    expect(m.rows.find((r) => r.id === "mode")!.selectedId).toBe("agent");
+  });
+
+  it("locked:true propagates to every row", () => {
+    const m = sessionSetupModel({ backend: "grok", effortLevels: GROK_EFFORT_LEVELS, locked: true });
+    expect(m.rows.every((r) => r.locked === true)).toBe(true);
+  });
+
+  it("locked is false by default", () => {
+    const m = sessionSetupModel({ backend: "grok", effortLevels: GROK_EFFORT_LEVELS });
+    expect(m.rows.every((r) => r.locked === false)).toBe(true);
+  });
+
+  it("tolerates being called with no options at all", () => {
+    const m = sessionSetupModel();
+    expect(m.backend).toBe("grok");
+    expect(m.rows.map((r) => r.id)).toEqual(["agent", "model", "mode"]); // no effortLevels -> Thinking omitted
+  });
+});
+
+// Pure view-model for the capability browser (slash commands, skills, agents) —
+// rendered into BOTH the welcome canvas and the top-bar Skills popover by the
+// SAME builder. See docs/plans/capability-surfacing-and-history-ux.md § Approach
+// (WP2) and test/capabilities.dom.test.ts for the two DOM mounts.
+describe("sessionToggleGroup", () => {
+  const autoAccept = (modeId?: string, locked?: boolean) =>
+    sessionToggleGroup({ modeId, locked }).items[0];
+
+  it("mirrors the tri-state mode onto a two-state switch, naming the OFF target explicitly", () => {
+    // "Auto-accept: off" is ambiguous on its own (agent? or back to plan?) —
+    // the item has to carry both targets or the renderer would have to guess.
+    expect(autoAccept("yolo").on).toBe(true);
+    expect(autoAccept("agent").on).toBe(false);
+    expect(autoAccept("plan").on).toBe(false);
+    expect(autoAccept("agent").onModeId).toBe("yolo");
+    expect(autoAccept("yolo").offModeId).toBe("agent");
+  });
+
+  it("says that turning it on leaves Plan mode — only while in Plan mode", () => {
+    expect(autoAccept("plan").description).toMatch(/Plan mode/);
+    expect(autoAccept("agent").description).not.toMatch(/Plan mode/);
+    expect(autoAccept("yolo").description).not.toMatch(/Plan mode/);
+  });
+
+  it("propagates locked onto every item", () => {
+    expect(autoAccept("agent", true).locked).toBe(true);
+    expect(autoAccept("agent", false).locked).toBe(false);
+  });
+
+  it("is structurally a capability group, so the renderer needs no special case beyond the control branch", () => {
+    const g = sessionToggleGroup({ modeId: "agent" });
+    expect(g.title).toBe("Session controls");
+    expect(g.total).toBe(g.items.length);
+    expect(g.remaining).toBe(0);
+    // The one thing the renderer keys off — never the kind string.
+    expect(g.items.every((i: { control: string }) => i.control === "switch")).toBe(true);
+  });
+
+  it("is backend-agnostic — auto-accept is a client-side gate, not a grok quirk", () => {
+    expect(sessionToggleGroup({ modeId: "yolo", backend: "claude" })).toEqual(
+      sessionToggleGroup({ modeId: "yolo", backend: "grok" }),
+    );
+  });
+
+  it("defaults to agent mode when called with no opts at all", () => {
+    expect(() => sessionToggleGroup()).not.toThrow();
+    expect(sessionToggleGroup().items[0].on).toBe(false);
+  });
+});
+
+describe("capabilityGroupsView", () => {
+  it("preserves the supplied group order — never reorders by kind", () => {
+    const v = capabilityGroupsView({
+      groups: [
+        { kind: "skill", title: "Skills", total: 1, items: [{ kind: "skill", name: "plan", invoke: "/plan " }] },
+        { kind: "command", title: "Commands", total: 1, items: [{ kind: "command", name: "new", invoke: "/new " }] },
+        { kind: "agent", title: "Agents", total: 1, items: [{ kind: "agent", name: "explore" }] },
+      ],
+    });
+    expect(v.map((g) => g.kind)).toEqual(["skill", "command", "agent"]);
+  });
+
+  it("reports +N more when total exceeds the items given", () => {
+    const v = capabilityGroupsView({
+      groups: [{ kind: "skill", title: "Skills", total: 43, items: [{ kind: "skill", name: "a", invoke: "/a " }] }],
+    });
+    expect(v[0].remaining).toBe(42);
+  });
+
+  it("drops empty groups", () => {
+    const v = capabilityGroupsView({
+      groups: [
+        { kind: "skill", title: "Skills", total: 0, items: [] },
+        { kind: "agent", title: "Agents", total: 1, items: [{ kind: "agent", name: "explore" }] },
+      ],
+    });
+    expect(v.map((g) => g.kind)).toEqual(["agent"]);
+  });
+
+  it("truncates a long description", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "command", title: "Commands", total: 1,
+        items: [{ kind: "command", name: "long", invoke: "/long ", description: "x".repeat(500) }],
+      }],
+    });
+    const desc = v[0].items[0].description;
+    expect(desc.length).toBeLessThan(500);
+    expect(desc.endsWith("…")).toBe(true);
+  });
+
+  it("marks an item with neither invoke nor path as inert", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "agent", title: "Agents", total: 1,
+        items: [{ kind: "agent", name: "general-purpose", description: "Built in." }],
+      }],
+    });
+    expect(v[0].items[0].inert).toBe(true);
+    expect(v[0].items[0].action).toBe("inert");
+  });
+
+  it("an invocable item resolves to the invoke action, even when it also has a path", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "skill", title: "Skills", total: 1,
+        items: [{ kind: "skill", name: "plan", invoke: "/plan ", path: "/ws/.grok/skills/plan/SKILL.md" }],
+      }],
+    });
+    expect(v[0].items[0].action).toBe("invoke");
+    expect(v[0].items[0].inert).toBe(false);
+  });
+
+  // [R] The row's primary text is the PLAIN NAME, not the slash token — the
+  // inversion this package exists to ship (docs/plans/
+  // session-tab-ux-overhaul.md § Approach B bullet 2). This replaces the old
+  // `label: invoke ? invoke.trim() : name` shape entirely; it is not appended
+  // alongside it.
+  it("[R] label is always the plain name; invokeLabel carries the trimmed slash form for an invocable item", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "skill", title: "Skills", total: 1,
+        items: [{ kind: "skill", name: "plan", invoke: "/plan ", path: "/ws/.grok/skills/plan/SKILL.md" }],
+      }],
+    });
+    expect(v[0].items[0].label).toBe("plan");
+    expect(v[0].items[0].invokeLabel).toBe("/plan");
+  });
+
+  it("a non-invocable item with a path resolves to the open action", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "skill", title: "Skills", total: 1,
+        items: [{ kind: "skill", name: "internal", path: "/ws/.grok/skills/internal/SKILL.md" }],
+      }],
+    });
+    expect(v[0].items[0].action).toBe("open");
+    expect(v[0].items[0].inert).toBe(false);
+  });
+
+  it("a non-invocable item (open or inert) has no invokeLabel; label is still the plain name", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "skill", title: "Skills", total: 2,
+        items: [
+          { kind: "skill", name: "internal", path: "/ws/.grok/skills/internal/SKILL.md" },
+          { kind: "agent", name: "general-purpose" },
+        ],
+      }],
+    });
+    expect(v[0].items[0].invokeLabel).toBeUndefined();
+    expect(v[0].items[0].label).toBe("internal");
+    expect(v[0].items[1].invokeLabel).toBeUndefined();
+    expect(v[0].items[1].label).toBe("general-purpose");
+  });
+
+  it("truncates a long hint (untrusted workspace text), same as description", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "skill", title: "Skills", total: 1,
+        items: [{ kind: "skill", name: "adr", invoke: "/adr ", hint: "x".repeat(400) }],
+      }],
+    });
+    const hint = v[0].items[0].hint;
+    expect(hint.length).toBeLessThan(400);
+    expect(hint.endsWith("…")).toBe(true);
+  });
+
+  it("an item with no hint at all renders no hint field", () => {
+    const v = capabilityGroupsView({
+      groups: [{ kind: "skill", title: "Skills", total: 1, items: [{ kind: "skill", name: "adr", invoke: "/adr " }] }],
+    });
+    expect(v[0].items[0].hint).toBeUndefined();
+  });
+
+  it("tolerates being called with no groups at all", () => {
+    expect(capabilityGroupsView()).toEqual([]);
+    expect(capabilityGroupsView({})).toEqual([]);
+  });
+
+  // [R] B6 — workspace-tier provenance was computed host-side but only ever
+  // rendered into the `title` tooltip, so a repo-authored skill was
+  // indistinguishable from a builtin at a glance — even though
+  // dedupeByPriority is workspace-first, so a repo skill can silently shadow a
+  // same-named one under the user's home dir.
+  it("[R] flags a workspace-tier (\"Project (…)\") item so the renderer can show its source visibly", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "skill", title: "Skills", total: 1,
+        items: [{ kind: "skill", name: "code-review", invoke: "/code-review ", source: "Project (.grok)" }],
+      }],
+    });
+    expect(v[0].items[0].workspaceSource).toBe(true);
+    expect(v[0].items[0].source).toBe("Project (.grok)");
+  });
+
+  it("[R] does not flag a home-tier or built-in item as workspace-sourced", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "skill", title: "Skills", total: 2,
+        items: [
+          { kind: "skill", name: "code-review", invoke: "/code-review ", source: "User (~/.grok)" },
+          { kind: "command", name: "new", invoke: "/new ", source: "Built in" },
+        ],
+      }],
+    });
+    expect(v[0].items[0].workspaceSource).toBe(false);
+    expect(v[0].items[1].workspaceSource).toBe(false);
+  });
+
+  it("does not flag an item with no source at all", () => {
+    const v = capabilityGroupsView({
+      groups: [{ kind: "agent", title: "Agents", total: 1, items: [{ kind: "agent", name: "explore" }] }],
+    });
+    expect(v[0].items[0].workspaceSource).toBe(false);
+  });
+});
+
+// Featured-set partition (docs/plans/actions-panel-featured-capabilities.md) —
+// capabilityGroupsView calls the pure partitionFeatured internally and stamps
+// the result's featuredCount onto the returned group; the renderer slices on
+// it, it never re-sorts.
+describe("capabilityGroupsView — featured partition", () => {
+  it("CAPABILITY_FEATURED carries the operator's configured names per kind", () => {
+    // The Skills list is the operator's command names, dual-listed so a
+    // disk-discovered skill of the same name is still featured (see the next
+    // test: mergeAcpCommands keeps the disk kind on a name collision, and disk
+    // roots never yield "command").
+    expect(CAPABILITY_FEATURED.skill).toContain("cold-review");
+    expect(CAPABILITY_FEATURED.agent).toEqual(["explore", "explorer"]);
+    // Both spellings of "always-approve" — the operator's request had the typo.
+    expect(CAPABILITY_FEATURED.command).toContain("always-approve");
+    expect(CAPABILITY_FEATURED.command).toContain("alawys-approve");
+  });
+
+  // [R] mergeAcpCommands keeps the DISK kind on a name collision, and every
+  // disk root (src/capabilities.ts) yields "skill" or "agent", never
+  // "command" — so an install where e.g. docx/pptx ship as real skill
+  // directories would otherwise land in Skills (matching neither "plan" nor
+  // "implement") while Commands matches nothing and silently degrades to
+  // plain first-N truncation. Every command name the operator configured must
+  // also be reachable under "skill", or the feature quietly stops surfacing
+  // exactly the items it was built for on that kind of install.
+  it("[R] every configured command name is also listed under skill, so a disk-discovered skill of the same name is still featured", () => {
+    for (const name of CAPABILITY_FEATURED.command) {
+      expect(CAPABILITY_FEATURED.skill).toContain(name);
+    }
+  });
+
+  it("[R] both agent spellings (explore / explorer) are featured — one intent, two names in the wild", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "agent", title: "Agents", total: 2,
+        items: [
+          { kind: "agent", name: "explorer" },
+          { kind: "agent", name: "unrelated-agent" },
+        ],
+      }],
+    });
+    expect(v[0].items[0].name).toBe("explorer");
+    expect(v[0].featuredCount).toBe(1);
+  });
+
+  it("CAPABILITY_FEATURED_FALLBACK is 5, per the confirmed decision", () => {
+    expect(CAPABILITY_FEATURED_FALLBACK).toBe(5);
+  });
+
+  it("featured items sort to the front, in the configured order, ahead of the host's own order", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "skill", title: "Skills", total: 3,
+        items: [
+          { kind: "skill", name: "init-repo", invoke: "/init-repo " },
+          { kind: "skill", name: "zzz-unfeatured", invoke: "/zzz-unfeatured " },
+          { kind: "skill", name: "cold-review", invoke: "/cold-review " },
+        ],
+      }],
+    });
+    // Configured order starts ["cold-review", "init-repo"] — "cold-review"
+    // leads even though the host listed "init-repo" first.
+    expect(v[0].items.map((i) => i.name)).toEqual(["cold-review", "init-repo", "zzz-unfeatured"]);
+    expect(v[0].featuredCount).toBe(2);
+  });
+
+  // [R] The Grokbit group's whole point is that it teaches the pipeline, so
+  // every member is featured and the group renders no expander. If a member is
+  // ever dropped from this list, featuredCount < items.length and the last
+  // steps of the workflow silently hide behind a "Show all" link.
+  it("[R] every bundled suite skill is featured, in SUITE_SKILL_NAMES pipeline order", () => {
+    expect(CAPABILITY_FEATURED.grokbit).toEqual([
+      "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document",
+    ]);
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "grokbit", title: "Grokbit workflow", total: 4,
+        items: [
+          { kind: "grokbit", name: "grokbit-test", invoke: "/grokbit-test " },
+          { kind: "grokbit", name: "grokbit-document", invoke: "/grokbit-document " },
+          { kind: "grokbit", name: "grokbit-plan", invoke: "/grokbit-plan " },
+          { kind: "grokbit", name: "grokbit-implement", invoke: "/grokbit-implement " },
+        ],
+      }],
+    });
+    expect(v[0].items.map((i) => i.name)).toEqual([
+      "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document",
+    ]);
+    expect(v[0].featuredCount).toBe(v[0].items.length);
+  });
+
+  it("matches case-insensitively on item.name", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "agent", title: "Agents", total: 1,
+        items: [{ kind: "agent", name: "Explore" }],
+      }],
+    });
+    expect(v[0].items[0].name).toBe("Explore");
+    expect(v[0].featuredCount).toBe(1);
+  });
+
+  it("falls back to the first CAPABILITY_FEATURED_FALLBACK items when nothing in the group matches", () => {
+    const items = Array.from({ length: 8 }, (_, i) => ({ kind: "command", name: `cmd-${i}`, invoke: `/cmd-${i} ` }));
+    const v = capabilityGroupsView({
+      groups: [{ kind: "command", title: "Commands", total: 8, items }],
+    });
+    expect(v[0].featuredCount).toBe(CAPABILITY_FEATURED_FALLBACK);
+    // Order is otherwise untouched — no match means no reordering either.
+    expect(v[0].items.map((i) => i.name)).toEqual(items.map((i) => i.name));
+  });
+
+  it("a group smaller than the fallback still never collapses to zero — featuredCount caps at the group's own size", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "command", title: "Commands", total: 2,
+        items: [
+          { kind: "command", name: "one-off", invoke: "/one-off " },
+          { kind: "command", name: "another", invoke: "/another " },
+        ],
+      }],
+    });
+    expect(v[0].featuredCount).toBe(2);
+  });
+
+  it("an unconfigured kind (no CAPABILITY_FEATURED entry) falls back the same way as a kind with no matches", () => {
+    const items = Array.from({ length: 6 }, (_, i) => ({ kind: "workflow", name: `w-${i}` }));
+    const v = capabilityGroupsView({
+      groups: [{ kind: "workflow", title: "Workflows", total: 6, items }],
+    });
+    expect(v[0].featuredCount).toBe(CAPABILITY_FEATURED_FALLBACK);
+  });
+
+  it("both always-approve spellings are recognized as featured", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "command", title: "Commands", total: 2,
+        items: [
+          { kind: "command", name: "alawys-approve", invoke: "/alawys-approve " },
+          { kind: "command", name: "unrelated", invoke: "/unrelated " },
+        ],
+      }],
+    });
+    expect(v[0].items[0].name).toBe("alawys-approve");
+    expect(v[0].featuredCount).toBe(1);
+  });
+});
+
+// Pure three-line guide strip for the new-tab welcome canvas — see
+// docs/plans/session-tab-ux-overhaul.md § Approach C and
+// test/welcome-canvas.dom.test.ts for the DOM mount + lifecycle.
+describe("welcomeGuide", () => {
+  it("returns exactly three lines", () => {
+    expect(welcomeGuide({ backend: "grok", modeId: "agent" })).toHaveLength(3);
+  });
+
+  it("is backend-accurate: names Grok or Claude in the first line", () => {
+    const grokLines = welcomeGuide({ backend: "grok", modeId: "agent" });
+    const claudeLines = welcomeGuide({ backend: "claude", modeId: "agent" });
+    expect(grokLines[0]).toMatch(/\bGrok\b/);
+    expect(claudeLines[0]).toMatch(/\bClaude\b/);
+    expect(grokLines[0]).not.toBe(claudeLines[0]);
+  });
+
+  it("defaults to the agent-mode line for an unknown/missing modeId", () => {
+    const agent = welcomeGuide({ backend: "grok", modeId: "agent" });
+    expect(welcomeGuide({ backend: "grok" })).toEqual(agent);
+    expect(welcomeGuide({ backend: "grok", modeId: "nope" })).toEqual(agent);
+  });
+
+  it("the plan-mode line states a plan is drafted before anything changes", () => {
+    const [, modeLine] = welcomeGuide({ backend: "grok", modeId: "plan" });
+    expect(modeLine).toMatch(/plan/i);
+    expect(modeLine).toMatch(/nothing changes until you approve/i);
+  });
+
+  // [R] The Auto-accept (yolo) variant must NEVER claim files are protected —
+  // that would be a materially false safety statement to exactly the
+  // non-technical user this strip exists for (docs/plans/
+  // session-tab-ux-overhaul.md § Approach C).
+  it("[R] the Auto-accept (yolo) line states edits apply without asking, and makes no protection claim", () => {
+    const [, modeLine] = welcomeGuide({ backend: "grok", modeId: "yolo" });
+    expect(modeLine.toLowerCase()).toMatch(/without asking/);
+    expect(modeLine.toLowerCase()).not.toMatch(/protect|safe|nothing changes/);
+  });
+
+  it("the three mode variants (agent/plan/yolo) are all distinct", () => {
+    const agent = welcomeGuide({ backend: "grok", modeId: "agent" })[1];
+    const plan = welcomeGuide({ backend: "grok", modeId: "plan" })[1];
+    const yolo = welcomeGuide({ backend: "grok", modeId: "yolo" })[1];
+    expect(new Set([agent, plan, yolo]).size).toBe(3);
+  });
+
+  it("tolerates being called with no opts at all", () => {
+    expect(() => welcomeGuide()).not.toThrow();
+    expect(welcomeGuide()).toHaveLength(3);
   });
 });

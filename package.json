@@ -2,7 +2,7 @@
   "name": "grokbit",
   "displayName": "Grokbit",
   "description": "Grokbit — VS Code client for xAI's Grok Build CLI — each session in its own editor tab, review edits in a diff before approving, @-mention files, resumable history, inline image/video, and voice. Requires the Grok Build CLI plus a SuperGrok or X Premium+ subscription (or an xAI API key). MIT, open-source. Based on grok-build-vscode by Paweł Huryn. Not affiliated with or endorsed by xAI.",
-  "version": "3.0.11",
+  "version": "2026.7.1",
   "publisher": "Grokbit",
   "author": {
     "name": "Israel Richner",
@@ -149,6 +149,7 @@
       "properties": {
         "grok.cliPath": {
           "type": "string",
+          "scope": "machine",
           "default": "",
           "description": "Path to the grok binary. Empty = auto-discover (~/.grok/bin/grok, then PATH)."
         },
@@ -215,6 +216,24 @@
           "default": true,
           "markdownDescription": "Show each turn's working activity (tool calls, thinking, step-by-step narration) as one compact carousel block: while Grok works the strip shows the current action with a step counter (‹ › flips back through earlier steps), then it collapses to a one-line summary you can expand. Keeps long agentic turns from scrolling the chat. Turn off to restore the classic scrolling activity stream (applies to new turns). Also toggleable live from the gear menu → **Config & debug → Compact activity view**."
         },
+        "grok.showCapabilities": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show a browser of what the selected agent can actually do — the bundled Grokbit workflow plus your own slash commands, skills, and agents — as a panel on a new tab's empty canvas and from the **Grokbit Actions** button in the top bar. Every row is a real, discovered, launchable capability of the running CLI. Off hides both."
+        },
+        "grok.skills.provision": {
+          "type": "string",
+          "enum": ["auto", "off"],
+          "default": "auto",
+          "markdownDescription": "Install the bundled **Grokbit workflow** skills (plan, implement, test, document) into `~/.grok/skills` and `~/.claude/skills` so the CLIs can run them, refreshed whenever the extension updates. Because this is a per-user install rather than a per-project one, these skills also appear in Grok and Claude Code sessions started outside this extension. Set to `off` to manage your skills yourself — the Grokbit workflow group then disappears from the Actions menu and nothing else changes."
+        },
+        "grok.launcherHistoryDays": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "maximum": 365,
+          "markdownDescription": "How many days of session history the activity-bar launcher's **Recent** list shows (scrollable, paged 50 rows at a time). `0` = unlimited. The chat history popover is unaffected — it always keeps full, searchable history."
+        },
         "grok.notifyWhenWaiting": {
           "type": "boolean",
           "default": false,
@@ -234,12 +253,14 @@
         },
         "grok.voiceApiKey": {
           "type": "string",
+          "scope": "machine",
           "default": "",
           "markdownDescription": "xAI API key for voice control (Speech-to-Text via `api.x.ai/v1/stt`). This is a **separate** developer key from [console.x.ai](https://console.x.ai) — it is billed pay-as-you-go and is unrelated to the Grok CLI login. Leave empty to fall back to `GROK_VOICE_API_KEY` or `XAI_API_KEY` in your workspace `.env`."
         },
         "grok.ffmpegPath": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "Path to the ffmpeg binary used to record the microphone for voice control. Empty = use 'ffmpeg' from PATH. Install ffmpeg from https://ffmpeg.org if voice control reports it as missing."
         },
         "grok.voiceInputDevice": {
@@ -256,6 +277,37 @@
           "type": "boolean",
           "default": true,
           "description": "Stream voice transcription live as you speak (words appear in the composer in real time, and \"grok send\" can submit without a second click). Disable to use one-shot batch mode (click to start, click to stop, then transcribe). Streaming costs $0.20/hr of audio vs $0.10/hr batch."
+        },
+        "grok.defaultBackend": {
+          "type": "string",
+          "enum": [
+            "grok",
+            "claude"
+          ],
+          "enumDescriptions": [
+            "Grok Build (xAI)",
+            "Claude Code (Anthropic)"
+          ],
+          "default": "grok",
+          "markdownDescription": "Agent backend for **new** tabs. Grok Build is the default; switch a tab to Claude Code any time from the composer's backend chip, or start one directly from the launcher's **New Claude session**. Existing tabs are unaffected."
+        },
+        "grok.claude.executablePath": {
+          "type": "string",
+          "scope": "machine",
+          "default": "",
+          "markdownDescription": "Path to a native `claude` executable for Claude Code tabs to drive instead of the Agent SDK's bundled copy (sets `CLAUDE_CODE_EXECUTABLE`). Empty = use the bundled copy — both read the same login, so this is optional."
+        },
+        "grok.claude.adapterPath": {
+          "type": "string",
+          "scope": "machine",
+          "default": "",
+          "markdownDescription": "Path to the `@zed-industries/claude-code-acp` adapter's `dist/index.js` entrypoint. Empty = auto-discover (extension-managed install → global npm package → PATH). The onboarding card's **Install** button provisions the extension-managed copy for you — most people never need to set this."
+        },
+        "grok.claude.allowInheritedApiKey": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "markdownDescription": "Allow an inherited `ANTHROPIC_API_KEY` environment variable to reach Claude Code tabs. **Off by default**: Claude Code prefers an API key over your subscription login when both are present, which would silently bill API credits instead of your Claude subscription. Turn on only if you deliberately want API-key billing. Machine-scoped: which credential pays for your usage is your decision, not a workspace's."
         }
       }
     }
@@ -269,6 +321,7 @@
     "test:perf": "vitest run --config vitest.perf.config.ts",
     "test:live": "tsc -p . && node scripts/live-tests.cjs",
     "telemetry:probe": "tsc -p . && node scripts/telemetry-probe.cjs",
+    "metrics:tokens": "python scripts/aggregate_token_usage.py --write",
     "prepackage": "node -e \"for (const f of require('fs').readdirSync('.')) if (f.endsWith('.vsix')) require('fs').unlinkSync(f)\"",
     "package": "npx @vscode/vsce package",
     "rebuild": "node scripts/rebuild.js",

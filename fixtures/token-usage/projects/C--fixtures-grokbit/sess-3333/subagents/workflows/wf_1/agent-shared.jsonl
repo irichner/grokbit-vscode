@@ -1,0 +1,1 @@
+{"type":"assistant","sessionId":"sess-3333","cwd":"C:\\fixtures\\grokbit","message":{"id":"msg_shared_b","model":"fixture-model","usage":{"input_tokens":15,"output_tokens":15,"cache_read_input_tokens":15,"cache_creation_input_tokens":15}}}

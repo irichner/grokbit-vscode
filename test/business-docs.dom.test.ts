@@ -59,8 +59,7 @@ describe("document-type seedComposer (host message)", () => {
   it("host seedComposer message fills the composer (PowerPoint prompt)", () => {
     const { window, doc } = bootWebview();
     // Generic host→webview seed path (launcher Create-a-document icons removed).
-    const starters = doc.getElementById("welcome-starters") as HTMLElement;
-    expect(starters.querySelectorAll(".welcome-doc-type")).toHaveLength(0);
+    expect(doc.querySelectorAll(".welcome-doc-type")).toHaveLength(0);
     dispatch(window, { type: "seedComposer", text: "Create PowerPoint presentation: " });
     const input = doc.getElementById("input") as HTMLTextAreaElement;
     expect(input.value).toBe("Create PowerPoint presentation: ");

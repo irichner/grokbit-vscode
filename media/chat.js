@@ -10,8 +10,10 @@
   const newBtn = $("new-btn");
   const historyBtn = $("history-btn");
   const docsBtn = $("docs-btn");
+  const capabilitiesBtn = $("capabilities-btn");
   const modeBtn = $("mode-btn");
   const modelLabel = $("model-label");
+  const backendLabelBtn = $("backend-label");
   const gearBtn = $("gear-btn");
   const addBtn = $("add-btn");
   const chipsEl = $("chips");
@@ -20,10 +22,13 @@
   const donutLabel = $("donut-label");
   const slashPopover = $("slash-popover");
   const modePopover = $("mode-popover");
+  const backendPopover = $("backend-popover");
+  const sessionSettingsPopover = $("session-settings-popover");
   const gearPopover = $("gear-popover");
   const addPopover = $("add-popover");
   const historyPopover = $("history-popover");
   const docsPopover = $("docs-popover");
+  const capabilitiesPopover = $("capabilities-popover");
   const scrollBottomBtn = $("scroll-bottom-btn");
   const changedFilesEl = $("changed-files");
   const planBanner = $("plan-banner");
@@ -46,6 +51,17 @@
     availableModels: [],
     currentModeId: "agent",
     effort: "",
+    // Agent backend for THIS tab (see docs/plans/claude-code-backend.md § WP3).
+    // Defaults to grok — the host's backendChanged (sent on every ready/replay
+    // via replayInto, plus once more if a Claude account check lands late)
+    // overwrites this almost immediately for every real session.
+    backend: "grok",
+    backendLabel: "",
+    claudeAccount: null,
+    // Which backend the currently-shown onboarding card (if any) is for — lets
+    // the recheck button reopen on the same backend. "" = grok's cards (which
+    // carry no backend field) or no card showing.
+    onboardingBackend: "",
     cwd: "",
     contextWindow: 200000,
     usedTokens: 0,
@@ -54,6 +70,21 @@
     chips: [],
     // Studio E2 workspace-docs popover state (ephemeral — not buffered).
     workspaceDocs: { entries: [], loading: false, error: null, total: 0, capped: false },
+    // Capability browser (slash commands, skills, agents) — ephemeral, not
+    // buffered (see docs/plans/capability-surfacing-and-history-ux.md § Message
+    // contract). Null until the host's first "capabilities" reply lands.
+    capabilities: null,
+    // Which capability groups the user has expanded past their featured set
+    // ({[kind]: true}, docs/plans/actions-panel-featured-capabilities.md).
+    // Shared by both mounts (welcome canvas + popover) by design — they are
+    // two views of one list — and survives any re-render (setBusy lock/
+    // unlock, modeChanged reopening the popover, a Refresh); cleared only on
+    // a session switch (resetForNewSession).
+    capabilitiesExpanded: {},
+    // grok.showCapabilities — arrives on every initialState (see the handler);
+    // true is the config default, kept here so the request-from-initialState
+    // gate has a sane value even before the first initialState lands.
+    showCapabilities: true,
     // Start busy+locked: opening the view immediately spins up a session
     // (ready → startSession), so the send button shows the spinner from the
     // first paint until the host posts setBusy:false once the session is live.
@@ -112,11 +143,15 @@
     // is the full count (or matched count when searching); `sessionHasMore` drives the
     // scroll-to-load; `sessionLoading` guards against firing overlapping load-more
     // requests; `sessionQuery` is the query the loaded page belongs to (so a stale
-    // page from a previous keystroke is ignored).
+    // page from a previous keystroke is ignored). `sessionNextOffset` is the host's
+    // own authoritative load-more cursor (offset + disk rows actually read) — NOT
+    // state.sessions.length, which a host-injected synthesized live row would make
+    // overshoot (see the list.onscroll comment above).
     sessionTotal: 0,
     sessionHasMore: false,
     sessionLoading: false,
     sessionQuery: "",
+    sessionNextOffset: 0,
     replaying: false,
     // Live ask_user_question tool calls (toolCallId → {questions, fromReplay}).
     // grok emits a tool_call alongside the live x.ai/ask_user_question request; we
@@ -277,11 +312,6 @@
         if (!(cur || "").trim()) return seed;
         return String(cur).replace(/\s+$/, "") + "\n" + seed;
       };
-  const taskQuickActions = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.taskQuickActions)
-    ? window.GrokWebviewHelpers.taskQuickActions
-    : function () { return []; };
-  const welcomeStarters = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.welcomeStarters)
-    || function () { return []; };
   const activityPeek = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.activityPeek)
     || function (view, count, dir) {
         if (!count || count <= 1) return -1;
@@ -294,6 +324,11 @@
         if (!count) return "";
         return view === -1 ? String(count) : `${view + 1}/${count}`;
       };
+  // Per-tab settings view-model (Agent / Model / Thinking / Mode) shared by the
+  // welcome "Session setup" card + the composer quick-settings popover — see
+  // docs/plans/claude-code-backend.md § WP7.
+  const sessionSetupModel = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.sessionSetupModel)
+    || function () { return { backend: "grok", rows: [] }; };
 
   // Three blinking dots — the tool rows' in-progress animation, reused by every
   // progress indicator (Grokking / Thinking) so they all pulse the same way
@@ -367,6 +402,671 @@
     modelLabel.hidden = false;
   }
 
+  // Backend chip beside the model chip — which agent (Grok Build / Claude Code)
+  // this tab runs. Always shown once known (unlike the model chip, the backend
+  // is never "not yet known": the host sends it on the very first ready/replay).
+  function updateBackendLabel() {
+    if (!backendLabelBtn) return;
+    const isClaude = state.backend === "claude";
+    backendLabelBtn.innerHTML = `<span class="btn-label">${escapeHtml(isClaude ? "Claude" : "Grok")}</span>`;
+    backendLabelBtn.classList.toggle("backend-claude", isClaude);
+    const label = state.backendLabel || (isClaude ? "Claude Code" : "Grok Build");
+    let title = `${label} — click to switch agent`;
+    if (isClaude && state.claudeAccount) {
+      const acct = state.claudeAccount;
+      if (acct.email) {
+        const plan = acct.subscriptionType ? ` (${acct.subscriptionType})` : "";
+        // Disclosure over silence: authMethod/apiProvider (from `claude auth
+        // status --json`) make it visible whether the subscription or
+        // something else (an API key, a gateway) is actually being billed.
+        const via = acct.authMethod || acct.apiProvider
+          ? ` via ${[acct.authMethod, acct.apiProvider].filter(Boolean).join("/")}`
+          : "";
+        title = `${label} — signed in as ${acct.email}${plan}${via} — click to switch agent`;
+      }
+      // Names only, never values — see detectClaudeCredentialOverrides
+      // (claude-locator.ts). Appended regardless of whether email is known,
+      // so a broken/misconfigured gateway still surfaces the override.
+      if (acct.overrides && acct.overrides.length) {
+        title += ` — env overrides in effect: ${acct.overrides.join(", ")}`;
+      }
+    }
+    backendLabelBtn.title = title;
+    backendLabelBtn.hidden = false;
+  }
+
+  // The other backend's id/label — the popover only ever needs to offer ONE
+  // alternative (there are exactly two backends today).
+  const BACKEND_META = {
+    grok: { label: "Grok Build", desc: "xAI's coding agent" },
+    claude: { label: "Claude Code", desc: "Anthropic's coding agent" },
+  };
+  function openBackendPopover() {
+    if (!backendPopover || !backendLabelBtn) return;
+    if (!backendPopover.hidden) { closePopovers(); return; }
+    if (state.busy) return; // settings lock while priming/mid-turn, same as model/effort
+    closePopovers();
+    backendPopover.innerHTML = "";
+    for (const id of Object.keys(BACKEND_META)) {
+      const meta = BACKEND_META[id];
+      const active = id === state.backend;
+      const el = document.createElement("div");
+      el.className = "toolbar-popover-item mode-popover-item" + (active ? " active" : "");
+      el.innerHTML =
+        `<span class="mode-item-body">` +
+          `<span class="mode-item-label">${escapeHtml(meta.label)}</span>` +
+          `<span class="mode-item-desc">${escapeHtml(meta.desc)}</span>` +
+        `</span>` +
+        (active ? '<span class="popover-check">✓</span>' : "");
+      el.onclick = (e) => {
+        e.stopPropagation();
+        if (active) { closePopovers(); return; }
+        vscode.postMessage({ type: "switchBackend", backend: id });
+        closePopovers();
+      };
+      backendPopover.appendChild(el);
+    }
+    positionPopover(backendPopover, backendLabelBtn);
+    backendPopover.hidden = false;
+  }
+
+  // ---------- per-tab session settings (Agent / Model / Thinking / Mode) ----------
+  // One render path shared by the new-tab "Session setup" card and this chip's
+  // quick-settings popover, both built from the same sessionSetupModel()
+  // view-model (media/webview-helpers.js) — one implementation, one set of
+  // tests (docs/plans/claude-code-backend.md § WP7).
+
+  function currentSessionSetupModel() {
+    // Claude has no reasoning-effort axis at all (CLAUDE_EFFORT_LEVELS is empty
+    // in src/backends.ts) — the Thinking row is omitted by the builder whenever
+    // effortLevels is empty, not just disabled.
+    const effortLevels = state.backend === "claude" ? [] : EFFORT_LEVELS;
+    return sessionSetupModel({
+      backend: state.backend,
+      modelId: state.currentModelId,
+      availableModels: state.availableModels,
+      effort: state.effort,
+      effortLevels,
+      mode: state.currentModeId,
+      locked: state.busy,
+    });
+  }
+
+  // Apply a pick from any of the four rows. Agent/Model/Mode changes are
+  // acknowledged asynchronously by the host (backendChanged/modelChanged/
+  // modeChanged post back and re-render both mounts), so only the redundant
+  // no-op case is short-circuited here; Thinking has no ack message at all
+  // (mirrors the gear popover's own effort dots), so it updates state.effort
+  // optimistically.
+  function pickSessionSetting(rowId, value) {
+    if (rowId === "agent") {
+      if (value === state.backend) return;
+      vscode.postMessage({ type: "switchBackend", backend: value });
+    } else if (rowId === "model") {
+      if (value === state.currentModelId) return;
+      vscode.postMessage({ type: "setModel", modelId: value });
+    } else if (rowId === "thinking") {
+      state.effort = value;
+      vscode.postMessage({ type: "setEffort", level: value });
+      updateModelLabel(); // reflect the new effort on the composer chip immediately
+    } else if (rowId === "mode") {
+      vscode.postMessage({ type: "setMode", modeId: value });
+    }
+    refreshSessionSettingsMounts();
+  }
+
+  // Build one row's DOM from its view-model — shared between the card and the
+  // popover, which just append these into different containers.
+  function buildSessionSettingsRow(row) {
+    const wrap = document.createElement("div");
+    wrap.className = "session-settings-row";
+    const label = document.createElement("span");
+    label.className = "session-settings-label";
+    label.textContent = row.label;
+    wrap.appendChild(label);
+
+    const control = document.createElement("div");
+    control.className = "session-settings-control";
+    // Matches the gear popover's model/effort lock tooltip exactly (renderGearMain).
+    const lockedTitle = "Available once the session is ready";
+
+    if (row.kind === "segmented") {
+      const seg = document.createElement("div");
+      seg.className = "segmented" + (row.locked ? " disabled" : "");
+      seg.setAttribute("role", "group");
+      seg.setAttribute("aria-label", row.label);
+      for (const opt of row.options) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "segmented-btn" + (opt.selected ? " active" : "") + (row.locked ? " disabled" : "");
+        btn.textContent = opt.label;
+        btn.setAttribute("aria-pressed", String(!!opt.selected));
+        btn.disabled = row.locked;
+        btn.title = row.locked ? lockedTitle : opt.label;
+        if (!row.locked) {
+          btn.onclick = (e) => { e.stopPropagation(); pickSessionSetting(row.id, opt.id); };
+        }
+        seg.appendChild(btn);
+      }
+      control.appendChild(seg);
+    } else if (row.kind === "dropdown") {
+      const select = document.createElement("select");
+      select.className = "session-settings-select" + (row.locked ? " disabled" : "");
+      select.disabled = row.locked;
+      select.setAttribute("aria-label", row.label);
+      select.title = row.locked ? lockedTitle : "Change model";
+      for (const opt of row.options) {
+        const o = document.createElement("option");
+        o.value = opt.id;
+        o.textContent = opt.label;
+        if (opt.selected) o.selected = true;
+        select.appendChild(o);
+      }
+      select.onclick = (e) => e.stopPropagation();
+      if (!row.locked) {
+        select.onchange = (e) => { e.stopPropagation(); pickSessionSetting(row.id, select.value); };
+      }
+      control.appendChild(select);
+    } else if (row.kind === "dots") {
+      const dotsEl = document.createElement("span");
+      dotsEl.className = "effort-dots" + (row.locked ? " disabled" : "");
+      row.options.forEach((opt, i) => {
+        const dot = document.createElement("span");
+        dot.className = "effort-dot" + (i <= row.selectedIndex ? " active" : "") + (row.locked ? " disabled" : "");
+        dot.title = row.locked ? lockedTitle : opt.label;
+        if (!row.locked) {
+          dot.onclick = (e) => {
+            e.stopPropagation();
+            // Toggle off when re-picking the active level — mirrors renderGearMain's dots.
+            pickSessionSetting(row.id, row.selectedId === opt.id ? "" : opt.id);
+          };
+        }
+        dotsEl.appendChild(dot);
+      });
+      control.appendChild(dotsEl);
+    }
+
+    wrap.appendChild(control);
+    return wrap;
+  }
+
+  function buildSessionSettingsRows(model) {
+    const rows = document.createElement("div");
+    rows.className = "session-settings-rows";
+    for (const row of model.rows) rows.appendChild(buildSessionSettingsRow(row));
+    return rows;
+  }
+
+  function hideSessionSetupCard() {
+    const el = $("session-setup-card");
+    if (el) { el.hidden = true; el.innerHTML = ""; }
+  }
+
+  // New-tab welcome-screen card: Agent / Model / Thinking / Mode.
+  // Model/effort/backend changes normally restart the session, but a brand-new
+  // tab has no history, so the restart is free and invisible — the footer says
+  // so. Hidden during onboarding and once the chat begins; renders LOCKED (not
+  // hidden) during startup/priming — currentSessionSetupModel() already keys
+  // `locked` off state.busy, which is true for the whole spawn+primer window,
+  // so no extra gating is needed here to reflect that (docs/plans/
+  // session-tab-ux-overhaul.md § Approach C — the canvas is populated from the
+  // first frame instead of blank while the session starts).
+  function renderSessionSetupCard() {
+    const el = $("session-setup-card");
+    if (!el) return;
+    const onb = $("welcome-onboarding");
+    const onboardingActive = !!(onb && onb.innerHTML && onb.innerHTML.trim());
+    if (!state.welcomeVisible || onboardingActive) {
+      hideSessionSetupCard();
+      return;
+    }
+    el.innerHTML = "";
+    const heading = document.createElement("p");
+    heading.className = "session-setup-heading";
+    heading.textContent = "Session setup";
+    el.appendChild(heading);
+    el.appendChild(buildSessionSettingsRows(currentSessionSetupModel()));
+    const footer = document.createElement("p");
+    footer.className = "session-setup-footer";
+    footer.textContent = "Free to change here — this tab hasn't sent a message yet, so nothing restarts.";
+    el.appendChild(footer);
+    el.hidden = false;
+  }
+
+  // Composer quick-settings popover — the SAME four controls as the setup card
+  // above, opened from the model/effort chip (see modelLabel.onclick below).
+  // Unlike the single-purpose backend/mode popovers it does NOT close on a
+  // pick, since the whole point of bundling four controls together is
+  // adjusting more than one without reopening.
+  function renderSessionSettingsPopover() {
+    if (!sessionSettingsPopover) return;
+    sessionSettingsPopover.innerHTML = "";
+    sessionSettingsPopover.appendChild(buildSessionSettingsRows(currentSessionSetupModel()));
+  }
+
+  function openSessionSettingsPopover(anchorBtn) {
+    if (!sessionSettingsPopover || !anchorBtn) return;
+    if (!sessionSettingsPopover.hidden) { closePopovers(); return; }
+    closePopovers();
+    renderSessionSettingsPopover();
+    positionPopover(sessionSettingsPopover, anchorBtn);
+    sessionSettingsPopover.hidden = false;
+  }
+
+  // Re-render whichever of the two mounts is currently live — after a pick, or
+  // whenever a session/model/mode/backend/busy update arrives from the host.
+  function refreshSessionSettingsMounts() {
+    renderSessionSetupCard();
+    if (sessionSettingsPopover && !sessionSettingsPopover.hidden) renderSessionSettingsPopover();
+  }
+
+  // ---------- welcome-canvas guide strip ----------
+  // Three plain-language lines above #welcome-grid, built by the pure
+  // welcomeGuide() in webview-helpers.js — what you can ask, a mode- and
+  // backend-accurate line about file/command safety, and that the composer
+  // takes plain English (docs/plans/session-tab-ux-overhaul.md § Approach C).
+  // Wired to the SAME four lifecycle anchors as renderCapabilitiesPanel below
+  // (initialized / setBusy → render; showOnboarding's four branches /
+  // clearWelcome / resetForNewSession → hide), plus modeChanged/backendChanged
+  // so the copy never goes stale mid-session. No data dependency (state.backend
+  // and state.currentModeId always have sane defaults), so — unlike the
+  // capability panel — it never needs a "no payload yet" branch.
+
+  function hideWelcomeGuide() {
+    const el = $("welcome-guide");
+    if (el) { el.hidden = true; el.innerHTML = ""; }
+  }
+
+  function renderWelcomeGuide() {
+    const el = $("welcome-guide");
+    if (!el) return;
+    const onb = $("welcome-onboarding");
+    const onboardingActive = !!(onb && onb.innerHTML && onb.innerHTML.trim());
+    if (!state.welcomeVisible || onboardingActive) {
+      hideWelcomeGuide();
+      return;
+    }
+    const lines = welcomeGuide({ backend: state.backend, modeId: state.currentModeId });
+    el.innerHTML = "";
+    for (const line of lines) {
+      const row = document.createElement("p");
+      row.className = "welcome-guide-row";
+      row.textContent = line;
+      el.appendChild(row);
+    }
+    el.hidden = false;
+  }
+
+  // ---------- capability browser (slash commands, skills, agents) ----------
+  // Two mounts, one pure builder (capabilityGroupsView in webview-helpers.js) —
+  // the new-tab welcome canvas (#capabilities-panel) and the top-bar Actions
+  // popover (#capabilities-popover). See
+  // docs/plans/session-tab-ux-overhaul.md § Approach B.
+
+  // Plain-language heading shared by both mounts (see § Approach B bullets 4-5) —
+  // the same word the top-bar door and the composer's add-popover door use, so
+  // the three surfaces read as one consistent feature rather than three names
+  // for the same thing.
+  const CAPABILITIES_HEADING = "Grokbit Actions";
+  const CAPABILITIES_EXPLAINER = "Click anything to drop it into the message box. Nothing is sent until you press Send.";
+
+  // `locked` (default false) renders the row like an inert one — no click
+  // handler at all, mirroring .inert's no-pointer/no-hover pair — during the
+  // welcome canvas's priming window (docs/plans/session-tab-ux-overhaul.md §
+  // Approach C). It is display-only: an item's own `inert`/`action` still
+  // decide what a click DOES once unlocked; `locked` only decides whether a
+  // handler is installed at all right now. Never used by the top-bar Actions
+  // popover, which has no priming gate of its own (locked stays undefined there).
+  // Flips the session state a toggle row represents. Mirrors
+  // pickSessionSetting's rowId→message mapping: the row holds no state of its
+  // own, it just posts the mode the switch's next position stands for and waits
+  // for the host's modeChanged to re-render it.
+  function applyCapabilityToggle(item) {
+    vscode.postMessage({ type: "setMode", modeId: item.on ? item.offModeId : item.onModeId });
+  }
+
+  // A toggle row (sessionToggleGroup in webview-helpers.js) is flipped in place
+  // rather than dropped into the composer, so it reuses the gear popover's
+  // switch markup instead of the name/chip/description stack. Locked behaves
+  // exactly as it does for every other row: no handler installed at all.
+  function buildCapabilityToggleRow(item) {
+    const row = document.createElement("div");
+    row.className = "capability-row capability-row-toggle" + (item.locked ? " locked" : "");
+    const head = document.createElement("div");
+    head.className = "capability-row-head";
+    const name = document.createElement("span");
+    name.className = "capability-row-name";
+    name.textContent = item.label;
+    head.appendChild(name);
+    const sw = document.createElement("span");
+    sw.className = "popover-switch" + (item.on ? " on" : "");
+    sw.setAttribute("role", "switch");
+    sw.setAttribute("aria-checked", String(!!item.on));
+    const knob = document.createElement("span");
+    knob.className = "popover-switch-knob";
+    sw.appendChild(knob);
+    head.appendChild(sw);
+    row.appendChild(head);
+    if (item.description) {
+      const desc = document.createElement("span");
+      desc.className = "capability-row-desc";
+      desc.textContent = item.description;
+      row.appendChild(desc);
+    }
+    if (!item.locked) {
+      row.onclick = (e) => { e.stopPropagation(); applyCapabilityToggle(item); };
+    }
+    return row;
+  }
+
+  function buildCapabilityRow(item, locked) {
+    // Branch on the row's CONTROL, never on its kind — the renderer iterating
+    // the host's groups without knowing the kind strings is what lets a new
+    // capability kind ship without touching this function.
+    if (item.control === "switch") return buildCapabilityToggleRow(item);
+    const row = document.createElement("div");
+    row.className = "capability-row" + (item.inert ? " inert" : "") + (locked ? " locked" : "");
+    if (item.description || item.source) {
+      row.title = [item.description, item.source].filter(Boolean).join("\n");
+    }
+    // Plain name first — the primary text a non-technical user reads — with
+    // the slash form beside it as a small teaching chip, never the other way
+    // around (docs/plans/session-tab-ux-overhaul.md § Approach B bullet 2).
+    const head = document.createElement("div");
+    head.className = "capability-row-head";
+    const name = document.createElement("span");
+    name.className = "capability-row-name";
+    name.textContent = item.label;
+    head.appendChild(name);
+    if (item.invokeLabel) {
+      const cmd = document.createElement("span");
+      cmd.className = "capability-row-cmd";
+      cmd.textContent = item.invokeLabel;
+      head.appendChild(cmd);
+    }
+    row.appendChild(head);
+    if (item.workspaceSource) {
+      // Visible provenance for a workspace-tier item — dedupeByPriority is
+      // workspace-first, so a repo-authored skill silently shadows a
+      // same-named one under the user's home dir; the tooltip alone (above)
+      // isn't enough to tell them apart at a glance.
+      const source = document.createElement("span");
+      source.className = "capability-row-source";
+      source.textContent = item.source;
+      row.appendChild(source);
+    }
+    if (item.description) {
+      const desc = document.createElement("span");
+      desc.className = "capability-row-desc";
+      desc.textContent = item.description;
+      row.appendChild(desc);
+    }
+    if (item.hint) {
+      // Argument hint (frontmatter argument-hint / the ACP command's
+      // input.hint) — without this a click seeds a bare "/adr " and leaves
+      // the user staring at an empty token with no idea what to type next.
+      const hint = document.createElement("span");
+      hint.className = "capability-row-hint";
+      hint.textContent = item.hint;
+      row.appendChild(hint);
+    }
+    if (locked) {
+      // No click handler at all — same treatment as .inert. A hover
+      // affordance on something that can't be clicked yet is the bug.
+    } else if (item.action === "invoke") {
+      row.onclick = (e) => { e.stopPropagation(); insertComposerPrompt(item.invoke); closePopovers(); };
+    } else if (item.action === "open") {
+      row.onclick = (e) => { e.stopPropagation(); vscode.postMessage({ type: "openFile", path: item.path }); closePopovers(); };
+    }
+    return row;
+  }
+
+  // Heading + one-line explainer, prepended once above the first group — the
+  // single highest-value sentence for a user who doesn't already know a click
+  // only seeds the composer (docs/plans/session-tab-ux-overhaul.md § Approach
+  // B bullet 4). Shared by the welcome-canvas panel; the popover's own head
+  // (renderCapabilitiesPopover) uses the same heading text without the
+  // explainer — popovers are compact, and the explainer's audience is the
+  // first-run welcome canvas.
+  // Re-posts the request that produced state.capabilities in the first place.
+  // The host re-scans the user's own disk every time and is already gated on
+  // grok.showCapabilities, so this needs no new message and no new host method.
+  function buildCapabilitiesRefreshButton() {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "capabilities-refresh";
+    btn.textContent = "Refresh";
+    btn.title = "Re-scan for skills, commands, and agents";
+    btn.onclick = (e) => { e.stopPropagation(); vscode.postMessage({ type: "listCapabilities" }); };
+    return btn;
+  }
+
+  // `locked` suppresses the Refresh button for the same reason it suppresses a
+  // row's click handler: during the priming window nothing here is actionable
+  // yet, and an enabled-looking control that does nothing is the bug.
+  function appendCapabilitiesHeading(container, locked) {
+    const head = document.createElement("div");
+    head.className = "capabilities-head";
+    const heading = document.createElement("p");
+    heading.className = "capabilities-heading";
+    heading.textContent = CAPABILITIES_HEADING;
+    head.appendChild(heading);
+    if (!locked) head.appendChild(buildCapabilitiesRefreshButton());
+    container.appendChild(head);
+  }
+
+  function appendCapabilitiesExplainer(container) {
+    const p = document.createElement("p");
+    p.className = "capabilities-explainer muted";
+    p.textContent = CAPABILITIES_EXPLAINER;
+    container.appendChild(p);
+  }
+
+  // `featuredCount` comes only from capabilityGroupsView's groups
+  // (docs/plans/actions-panel-featured-capabilities.md); sessionToggleGroup's
+  // group never sets it, so its one item falls back to "show everything" and
+  // the group gets no expand link — a structural consequence of the data
+  // shape, not a branch on group.kind.
+  function appendCapabilityGroups(container, viewGroups, locked) {
+    for (const group of viewGroups) {
+      const groupEl = document.createElement("div");
+      groupEl.className = "capability-group";
+      const title = document.createElement("p");
+      title.className = "capability-group-title";
+      title.textContent = group.title;
+      groupEl.appendChild(title);
+      const itemsEl = document.createElement("div");
+      itemsEl.className = "capability-group-items";
+      const featuredCount = typeof group.featuredCount === "number" ? group.featuredCount : group.items.length;
+      const expanded = !!(state.capabilitiesExpanded && state.capabilitiesExpanded[group.kind]);
+      const visible = expanded ? group.items : group.items.slice(0, featuredCount);
+      for (const item of visible) itemsEl.appendChild(buildCapabilityRow(item, locked));
+      // Host-cap overflow ("+N more") is a dead end about items the host never
+      // sent at all — distinct from the expand link below it, and shown only
+      // once expanded so the collapsed view doesn't carry two competing
+      // "there's more" signals.
+      if (group.remaining > 0 && expanded) {
+        const more = document.createElement("p");
+        more.className = "capability-more muted";
+        more.textContent = `+${group.remaining} more`;
+        itemsEl.appendChild(more);
+      }
+      groupEl.appendChild(itemsEl);
+      if (group.items.length > featuredCount) {
+        // Appended AFTER itemsEl, never inside it — itemsEl is an auto-fit
+        // grid, so a link inside it would render as a stray grid cell.
+        const expandBtn = document.createElement("button");
+        expandBtn.type = "button";
+        expandBtn.className = "capability-expand";
+        expandBtn.textContent = expanded ? "Show less" : `Show all ${group.items.length}`;
+        expandBtn.setAttribute("aria-expanded", String(expanded));
+        // Pure local display, unlike Refresh (a host round-trip) and row
+        // clicks (a composer seed) — expanding is never gated on `locked`.
+        expandBtn.onclick = (e) => {
+          e.stopPropagation();
+          // Capture `!expanded` at render time rather than toggling the live
+          // state value — both mounts below re-render off the SAME state, so
+          // a stale flip in one after the other already flipped it would undo
+          // the click. The welcome canvas and the Actions popover can be on
+          // screen at once (the popover overlays the canvas), so the group
+          // left behind in the mount that wasn't clicked must expand too, or
+          // it silently pops open later on an unrelated setBusy/modeChanged.
+          state.capabilitiesExpanded[group.kind] = !expanded;
+          renderCapabilitiesPanel();
+          if (capabilitiesPopover && !capabilitiesPopover.hidden) renderCapabilitiesPopoverBody();
+        };
+        groupEl.appendChild(expandBtn);
+      }
+      container.appendChild(groupEl);
+    }
+  }
+
+  function hideCapabilitiesPanel() {
+    const el = $("capabilities-panel");
+    if (el) { el.hidden = true; el.innerHTML = ""; }
+  }
+
+  // New-tab welcome-screen capability browser. Copies BOTH halves of
+  // renderSessionSetupCard's behaviour: its gate (welcomeVisible / onboarding)
+  // AND every call site that hides or re-renders it (see the "capabilities"
+  // and lifecycle-anchor message handlers below) — a gate with only one of
+  // those renders once during priming, while the gate is shut, and never
+  // again. Renders FROM state.capabilities, never re-requesting: the payload
+  // usually arrives mid-priming, and must survive a re-render once setBusy:false
+  // unlocks the rows. During the startup/priming window the panel renders
+  // LOCKED rather than hidden — state.busy is true for that whole window (see
+  // the "initialized"/"setBusy" handlers below) — so the canvas is populated
+  // from the first frame instead of blank (docs/plans/
+  // session-tab-ux-overhaul.md § Approach C).
+  function renderCapabilitiesPanel() {
+    const el = $("capabilities-panel");
+    if (!el) return;
+    // grok.showCapabilities: false — never render, regardless of what already
+    // arrived in state.capabilities (e.g. a commandsUpdate-triggered re-post
+    // that raced ahead of this gate). Checked here, not just at the request
+    // site, since this is the ONLY place a payload that arrived during priming
+    // gets shown (see the setBusy anchor below).
+    if (!state.showCapabilities) {
+      hideCapabilitiesPanel();
+      return;
+    }
+    const onb = $("welcome-onboarding");
+    const onboardingActive = !!(onb && onb.innerHTML && onb.innerHTML.trim());
+    if (!state.welcomeVisible || onboardingActive) {
+      hideCapabilitiesPanel();
+      return;
+    }
+    const cap = state.capabilities;
+    if (!cap) { hideCapabilitiesPanel(); return; }
+    const locked = !!state.busy;
+    el.innerHTML = "";
+    appendCapabilitiesHeading(el, locked);
+    if (cap.error) {
+      const p = document.createElement("p");
+      p.className = "capabilities-empty muted";
+      p.textContent = "Couldn't load skills & commands.";
+      el.appendChild(p);
+      el.hidden = false;
+      return;
+    }
+    const viewGroups = capabilityGroupsView({ groups: cap.groups, backend: cap.backend });
+    if (!viewGroups.length) {
+      // Not onboarding (already gated above) and genuinely nothing discovered:
+      // an honest empty state, not a vanished panel — hiding here is what makes
+      // the feature look broken to a user who has nothing installed yet. Shown
+      // regardless of `locked` — the line makes no clickability claim.
+      const p = document.createElement("p");
+      p.className = "capabilities-empty muted";
+      p.textContent = "No skills installed yet — just describe what you want in the message box.";
+      el.appendChild(p);
+      el.hidden = false;
+      return;
+    }
+    appendCapabilitiesExplainer(el);
+    appendCapabilityGroups(el, viewGroups, locked);
+    el.hidden = false;
+  }
+
+  function renderCapabilitiesPopoverBody() {
+    if (!capabilitiesPopover) return;
+    const body = capabilitiesPopover.querySelector(".studio-popover-body");
+    if (!body) return;
+    // Preserve scroll position across the rebuild — the body is a bounded
+    // scroll container (.studio-popover-body max-height:280px /
+    // .history-list max-height:340px, both overflow-y:auto), and a lower
+    // group's expand link is below the fold by construction: a naive rebuild
+    // snaps scrollTop back to 0 and strands the rows the click just revealed
+    // off-screen. try/finally covers every early return below.
+    const scrollTop = body.scrollTop;
+    try {
+      body.innerHTML = "";
+      // Session controls come from the webview's own state, not from
+      // discovery, so they render on every path below — "Scanning…", a scan
+      // error, and an empty disk each used to return early and would
+      // otherwise suppress them.
+      appendCapabilityGroups(body, [sessionToggleGroup({ modeId: state.currentModeId, locked: !!state.busy })]);
+      const cap = state.capabilities;
+      if (!cap) {
+        const p = document.createElement("p");
+        p.className = "studio-popover-empty muted";
+        p.textContent = "Scanning…";
+        body.appendChild(p);
+        return;
+      }
+      if (cap.error) {
+        const p = document.createElement("p");
+        p.className = "studio-popover-empty muted";
+        p.textContent = "Couldn't load skills & commands.";
+        body.appendChild(p);
+        return;
+      }
+      const viewGroups = capabilityGroupsView({ groups: cap.groups, backend: cap.backend });
+      if (!viewGroups.length) {
+        const p = document.createElement("p");
+        p.className = "studio-popover-empty muted";
+        p.textContent = "No skills, commands, or agents found.";
+        body.appendChild(p);
+        return;
+      }
+      appendCapabilityGroups(body, viewGroups);
+    } finally {
+      body.scrollTop = scrollTop;
+    }
+  }
+
+  function renderCapabilitiesPopover() {
+    if (!capabilitiesPopover) return;
+    capabilitiesPopover.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "studio-popover-head with-action";
+    const headLabel = document.createElement("span");
+    headLabel.textContent = CAPABILITIES_HEADING; // matches the welcome-canvas panel's own heading
+    head.appendChild(headLabel);
+    // The popover already re-requests on every open, so this is for the case
+    // where it is ALREADY open when the skill lands. stopPropagation (inside
+    // the handler) is what keeps the click from bubbling to closePopovers().
+    head.appendChild(buildCapabilitiesRefreshButton());
+    capabilitiesPopover.appendChild(head);
+    const body = document.createElement("div");
+    body.className = "studio-popover-body history-list";
+    capabilitiesPopover.appendChild(body);
+    renderCapabilitiesPopoverBody();
+  }
+
+  function openCapabilitiesPopover() {
+    // grok.showCapabilities: false — the button is hidden in this state (see the
+    // initialState/showCapabilities handlers), but guard the open path itself
+    // too (defense-in-depth, e.g. a click already in flight when the toggle
+    // flips off).
+    if (!capabilitiesPopover || !capabilitiesBtn || !state.showCapabilities) return;
+    if (!capabilitiesPopover.hidden) { closePopovers(); return; }
+    closePopovers();
+    renderCapabilitiesPopover();
+    positionDropdownPopover(capabilitiesPopover, capabilitiesBtn);
+    capabilitiesPopover.hidden = false;
+    vscode.postMessage({ type: "listCapabilities" });
+  }
+
   function shortEffort(e) {
     if (!e) return "";
     if (e === "minimal") return "min";
@@ -380,12 +1080,14 @@
   const MOD = IS_MAC ? "Cmd" : "Ctrl";
 
   // Teach the send key in the composer placeholder — it only shows while the input
-  // is empty, so the hint costs no persistent clutter. Tracks the useCtrlEnter setting.
+  // is empty, so the hint costs no persistent clutter. Tracks the useCtrlEnter
+  // setting AND state.backend — it used to hardcode "Ask Grok…" on a Claude tab.
   function updateComposerPlaceholder() {
     if (!input) return;
+    const agentName = state.backend === "claude" ? "Claude" : "Grok";
     input.placeholder = state.useCtrlEnter
-      ? `Ask Grok anything…   ${MOD}+Enter to send`
-      : "Ask Grok anything…   Enter to send · Shift+Enter for newline";
+      ? `Ask ${agentName} anything…   ${MOD}+Enter to send`
+      : `Ask ${agentName} anything…   Enter to send · Shift+Enter for newline`;
   }
 
   newBtn.innerHTML = ICON.squarePen;
@@ -398,7 +1100,7 @@
 
   // ---------- markdown ----------
 
-  const { looksLikeFileRef, formatRelativeTime, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext } = globalThis.GrokWebviewHelpers;
+  const { looksLikeFileRef, formatRelativeTime, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext, backendBadgeLabel, capabilityGroupsView, sessionToggleGroup, welcomeGuide } = globalThis.GrokWebviewHelpers;
 
   function escapeAttr(s) {
     return String(s == null ? "" : s)
@@ -991,10 +1693,13 @@
 
   function closePopovers() {
     modePopover.hidden = true;
+    if (backendPopover) backendPopover.hidden = true;
+    if (sessionSettingsPopover) sessionSettingsPopover.hidden = true;
     gearPopover.hidden = true;
     addPopover.hidden = true;
     historyPopover.hidden = true;
     if (docsPopover) docsPopover.hidden = true;
+    if (capabilitiesPopover) capabilitiesPopover.hidden = true;
   }
 
   function renderDocsPopover() {
@@ -1181,28 +1886,33 @@
     if (!settingsLocked) nameBtn.onclick = (e) => { e.stopPropagation(); renderModelPicker(); };
     row.appendChild(nameBtn);
 
-    const dotsEl = document.createElement("span");
-    dotsEl.className = "effort-dots" + (settingsLocked ? " disabled" : "");
-    const currentIdx = EFFORT_LEVELS.indexOf(state.effort);
-    EFFORT_LEVELS.forEach((id, i) => {
-      const dot = document.createElement("span");
-      dot.className = "effort-dot" + (i <= currentIdx ? " active" : "") + (settingsLocked ? " disabled" : "");
-      // Render the dot as a CSS-shaped span (see chat.css). Avoids the classic
-      // ● vs ○ Unicode size mismatch where the empty glyph is visibly larger.
-      dot.title = settingsLocked
-        ? "Available once the session is ready"
-        : (EFFORT_TOOLTIPS[id] || capitalize(id));
-      if (!settingsLocked) dot.onclick = (e) => {
-        e.stopPropagation();
-        state.effort = state.effort === id ? "" : id;
-        vscode.postMessage({ type: "setEffort", level: state.effort });
-        renderGearMain();
-        gearPopover.hidden = false;
-        updateModelLabel(); // reflect the new effort on the composer chip
-      };
-      dotsEl.appendChild(dot);
-    });
-    row.appendChild(dotsEl);
+    // Claude has no reasoning-effort axis at all (CLAUDE_EFFORT_LEVELS is empty
+    // in src/backends.ts) — omit the whole dots row rather than rendering an
+    // empty/meaningless one.
+    if (state.backend !== "claude") {
+      const dotsEl = document.createElement("span");
+      dotsEl.className = "effort-dots" + (settingsLocked ? " disabled" : "");
+      const currentIdx = EFFORT_LEVELS.indexOf(state.effort);
+      EFFORT_LEVELS.forEach((id, i) => {
+        const dot = document.createElement("span");
+        dot.className = "effort-dot" + (i <= currentIdx ? " active" : "") + (settingsLocked ? " disabled" : "");
+        // Render the dot as a CSS-shaped span (see chat.css). Avoids the classic
+        // ● vs ○ Unicode size mismatch where the empty glyph is visibly larger.
+        dot.title = settingsLocked
+          ? "Available once the session is ready"
+          : (EFFORT_TOOLTIPS[id] || capitalize(id));
+        if (!settingsLocked) dot.onclick = (e) => {
+          e.stopPropagation();
+          state.effort = state.effort === id ? "" : id;
+          vscode.postMessage({ type: "setEffort", level: state.effort });
+          renderGearMain();
+          gearPopover.hidden = false;
+          updateModelLabel(); // reflect the new effort on the composer chip
+        };
+        dotsEl.appendChild(dot);
+      });
+      row.appendChild(dotsEl);
+    }
     gearPopover.appendChild(row);
 
     // ── Session ───────────────────────────────────────────────────────────
@@ -1219,7 +1929,10 @@
     addGearItem('<span>Keyboard shortcuts</span><span class="popover-chevron">›</span>', () => renderShortcutsPanel());
     addGearItem('<span>Version &amp; about</span><span class="popover-chevron">›</span>', () => renderAboutPanel(true));
     addGearItem('<span>Config &amp; debug</span><span class="popover-chevron">›</span>', () => renderConfigDebugPanel());
-    addGearItem("<span>Log out</span>", () => {
+    // Signs out of THIS tab's own backend (docs/plans/claude-code-backend.md §
+    // WP5) — the host infers it from the session, but the label says so too so
+    // it's clear a Claude tab's "Log out" won't sign the user out of grok.
+    addGearItem(`<span>Log out of ${state.backend === "claude" ? "Claude" : "Grok"}</span>`, () => {
       vscode.postMessage({ type: "logout" });
       closePopovers();
     });
@@ -1461,6 +2174,25 @@
       closePopovers();
     };
     addPopover.appendChild(item);
+    // A second, plainly-labelled door back to the capability browser once the
+    // welcome screen (and its own door) is gone — this is where a user who has
+    // already started chatting is actually looking (docs/plans/
+    // session-tab-ux-overhaul.md § Approach B bullet 5). Omitted, not just
+    // inert, when grok.showCapabilities is off — matches the top-bar button's
+    // own hidden-not-disabled treatment.
+    if (capabilitiesPopover && capabilitiesBtn && state.showCapabilities) {
+      const capItem = document.createElement("div");
+      capItem.className = "toolbar-popover-item";
+      capItem.innerHTML = `<span class="add-item-icon">${ICON.cpu}</span><span>Browse Grokbit Actions…</span>`;
+      capItem.onclick = (e) => {
+        e.stopPropagation();
+        // openCapabilitiesPopover() itself calls closePopovers() (hiding this
+        // add-popover) before showing the capabilities popover — closing here
+        // too would immediately hide the one we just opened.
+        openCapabilitiesPopover();
+      };
+      addPopover.appendChild(capItem);
+    }
     positionPopover(addPopover, addBtn);
     addPopover.hidden = false;
   }
@@ -1528,11 +2260,16 @@
     const list = document.createElement("div");
     list.className = "history-list";
     // Auto-load the next page as the user nears the bottom. The loading/hasMore guards
-    // keep it to one request per page boundary.
+    // keep it to one request per page boundary. Cursor is the host's own authoritative
+    // state.sessionNextOffset (offset + disk rows actually read), NOT state.sessions.length
+    // — the host prepends a synthesized live row for a not-yet-flushed session, so paging
+    // off the rendered row count overshoots by that row's count and permanently skips a
+    // real session at every page boundary (docs/plans/capability-surfacing-and-history-ux.md
+    // § Thread 3 — the same latent bug the launcher was rewritten to avoid).
     list.onscroll = () => {
       if (!state.sessionHasMore || state.sessionLoading) return;
       if (list.scrollTop + list.clientHeight >= list.scrollHeight - 48) {
-        requestSessions(state.sessions.length);
+        requestSessions(state.sessionNextOffset);
       }
     };
     historyPopover.appendChild(list);
@@ -1629,11 +2366,23 @@
         main.appendChild(inp);
         setTimeout(() => { inp.focus(); inp.select(); }, 0);
       } else {
+        const titleRow = document.createElement("div");
+        titleRow.className = "history-row-title";
+
+        const badgeLabel = backendBadgeLabel ? backendBadgeLabel(s.backend) : "";
+        if (badgeLabel) {
+          const badge = document.createElement("span");
+          badge.className = "history-row-backend";
+          badge.textContent = badgeLabel;
+          titleRow.appendChild(badge);
+        }
+
         const name = document.createElement("div");
         name.className = "history-row-name";
         name.textContent = s.displayName || "Untitled";
         name.title = s.rawSummary || s.displayName || "";
-        main.appendChild(name);
+        titleRow.appendChild(name);
+        main.appendChild(titleRow);
 
         const meta = document.createElement("div");
         meta.className = "history-row-meta";
@@ -1644,10 +2393,15 @@
         main.appendChild(meta);
 
         // Whole row is the click target; the rename/delete buttons below
-        // stopPropagation so they don't also trigger a resume.
+        // stopPropagation so they don't also trigger a resume. Carry the row's
+        // own backend so the host starts the right agent
+        // (docs/plans/claude-code-backend.md § WP5) — omitted for a legacy/grok
+        // row, mirroring the delete button below.
         row.onclick = () => {
           if (active) { closePopovers(); return; }
-          vscode.postMessage({ type: "resumeSession", id: s.id });
+          const msg = { type: "resumeSession", id: s.id };
+          if (s.backend) msg.backend = s.backend;
+          vscode.postMessage(msg);
           closePopovers();
         };
       }
@@ -1675,7 +2429,9 @@
         delBtn.title = "Delete";
         delBtn.onclick = (e) => {
           e.stopPropagation();
-          vscode.postMessage({ type: "deleteSession", id: s.id, name: s.displayName });
+          const msg = { type: "deleteSession", id: s.id, name: s.displayName };
+          if (s.backend) msg.backend = s.backend;
+          vscode.postMessage(msg);
         };
         actions.appendChild(delBtn);
       }
@@ -1704,35 +2460,9 @@
     const welcome = $("welcome");
     if (welcome) welcome.hidden = true;
     state.welcomeVisible = false;
-    hideWelcomeStarters();
-  }
-
-  // Empty-session starter cards — insert a ready-to-edit prompt (or nudge plan
-  // mode / the mic). Hidden during onboarding, startup, and once chat begins.
-  function hideWelcomeStarters() {
-    const el = $("welcome-starters");
-    if (el) { el.hidden = true; el.innerHTML = ""; }
-  }
-
-  function applyWelcomeStarter(card) {
-    if (!card) return;
-    if (card.action === "plan") {
-      vscode.postMessage({ type: "setMode", modeId: "plan" });
-    }
-    // Dictate starters only highlight the mic — never start capture from here.
-    // Host remains the authority on voiceStart / API-key checks. Welcome stays up
-    // so the user can pick another card after the nudge.
-    if (card.action === "focus-mic" || card.action === "voice-hint") {
-      if (micBtn) {
-        micBtn.focus();
-        micBtn.classList.add("starter-pulse");
-        setTimeout(() => micBtn.classList.remove("starter-pulse"), 1200);
-      }
-      return;
-    }
-    if (typeof card.prompt === "string" && card.prompt.length) {
-      insertComposerPrompt(card.prompt);
-    }
+    hideSessionSetupCard();
+    hideCapabilitiesPanel();
+    hideWelcomeGuide();
   }
 
   /** Seed the composer with a ready-to-edit prompt and place the caret at the end. */
@@ -1748,74 +2478,6 @@
     if (typeof renderInputHighlight === "function") renderInputHighlight();
   }
 
-  function renderWelcomeStarters() {
-    const el = $("welcome-starters");
-    if (!el) return;
-    const onb = $("welcome-onboarding");
-    const onboardingActive = !!(onb && onb.innerHTML && onb.innerHTML.trim());
-    // Only when the empty session is truly ready for the user to type.
-    if (!state.welcomeVisible || onboardingActive || state.startingPhase) {
-      hideWelcomeStarters();
-      return;
-    }
-    const cards = welcomeStarters({ voiceConfigured: state.voiceConfigured });
-    el.innerHTML = "";
-    const heading = document.createElement("p");
-    heading.className = "welcome-starters-heading";
-    heading.textContent = "Try one of these";
-    el.appendChild(heading);
-    const grid = document.createElement("div");
-    grid.className = "welcome-starters-grid";
-    grid.setAttribute("role", "list");
-    for (const card of cards) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "welcome-starter";
-      btn.setAttribute("role", "listitem");
-      btn.dataset.starterId = card.id;
-      btn.innerHTML =
-        `<span class="welcome-starter-title">${escapeHtml(card.title)}</span>` +
-        `<span class="welcome-starter-desc">${escapeHtml(card.desc)}</span>`;
-      btn.title = card.desc;
-      btn.onclick = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        applyWelcomeStarter(card);
-      };
-      grid.appendChild(btn);
-    }
-    el.appendChild(grid);
-    // Studio E1: task chips (invoice / receipt / …) — not format icons (launcher).
-    const tasks = typeof taskQuickActions === "function" ? taskQuickActions() : [];
-    if (tasks.length) {
-      const taskHead = document.createElement("p");
-      taskHead.className = "welcome-starters-heading welcome-tasks-heading";
-      taskHead.textContent = "Business tasks";
-      el.appendChild(taskHead);
-      const taskRow = document.createElement("div");
-      taskRow.className = "welcome-task-chips";
-      taskRow.setAttribute("role", "list");
-      for (const task of tasks) {
-        const chip = document.createElement("button");
-        chip.type = "button";
-        chip.className = "welcome-task-chip";
-        chip.setAttribute("role", "listitem");
-        chip.dataset.taskId = task.id;
-        chip.textContent = task.label;
-        chip.title = task.label;
-        chip.onclick = (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (task.prompt) insertComposerPrompt(task.prompt);
-        };
-        taskRow.appendChild(chip);
-      }
-      el.appendChild(taskRow);
-    }
-    // Document-type icons live on the activity-bar launcher (not the welcome screen).
-    el.hidden = false;
-  }
-
   function resetForNewSession() {
     for (const child of Array.from(messagesEl.children)) {
       if (child.id !== "welcome") child.remove();
@@ -1827,12 +2489,15 @@
       if (onb) onb.innerHTML = "";
       const ver = $("welcome-version");
       if (ver) { ver.hidden = false; ver.classList.add("loading-dots"); ver.textContent = "Starting"; }
-      hideWelcomeStarters();
+      hideSessionSetupCard();
+      hideCapabilitiesPanel();
+      hideWelcomeGuide();
     }
     state.welcomeVisible = true;
     state.pendingDiffByToolCallId.clear();
     state.toolItemsByToolCallId.clear();
     state.toolFailuresById.clear();
+    state.capabilitiesExpanded = {}; // new session — the old expansion choice doesn't belong to it
     clearChangedFiles(); // switching sessions — the strip belongs to the old view
     state.activeAgentEl = null;
     state.activeAgentRaw = "";
@@ -1858,6 +2523,10 @@
 
   function showOnboarding(mode, info) {
     info = info || {};
+    // The recheck button's data-act handler (below) needs to know which
+    // backend a Claude-flavored card is for, so "Re-check connection" opens a
+    // fresh tab on the SAME backend that failed — not always Grok.
+    state.onboardingBackend = info.backend || "";
     const welcome = $("welcome");
     if (welcome) welcome.hidden = false;
     state.welcomeVisible = true;
@@ -1865,7 +2534,9 @@
     const ver = $("welcome-version");
     if (!onb) return;
     if (mode === "missing-cli") {
-      hideWelcomeStarters(); // install flow replaces the starter cards
+      hideSessionSetupCard(); // install flow replaces the setup card
+      hideCapabilitiesPanel();
+      hideWelcomeGuide();
       if (ver) { ver.hidden = false; ver.classList.remove("loading-dots"); ver.textContent = "CLI not installed"; }
       const installCmd = info.platform === "win32"
         ? "irm https://x.ai/cli/install.ps1 | iex"
@@ -1881,7 +2552,9 @@
           `<button class="onb-action onb-secondary" type="button" data-act="recheck">Re-check connection</button>` +
         `</div>`;
     } else if (mode === "auth-required") {
-      hideWelcomeStarters();
+      hideSessionSetupCard();
+      hideCapabilitiesPanel();
+      hideWelcomeGuide();
       if (ver) { ver.hidden = false; ver.classList.remove("loading-dots"); ver.textContent = "Authentication required"; }
       onb.innerHTML =
         `<div class="onb">` +
@@ -1896,9 +2569,37 @@
           `</div>` +
           `<button class="onb-action onb-secondary" type="button" data-act="recheck">Re-check connection</button>` +
         `</div>`;
+    } else if (mode === "missing-claude-adapter") {
+      hideSessionSetupCard();
+      hideCapabilitiesPanel();
+      hideWelcomeGuide();
+      if (ver) { ver.hidden = false; ver.classList.remove("loading-dots"); ver.textContent = "Claude Code adapter not installed"; }
+      onb.innerHTML =
+        `<div class="onb">` +
+          `<p class="onb-heading">Install the Claude Code adapter</p>` +
+          `<p class="onb-desc">Grokbit drives Claude Code through a small adapter ` +
+          `(<code>@zed-industries/claude-code-acp</code>) that isn't bundled with the extension — ` +
+          `it's about <strong>120&nbsp;MB</strong> and is downloaded once, straight from npm. ` +
+          `VS Code may be briefly unresponsive while it installs.</p>` +
+          `<button class="onb-action" type="button" data-act="installClaude">Install adapter (~120 MB, one time)</button>` +
+          `<button class="onb-action onb-secondary" type="button" data-act="recheck">Re-check connection</button>` +
+        `</div>`;
+    } else if (mode === "claude-auth-required") {
+      hideSessionSetupCard();
+      hideCapabilitiesPanel();
+      hideWelcomeGuide();
+      if (ver) { ver.hidden = false; ver.classList.remove("loading-dots"); ver.textContent = "Claude sign-in required"; }
+      onb.innerHTML =
+        `<div class="onb">` +
+          `<p class="onb-heading">Sign in to Claude Code</p>` +
+          `<p class="onb-desc">Uses your existing <strong>Claude subscription</strong> &mdash; the same login as the ` +
+          `<code>claude</code> CLI, no separate billing and no API key needed.</p>` +
+          `<button class="onb-action" type="button" data-act="runClaudeLogin">Open terminal &amp; run <code>claude auth login</code></button>` +
+          `<button class="onb-action onb-secondary" type="button" data-act="recheck">Re-check connection</button>` +
+        `</div>`;
     } else {
       onb.innerHTML = "";
-      renderWelcomeStarters();
+      renderSessionSetupCard();
     }
   }
 
@@ -2429,6 +3130,10 @@
     // tool_call_update often has neither, so re-categorizing the update would
     // wrongly bucket everything as "command"; readers key off this instead.
     item.dataset.toolCategory = categorize(call);
+    // The exact ACP kind (not the coarser category above) — a permission
+    // request for this SAME toolCallId carries no `kind` of its own for
+    // Claude (see addPermissionCard's inferPermissionKind correlation).
+    item.dataset.toolKind = toolKind(call);
     body.appendChild(item);
     if (call.toolCallId) state.toolItemsByToolCallId.set(call.toolCallId, item);
 
@@ -3421,6 +4126,11 @@
     el.appendChild(line);
   }
 
+  const inferPermissionKind = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.inferPermissionKind)
+    || function (explicitKind) { return explicitKind || ""; };
+  const permissionDiffFromRawInput = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.permissionDiffFromRawInput)
+    || function () { return null; };
+
   function addPermissionCard(req) {
     clearWelcome();
     hideGrokking();
@@ -3428,7 +4138,16 @@
     // grok's continuation after the answer renders BELOW this card, not appended
     // to the bubble that was streaming above it.
     commitAgentTurn();
-    const cardTitle = req.toolCall?.title || `permission: ${req.toolCall?.kind || "tool"}`;
+    const toolCallId = req.toolCall?.toolCallId;
+    // Claude's permission payload carries no `toolCall.kind` at all (only
+    // {toolCallId, title, rawInput}) — correlate it from the tool_call this
+    // same toolCallId already produced (item.dataset.toolKind, stamped by
+    // addToToolGroup), falling back to inferring it from rawInput's shape.
+    // See docs/plans/claude-code-backend.md § WP3.
+    const seenItem = toolCallId && state.toolItemsByToolCallId.get(toolCallId);
+    const seenKind = seenItem ? seenItem.dataset.toolKind : "";
+    const kind = inferPermissionKind(req.toolCall?.kind, seenKind, req.toolCall?.rawInput);
+    const cardTitle = req.toolCall?.title || `permission: ${kind || "tool"}`;
     const el = document.createElement("div");
     el.className = "card permission";
     // Tag the card so a buffered `permissionResolved` (replayed when this session
@@ -3443,7 +4162,12 @@
     title.textContent = cardTitle;
     el.appendChild(title);
 
-    const diff = state.pendingDiffByToolCallId.get(req.toolCall?.toolCallId);
+    // Prefer a genuine structured diff already seen for this toolCallId (grok's
+    // pending tool_call_update always carries one before the permission request
+    // arrives); Claude's real diff hunks land on the COMPLETED update, which is
+    // AFTER approval — so at this point there's usually nothing there for it.
+    // Synthesize a preview from rawInput instead so the card isn't diff-less.
+    const diff = state.pendingDiffByToolCallId.get(toolCallId) || permissionDiffFromRawInput(req.toolCall?.rawInput, kind);
     if (diff) {
       const subtitle = document.createElement("div");
       subtitle.className = "card-subtitle";
@@ -4239,6 +4963,24 @@
         applyThinkingVisibility();
         updateModelLabel(); // effort is now known
         updateComposerPlaceholder(); // send-key hint follows useCtrlEnter
+        // grok.showCapabilities isn't known at "ready" time — initialState is
+        // posted AFTER ready (postPanelConfig replies to it) — so the capability
+        // browser is requested from HERE, gated on the freshly-delivered flag,
+        // not from the ready handler. initialState is re-posted on every reveal
+        // of a torn-down hidden panel, so this also refreshes the list on reveal.
+        if (typeof msg.showCapabilities === "boolean") {
+          state.showCapabilities = msg.showCapabilities;
+          // The Skills top-bar button itself must be hidden too — otherwise it
+          // sits there doing nothing (clicking it is separately guarded above,
+          // but a button that visibly does nothing is its own bug).
+          if (capabilitiesBtn) capabilitiesBtn.hidden = !state.showCapabilities;
+          if (state.showCapabilities) {
+            vscode.postMessage({ type: "listCapabilities" });
+          } else {
+            hideCapabilitiesPanel();
+            if (capabilitiesPopover) capabilitiesPopover.hidden = true;
+          }
+        }
         break;
       case "seedComposer":
         // Host-driven seed (activity-bar document-type icon). Applied after
@@ -4254,6 +4996,34 @@
           capped: !!msg.capped,
         };
         if (docsPopover && !docsPopover.hidden) renderDocsPopover();
+        break;
+      case "capabilities":
+        // Transient, per-panel reply to listCapabilities (never buffered — see
+        // docs/plans/capability-surfacing-and-history-ux.md § Message contract).
+        // Stashed in state so renderCapabilitiesPanel() can render it once the
+        // priming-window gate clears, without a second request (see setBusy).
+        state.capabilities = {
+          backend: msg.backend,
+          groups: Array.isArray(msg.groups) ? msg.groups : [],
+          scannedRoots: typeof msg.scannedRoots === "number" ? msg.scannedRoots : 0,
+          truncated: !!msg.truncated,
+          error: msg.error || null,
+        };
+        renderCapabilitiesPanel();
+        if (capabilitiesPopover && !capabilitiesPopover.hidden) renderCapabilitiesPopoverBody();
+        break;
+      case "showCapabilities":
+        // Live toggle (grok.showCapabilities). Off hides both mounts (and the
+        // Skills button itself); on re-requests, mirroring the initialState
+        // gate above.
+        state.showCapabilities = !!msg.value;
+        if (capabilitiesBtn) capabilitiesBtn.hidden = !state.showCapabilities;
+        if (state.showCapabilities) {
+          vscode.postMessage({ type: "listCapabilities" });
+        } else {
+          hideCapabilitiesPanel();
+          if (capabilitiesPopover) capabilitiesPopover.hidden = true;
+        }
         break;
       case "showThinking":
         // Live toggle (grok.showThinking). Initial value also arrives via
@@ -4300,7 +5070,13 @@
         if (verEl) { verEl.hidden = false; verEl.classList.add("loading-dots"); verEl.textContent = "Starting"; }
         const onb = $("welcome-onboarding");
         if (onb) onb.innerHTML = "";
-        hideWelcomeStarters(); // don't offer starters while the session is still priming
+        // Render locked, not hidden — the canvas is populated from the first
+        // frame instead of blank for the whole spawn+primer window (docs/plans/
+        // session-tab-ux-overhaul.md § Approach C). Both renders key their own
+        // lock state off state.busy, which is already true here.
+        renderSessionSetupCard();
+        renderCapabilitiesPanel();
+        renderWelcomeGuide();
         break;
       }
       case "cliUpdating": {
@@ -4317,10 +5093,17 @@
         const m = state.availableModels.find((x) => x.modelId === msg.currentModelId);
         if (m?.totalContextTokens) state.contextWindow = m.totalContextTokens;
         updateDonut(0);
+        // The host stamps its own session.backend on this event (not read back
+        // from state.backend here) — a backend flip's fresh "session" can arrive
+        // before its own backendChanged catches state.backend up, so relying on
+        // state.backend would risk persisting the OLD backend below.
+        if (msg.backend) { state.backend = msg.backend; updateBackendLabel(); }
         updateModelLabel(); // model is now known — reveal the composer chip
-        // Stash the grok session id for the panel serializer: after a window
-        // reload the host re-binds this tab to its session from this state.
-        if (msg.sessionId) vscode.setState({ id: msg.sessionId });
+        refreshSessionSettingsMounts();
+        // Stash the session id (+ backend) for the panel serializer: after a
+        // window reload the host re-binds this tab to its session and respawns
+        // the right agent from this state (docs/plans/claude-code-backend.md § WP5).
+        if (msg.sessionId) vscode.setState({ id: msg.sessionId, backend: state.backend });
         break;
       }
       case "modelChanged": {
@@ -4332,11 +5115,39 @@
         const m = state.availableModels.find((x) => x.modelId === msg.modelId);
         if (m && m.totalContextTokens) { state.contextWindow = m.totalContextTokens; updateDonut(); }
         updateModelLabel();
+        refreshSessionSettingsMounts();
         break;
       }
       case "modeChanged":
         state.currentModeId = msg.modeId;
         updateModeBtn(msg.modeId);
+        refreshSessionSettingsMounts();
+        renderWelcomeGuide(); // its plan-mode line is mode-accurate — must never go stale
+        // The Actions popover's auto-accept switch reads state.currentModeId —
+        // this is what flips it when the mode changes from any OTHER surface.
+        if (capabilitiesPopover && !capabilitiesPopover.hidden) renderCapabilitiesPopoverBody();
+        break;
+      case "backendChanged":
+        state.backend = msg.backend || "grok";
+        state.backendLabel = msg.label || "";
+        state.claudeAccount = msg.account || null;
+        // A retained capabilities payload belongs to the PREVIOUS backend — clear
+        // it so a stray re-render (e.g. setBusy:false racing ahead of the new
+        // scan after a mid-session backend switch) can't briefly show the wrong
+        // agent's skills/commands/agents.
+        state.capabilities = null;
+        hideCapabilitiesPanel();
+        if (capabilitiesPopover && !capabilitiesPopover.hidden) renderCapabilitiesPopoverBody();
+        updateBackendLabel();
+        updateComposerPlaceholder(); // "Ask Grok…" vs "Ask Claude…" follows the tab's own backend
+        // The gear popover's effort-dots row only applies to a backend with an
+        // effort axis (Claude has none — see CLAUDE_EFFORT_LEVELS); re-render if
+        // it's open so a flip mid-session doesn't leave a stale row.
+        if (!gearPopover.hidden && state.gearView === "main") renderGearMain();
+        // Same reasoning for the setup card + quick-settings popover (WP7) —
+        // the Thinking row must disappear/reappear immediately on a flip.
+        refreshSessionSettingsMounts();
+        renderWelcomeGuide(); // its "Ask Grok…"/"Ask Claude…" line is backend-accurate
         break;
       case "openModePopover":
         openModePopover();
@@ -4361,8 +5172,6 @@
         if (typeof msg.sendPhrase === "string") state.voiceSendPhrase = msg.sendPhrase;
         renderMic();
         renderInputHighlight();
-        // Voice card wording depends on setup state — refresh if welcome is up.
-        if (state.welcomeVisible) renderWelcomeStarters();
         break;
       case "voicePartial":
         // Live streaming update: replace the tail after the pre-dictation base.
@@ -4689,11 +5498,20 @@
               verEl.hidden = true;
             }
           }
-          // Session is ready — show starter cards on an empty welcome screen.
-          renderWelcomeStarters();
         }
         // Refresh the gear popover's model/effort lock state if it's open.
         if (!gearPopover.hidden) renderGearMain();
+        // Same for the setup card + quick-settings popover (WP7) — every busy
+        // transition (incl. a mid-restart re-lock) must reflect immediately,
+        // not just the moment the session first goes idle.
+        refreshSessionSettingsMounts();
+        // Every busy transition re-renders the capability rows too — this is
+        // what flips them between locked (mid-priming/restart) and clickable
+        // once state.busy clears, from whatever state.capabilities payload
+        // already arrived, with no second listCapabilities request.
+        renderCapabilitiesPanel();
+        if (capabilitiesPopover && !capabilitiesPopover.hidden) renderCapabilitiesPopoverBody();
+        renderWelcomeGuide();
         break;
       case "summarizing": {
         clearWelcome();
@@ -4712,7 +5530,7 @@
         resetForNewSession();
         break;
       case "onboarding":
-        showOnboarding(msg.state, { platform: msg.platform });
+        showOnboarding(msg.state, { platform: msg.platform, backend: msg.backend });
         break;
       case "error":
         addError(msg.text);
@@ -4750,6 +5568,7 @@
         // only carries dots for the new page.
         state.dots = Object.assign({}, state.dots, msg.dots || {});
         if (msg.total !== undefined) state.sessionTotal = msg.total;
+        if (msg.nextOffset !== undefined) state.sessionNextOffset = msg.nextOffset;
         state.sessionHasMore = !!msg.hasMore;
         state.sessionLoading = false;
         if (open) renderSessionRows();
@@ -4789,16 +5608,20 @@
   };
   modeBtn.onclick = (e) => { e.stopPropagation(); if (state.busy) return; openModePopover(); };
   gearBtn.onclick = (e) => { e.stopPropagation(); openGearPopover(); };
-  // The composer model/effort chip opens the gear's model + effort controls
-  // (they sit at the top of the main view). Positioned at the chip itself.
+  // The composer model/effort chip opens the compact quick-settings popover —
+  // the SAME four controls (Agent/Model/Thinking/Mode) as the new-tab setup
+  // card, built from the same sessionSetupModel() — rather than the gear's
+  // full main menu (docs/plans/claude-code-backend.md § WP7).
   if (modelLabel) modelLabel.onclick = (e) => {
     e.stopPropagation();
-    if (!gearPopover.hidden) { closePopovers(); return; }
-    closePopovers();
-    renderGearMain();
-    positionPopover(gearPopover, modelLabel);
-    gearPopover.hidden = false;
+    openSessionSettingsPopover(modelLabel);
   };
+  if (sessionSettingsPopover) sessionSettingsPopover.addEventListener("click", (e) => e.stopPropagation());
+  // The backend chip keeps its own small single-purpose popover (Grok Build /
+  // Claude Code only) — unchanged; the Agent row above is a second, equivalent
+  // way to flip backend from the consolidated popover/card.
+  if (backendLabelBtn) backendLabelBtn.onclick = (e) => { e.stopPropagation(); openBackendPopover(); };
+  if (backendPopover) backendPopover.addEventListener("click", (e) => e.stopPropagation());
 
   // Welcome screen's "about" link → open the gear popover's Version & about panel.
   const welcomeAboutLink = $("welcome-about-link");
@@ -4806,11 +5629,13 @@
   addBtn.onclick = (e) => { e.stopPropagation(); openAddPopover(); };
   historyBtn.onclick = (e) => { e.stopPropagation(); openHistoryPopover(); };
   if (docsBtn) docsBtn.onclick = (e) => { e.stopPropagation(); openDocsPopover(); };
+  if (capabilitiesBtn) capabilitiesBtn.onclick = (e) => { e.stopPropagation(); openCapabilitiesPopover(); };
   modePopover.addEventListener("click", (e) => e.stopPropagation());
   gearPopover.addEventListener("click", (e) => e.stopPropagation());
   addPopover.addEventListener("click", (e) => e.stopPropagation());
   historyPopover.addEventListener("click", (e) => e.stopPropagation());
   if (docsPopover) docsPopover.addEventListener("click", (e) => e.stopPropagation());
+  if (capabilitiesPopover) capabilitiesPopover.addEventListener("click", (e) => e.stopPropagation());
   document.addEventListener("click", (e) => {
     // Math / mermaid export actions (Copy source, Download as PNG/SVG, Open as PNG).
     const exprBtn = e.target.closest(".expr-btn");
@@ -4856,7 +5681,16 @@
       const act = onbAction.dataset.act;
       if (act === "runInstall") vscode.postMessage({ type: "runInstallCmd" });
       else if (act === "runLogin") vscode.postMessage({ type: "runGrokLogin" });
-      else if (act === "recheck") vscode.postMessage({ type: "recheckConnection" });
+      else if (act === "installClaude") vscode.postMessage({ type: "installClaudeAdapter" });
+      else if (act === "runClaudeLogin") vscode.postMessage({ type: "runClaudeLogin" });
+      else if (act === "recheck") {
+        // Re-open on the SAME backend the failing card was for (Claude's
+        // missing-adapter/auth-required cards set this; grok's cards leave it
+        // empty, which the host treats as "use grok.defaultBackend").
+        const msg = { type: "recheckConnection" };
+        if (state.onboardingBackend) msg.backend = state.onboardingBackend;
+        vscode.postMessage(msg);
+      }
       return;
     }
     const onbCopy = e.target.closest(".onb-copy");

@@ -1,6 +1,7 @@
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
 import { isPrimerText, isPrimerSummary } from "./grok-primer";
+import { BackendId } from "./backends";
 
 /** A session with at most this many recorded messages is cheap to confirm as empty
  *  (a primer-only session has ~4). The sweep only reads `chat_history.jsonl` for
@@ -110,6 +111,91 @@ export function tabTitleFor(name: string | undefined, maxLen = 24): string {
   if (!collapsed) return NEW_TAB_TITLE;
   if (collapsed.length <= maxLen) return collapsed;
   return collapsed.slice(0, maxLen - 1).trimEnd() + "…";
+}
+
+/** Compact name for the settings prefix on a tab title (see {@link composeTabTitle}).
+ *  Model ids are not a clean `[a-z-]+` charset (e.g. Claude's `opus[1m]` has
+ *  brackets, grok's carries a version suffix like `grok-build-0.1` — the
+ *  "versioned-id gotcha"), so this takes the leading run of letters and
+ *  capitalizes it rather than assuming a shape: `grok-build` → `Grok`,
+ *  `sonnet` → `Sonnet`, `opus[1m]` → `Opus`, `haiku` → `Haiku`. An id with no
+ *  leading letters (or none at all — e.g. a fresh/resumed tab before its
+ *  first `modelChanged`) falls back to the backend's own neutral default
+ *  ("Grok" / "Claude") rather than always "Grok" — a Claude tab must not read
+ *  "Grok — New" before its first send. Pure. */
+export function shortModelName(modelId: string | undefined, backend: BackendId = "grok"): string {
+  const word = (modelId ?? "").match(/^[A-Za-z]+/)?.[0];
+  if (word) return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  return backend === "claude" ? "Claude" : "Grok";
+}
+
+/** Effort abbreviation for the settings prefix. Intentionally duplicates
+ *  media/chat.js's `shortEffort` (same semantics: `minimal`→`min`,
+ *  `medium`→`med`, `xhigh`→`xhi`, else the first 3 chars) rather than sharing
+ *  a module across the host/webview boundary — the host is TypeScript, the
+ *  webview copy is 5 lines with its own DOM tests, and coupling them isn't
+ *  worth it for this parallel. Keep the two in sync if the mapping changes.
+ *  Empty/undefined (CLI default) yields "". Pure. */
+export function shortEffort(effort: string | undefined): string {
+  if (!effort) return "";
+  if (effort === "minimal") return "min";
+  if (effort === "medium") return "med";
+  if (effort === "xhigh") return "xhi";
+  return effort.slice(0, 3);
+}
+
+/** Unnamed-session fragment for {@link composeTabTitle} — shorter than
+ *  {@link NEW_TAB_TITLE} ("Grokbit New") because the model·effort prefix
+ *  already identifies the tab as Grokbit. */
+const UNNAMED_SETTINGS_TITLE = "New";
+
+/** Total title budget for {@link composeTabTitle}. Wider than the bare
+ *  {@link tabTitleFor} default (24) to make room for the settings prefix
+ *  while still keeping the name's own share close to that same 24. */
+const DEFAULT_SETTINGS_TITLE_MAX = 34;
+
+/** However long the model·effort prefix gets, the name still gets at least
+ *  this many characters — a pathological model id must not crowd it out
+ *  entirely. */
+const MIN_NAME_BUDGET = 10;
+
+/** A settings prefix longer than this is itself truncated, for the same
+ *  reason: bound the case a wild model id blows up {@link shortModelName}'s
+ *  output (it has no length cap of its own). */
+const MAX_PREFIX_LEN = 14;
+
+export interface TabTitleParts {
+  /** Session name (customName / latest prompt / disk displayName) — same
+   *  input `tabTitleFor` takes. Empty/undefined renders {@link UNNAMED_SETTINGS_TITLE}. */
+  name?: string;
+  /** Raw model id (e.g. `grok-build`, `sonnet`, `opus[1m]`), NOT a display name. */
+  model?: string;
+  /** `grok.defaultEffort`-shaped value ("", "medium", …). Empty = no prefix segment. */
+  effort?: string;
+  /** Which agent this tab runs — decides {@link shortModelName}'s fallback word
+   *  when `model` isn't known yet (a fresh/resumed Claude tab, before its first
+   *  `modelChanged`). Defaults to "grok" for existing callers. */
+  backend?: BackendId;
+  /** Total title budget, prefix + separator + name. */
+  maxLen?: number;
+}
+
+/**
+ * Editor-tab title with a `Model·effort — Name` settings prefix, e.g.
+ * `Sonnet·hig — Fix login bug` / unnamed: `Grok·med — New`. VS Code truncates
+ * tab titles from the end, so the prefix (the settings) survives a narrow tab
+ * and the name is what degrades — the opposite of the bare {@link tabTitleFor}.
+ * Reuses `tabTitleFor` for the name's own truncation. Pure.
+ */
+export function composeTabTitle({ name, model, effort, backend = "grok", maxLen = DEFAULT_SETTINGS_TITLE_MAX }: TabTitleParts): string {
+  const eff = shortEffort(effort);
+  let prefix = eff ? `${shortModelName(model, backend)}·${eff}` : shortModelName(model, backend);
+  if (prefix.length > MAX_PREFIX_LEN) prefix = prefix.slice(0, MAX_PREFIX_LEN - 1) + "…";
+  const sep = " — ";
+  const collapsed = (name ?? "").replace(/\s+/g, " ").trim();
+  const nameBudget = Math.max(MIN_NAME_BUDGET, maxLen - prefix.length - sep.length);
+  const namePart = collapsed ? tabTitleFor(collapsed, nameBudget) : UNNAMED_SETTINGS_TITLE;
+  return `${prefix}${sep}${namePart}`;
 }
 
 /** Default friendly name when no `customName` or `session_summary` is available. */
@@ -370,7 +456,13 @@ export function readSessionTokenUsage(deps: SessionDirDeps): number | undefined 
  * Best on-disk estimate of tokens a single session has used for this project:
  * current context (`contextTokensUsed`) plus tokens dropped by compaction
  * (`totalTokensBeforeCompaction`). Grok does not persist a full billable
- * input+output lifetime counter — this is the closest durable signal. Pure.
+ * input+output lifetime counter — this is the closest durable signal, and it is
+ * a **lower bound** on tokens actually spent (every turn re-sends the context).
+ *
+ * `grok_session_estimate` in `scripts/aggregate_token_usage.py` is a deliberate
+ * mirror of this function — it values grok's half of the committed development
+ * ledger. The two must stay in step; change one, change the other.
+ * Pure.
  */
 export function sessionTokenEstimate(signals: {
   contextTokensUsed?: unknown;
@@ -388,75 +480,46 @@ export function sessionTokenEstimate(signals: {
   return ctx + compacted;
 }
 
-export interface WorkspaceTokenUsage {
-  /** Sum of per-session estimates for every on-disk session under this cwd. */
-  total: number;
-  /** Per-session estimates (id → tokens) for live lift-up. */
-  byId: Record<string, number>;
+/**
+ * True when `id` is safe to use as a SINGLE path segment joined onto a
+ * session-store directory (`path.join(dir, id)`, or `` `${id}.jsonl` `` for
+ * Claude). `path.join` normalizes `".."` segments, so an unvalidated id
+ * reaching a destructive delete (`deleteSessionDir` below,
+ * `ClaudeSessionStore.remove` in session-store.ts) could otherwise resolve
+ * OUTSIDE the intended directory. `id` ultimately originates in a webview
+ * `deleteSession` message — untrusted input reaching a destructive filesystem
+ * op, even though it's not reachable today (ids come from `readdirSync` on
+ * either backend's on-disk layout, and the CSP blocks script injection into
+ * the webview) — so this is defense-in-depth, not a fix for an exploited
+ * path. Deliberately checks SHAPE (a plain, separator-free path segment), not
+ * either backend's exact id grammar (grok: UUIDv7; Claude: the `.jsonl`
+ * filename — see CLAUDE.md § History pagination), so it doesn't need updating
+ * if either format ever changes. Pure.
+ */
+export function isSafeSessionId(id: string): boolean {
+  return typeof id === "string" && id.length > 0 && id !== "." && id !== ".." && !/[\\/\0]/.test(id);
 }
 
 /**
- * Project lifetime token estimate: sum of every session's on-disk
- * `signals.json` estimate for this workspace cwd. Pure — no network, no
- * vscode. Missing/unreadable dirs contribute 0.
+ * Second line of defense alongside {@link isSafeSessionId}: true when the
+ * already-joined `resolved` path is actually inside `dir` — catches anything
+ * the charset check might miss (a future `path.join`/OS-normalization
+ * quirk), at the cost of one extra `path.relative` call. Pure.
  */
-export function readWorkspaceTokenUsage(deps: ListDeps | Omit<ListDeps, "overrides" | "now">): WorkspaceTokenUsage {
-  const { fs, grokHome, cwd } = deps;
-  const root = sessionsDirFor(grokHome, cwd);
-  const byId: Record<string, number> = {};
-  let total = 0;
-  if (!fs.existsSync(root)) return { total: 0, byId };
-  let names: string[] = [];
-  try {
-    names = fs.readdirSync(root);
-  } catch {
-    return { total: 0, byId };
-  }
-  for (const id of names) {
-    const dir = path.join(root, id);
-    try {
-      if (!fs.statSync(dir).isDirectory()) continue;
-    } catch {
-      continue;
-    }
-    const file = path.join(dir, "signals.json");
-    try {
-      if (!fs.existsSync(file)) continue;
-      const n = sessionTokenEstimate(JSON.parse(fs.readFileSync(file, "utf8")) ?? {});
-      if (n > 0) {
-        byId[id] = n;
-        total += n;
-      }
-    } catch {
-      // skip unreadable / malformed
-    }
-  }
-  return { total, byId };
+export function isWithinDir(resolved: string, dir: string): boolean {
+  const rel = path.relative(dir, resolved);
+  if (rel === "" || path.isAbsolute(rel)) return false;
+  return rel !== ".." && !rel.startsWith(`..${path.sep}`);
 }
 
-/**
- * Lift the disk total with in-memory session context so a live turn that has
- * not flushed `signals.json` yet still counts. Pure.
- */
-export function mergeWorkspaceTokenUsage(
-  disk: WorkspaceTokenUsage,
-  live: Iterable<{ id?: string | null; tokens?: number | null }>,
-): number {
-  let sum = disk.total;
-  for (const s of live) {
-    const id = s.id || undefined;
-    const tokens = s.tokens;
-    if (!id || typeof tokens !== "number" || !isFinite(tokens) || tokens < 0) continue;
-    const prev = disk.byId[id] ?? 0;
-    if (tokens > prev) sum += tokens - prev;
-  }
-  return sum;
-}
-
-/** Remove the on-disk session directory. No-op if missing. */
+/** Remove the on-disk session directory. No-op if missing, or if `id` fails
+ *  the {@link isSafeSessionId}/{@link isWithinDir} defense-in-depth checks. */
 export function deleteSessionDir(deps: SessionDirDeps): void {
   const { fs, grokHome, cwd, id } = deps;
-  const dir = path.join(sessionsDirFor(grokHome, cwd), id);
+  if (!isSafeSessionId(id)) return;
+  const sessDir = sessionsDirFor(grokHome, cwd);
+  const dir = path.join(sessDir, id);
+  if (!isWithinDir(dir, sessDir)) return;
   if (!fs.existsSync(dir)) return;
   if (fs.rmSync) {
     fs.rmSync(dir, { recursive: true, force: true });

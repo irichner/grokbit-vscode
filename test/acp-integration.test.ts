@@ -25,6 +25,8 @@ import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
 import { AcpClient } from "../src/acp";
+import { GROK_BACKEND, buildGrokAgentArgs } from "../src/backends";
+import { Session } from "../src/session";
 
 function fixtureCli(): string {
   const dir = path.join(__dirname, "fixtures");
@@ -92,13 +94,15 @@ describe("ACP integration (real subprocess, fake CLI)", () => {
     stderr = captured;
 
     client = new AcpClient({
-      cliPath: fixtureCli(),
+      command: fixtureCli(),
+      args: buildGrokAgentArgs(),
       cwd: workspace,
       env: {
         ...process.env,
         FAKE_WORKSPACE_ROOT: workspace,
         FAKE_PLAN_PATH: planPath,
       },
+      quirks: GROK_BACKEND.quirks,
       log: () => {},
     });
     client.on("stderr", (t: string) => captured.push(t));
@@ -143,14 +147,15 @@ describe("ACP integration (real subprocess, fake CLI)", () => {
   it("startup: a valid default effort is forwarded as --reasoning-effort before stdio", async () => {
     const logs: string[] = [];
     const effortClient = new AcpClient({
-      cliPath: fixtureCli(),
+      command: fixtureCli(),
+      args: buildGrokAgentArgs("high"),
       cwd: workspace,
       env: {
         ...process.env,
         FAKE_WORKSPACE_ROOT: workspace,
         FAKE_PLAN_PATH: path.join(planHome, ".grok", "sessions", "cwd-x", "sess-effort", "plan.md"),
       },
-      effort: "high",
+      quirks: GROK_BACKEND.quirks,
       log: (msg) => logs.push(msg),
     });
 
@@ -166,6 +171,64 @@ describe("ACP integration (real subprocess, fake CLI)", () => {
       expect(logs.join("\n")).toContain("agent --reasoning-effort high stdio");
     } finally {
       effortClient.dispose();
+    }
+  });
+
+  it("per-session effort isolation: two sessions hold different efforts and each spawns with its own", async () => {
+    // Mirrors what startSession does — `effort: session.effort`, not a shared
+    // global — so two tabs never fight over one setting (the bug this fixes).
+    const sessionA = new Session();
+    sessionA.effort = "high";
+    const sessionB = new Session();
+    sessionB.effort = "low";
+    expect(sessionA.effort).not.toBe(sessionB.effort);
+
+    const logsA: string[] = [];
+    const logsB: string[] = [];
+    const clientA = new AcpClient({
+      command: fixtureCli(),
+      args: buildGrokAgentArgs(sessionA.effort),
+      cwd: workspace,
+      env: {
+        ...process.env,
+        FAKE_WORKSPACE_ROOT: workspace,
+        FAKE_PLAN_PATH: path.join(planHome, ".grok", "sessions", "cwd-x", "sess-effort-a", "plan.md"),
+      },
+      quirks: GROK_BACKEND.quirks,
+      log: (msg) => logsA.push(msg),
+    });
+    const clientB = new AcpClient({
+      command: fixtureCli(),
+      args: buildGrokAgentArgs(sessionB.effort),
+      cwd: workspace,
+      env: {
+        ...process.env,
+        FAKE_WORKSPACE_ROOT: workspace,
+        FAKE_PLAN_PATH: path.join(planHome, ".grok", "sessions", "cwd-x", "sess-effort-b", "plan.md"),
+      },
+      quirks: GROK_BACKEND.quirks,
+      log: (msg) => logsB.push(msg),
+    });
+
+    try {
+      await clientA.start();
+      await clientA.newSession();
+      await clientB.start();
+      await clientB.newSession();
+
+      expect(clientA.sessionId).toBe("fake-session-1");
+      expect(clientB.sessionId).toBe("fake-session-1");
+      expect(logsA.join("\n")).toContain("agent --reasoning-effort high stdio");
+      expect(logsB.join("\n")).toContain("agent --reasoning-effort low stdio");
+      // Neither client's spawn leaked the other session's effort.
+      expect(logsA.join("\n")).not.toContain("--reasoning-effort low");
+      expect(logsB.join("\n")).not.toContain("--reasoning-effort high");
+      // Changing one session's effort in place never touches the other.
+      sessionA.effort = "xhigh";
+      expect(sessionB.effort).toBe("low");
+    } finally {
+      clientA.dispose();
+      clientB.dispose();
     }
   });
 
@@ -267,6 +330,56 @@ describe("ACP integration (real subprocess, fake CLI)", () => {
     expect((client as any).__terminalCalls()).toBe(1); // handler was called → command allowed
   });
 
+  it("quirks.clientPlanGate=false: the gate never engages even with planActive=true (Claude-shaped descriptor)", async () => {
+    // Mirrors what a Claude-backend construction site would pass (see
+    // src/backends.ts CLAUDE_BACKEND.quirks) — Claude enforces plan mode
+    // natively, so this flag being off must make the write/terminal gate
+    // completely inert regardless of what `planActive` is set to.
+    const gatelessClient = new AcpClient({
+      command: fixtureCli(),
+      args: buildGrokAgentArgs(),
+      cwd: workspace,
+      env: {
+        ...process.env,
+        FAKE_WORKSPACE_ROOT: workspace,
+        FAKE_PLAN_PATH: path.join(planHome, ".grok", "sessions", "cwd-x", "sess-gateless", "plan.md"),
+      },
+      quirks: { clientPlanGate: false, mediaGen: true, xaiRequests: true },
+      log: () => {},
+    });
+    gatelessClient.fsRead = async (p) => fs.readFileSync(p, "utf8");
+    gatelessClient.fsWrite = async (p, content) => {
+      const target = path.isAbsolute(p) ? p : path.join(workspace, p);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, content, "utf8");
+    };
+    let terminalCalls = 0;
+    (gatelessClient as any).terminal = {
+      create: (params: { command: string }) => { terminalCalls += 1; return { terminalId: `t-${terminalCalls}` }; },
+      output: () => ({ output: "", exitStatus: { exitCode: 0 }, truncated: false }),
+      waitForExit: async () => ({ exitCode: 0 }),
+      kill: () => {},
+      release: () => {},
+    };
+
+    try {
+      await gatelessClient.start();
+      await gatelessClient.newSession();
+      gatelessClient.planActive = true; // deliberately "on" — must still not matter
+      const blocked = collect<unknown>(gatelessClient, "mutationBlocked");
+
+      await gatelessClient.prompt("SCENARIO_WORKSPACE_WRITE");
+      expect(fs.readFileSync(path.join(workspace, "file.ts"), "utf8")).toBe("// new file");
+
+      await gatelessClient.prompt("SCENARIO_MUTATING_TERMINAL");
+      expect(terminalCalls).toBe(1); // the mutating command reached the handler unblocked
+
+      expect(blocked).toHaveLength(0);
+    } finally {
+      gatelessClient.dispose();
+    }
+  });
+
   // Regression (#12): grok's x.ai/ask_user_question must get a response with the
   // `outcome` tag. The old catch-all replied `{}` → "missing field outcome" and
   // the tool failed. The host now emits a `questionRequest`; respondQuestion
@@ -287,6 +400,26 @@ describe("ACP integration (real subprocess, fake CLI)", () => {
     // well-formed accepted outcome, not a bare {}.
     await waitForStderr(stderr, /ASK_RESPONSE.*"outcome":"accepted"/);
     expect(stderr.join("")).toMatch(/"answers":\{"Pick one\?":"Option A"\}/);
+  });
+
+  // Code-review finding: BackendQuirks.xaiRequests was declared but never read
+  // anywhere — a flag with zero call sites, so a Claude-shaped descriptor could
+  // never actually gate x.ai/* handling. Confirms the four x.ai/* blocks in
+  // handleServerRequest are now inert when the flag is off: no questionRequest
+  // event fires, and the request falls through to the generic "unknown server
+  // request: emit + ack" path instead (so the fake CLI's callClient() still
+  // resolves — the turn doesn't hang — just without a real accepted outcome).
+  it("quirks.xaiRequests=false: x.ai/ask_user_question is NOT surfaced as questionRequest (falls through to the generic serverRequest ack)", async () => {
+    (client as any).opts.quirks = { ...(client as any).opts.quirks, xaiRequests: false };
+    const questionEvents = collect<any>(client, "questionRequest");
+    const serverRequests = collect<any>(client, "serverRequest");
+
+    await client.prompt("SCENARIO_ASK_QUESTION");
+
+    expect(questionEvents).toHaveLength(0);
+    expect(serverRequests).toHaveLength(1);
+    expect(serverRequests[0].method).toBe("x.ai/ask_user_question");
+    await waitForStderr(stderr, /ASK_RESPONSE: \{"result":\{\}\}/);
   });
 
   // Regression: grok ≥0.2.33 echoes the *live* prompt back as a

@@ -5,7 +5,13 @@ import { AcpClient, buildGrokAgentArgs } from "../src/acp";
 // stand up the client with a fake writable proc and drive `request`/`onLine`
 // directly.
 function clientWithFakeProc(): { client: AcpClient; written: string[] } {
-  const client = new AcpClient({ cliPath: "x", cwd: "/", log: () => {} });
+  const client = new AcpClient({
+    command: "x",
+    args: [],
+    cwd: "/",
+    log: () => {},
+    quirks: { clientPlanGate: true, mediaGen: true, xaiRequests: true },
+  });
   const written: string[] = [];
   (client as any).proc = {
     killed: false,
@@ -78,6 +84,56 @@ describe("AcpClient.newSession set_model guard", () => {
       JSON.stringify({ jsonrpc: "2.0", id: 2, result: { _meta: { model: { Ok: "grok-composer-2.5-fast" } } } }),
     );
     await p;
+  });
+});
+
+// The media-gen tracking (mediaGenCallIds / isMediaGenToolCall /
+// extractGeneratedMediaPaths, all inside emitToolMedia) is grok-only —
+// gated by quirks.mediaGen (see src/backends.ts BackendQuirks.mediaGen). A
+// Claude-shaped descriptor passes mediaGen: false, and this whole path-in-JSON
+// detection must be structurally inert for it.
+describe("AcpClient quirks.mediaGen gating (emitToolMedia)", () => {
+  function clientWithQuirks(mediaGen: boolean): AcpClient {
+    return new AcpClient({
+      command: "x",
+      args: [],
+      cwd: "/",
+      log: () => {},
+      quirks: { clientPlanGate: true, mediaGen, xaiRequests: true },
+    });
+  }
+
+  // grok's /imagine result: an initial titled tool_call ("imagine: …") followed
+  // by a completed update (title null) whose content carries the path as JSON
+  // text — see extractGeneratedMediaPaths. Both calls route through
+  // emitToolMedia, exactly as handleSessionUpdate does for toolCall/toolCallUpdate.
+  const initialCall = { toolCallId: "tc-media-1", title: "imagine: a sunset" };
+  const completedUpdate = {
+    toolCallId: "tc-media-1",
+    title: null,
+    content: [{ type: "content", content: { type: "text", text: JSON.stringify({ path: "/tmp/images/1.jpg" }) } }],
+  };
+
+  it("mediaGen=true: recognizes the media-gen call and extracts the generated path", () => {
+    const client = clientWithQuirks(true);
+    const media: unknown[] = [];
+    client.on("mediaContent", (m) => media.push(m));
+
+    (client as any).emitToolMedia(initialCall);
+    (client as any).emitToolMedia(completedUpdate);
+
+    expect(media).toEqual([{ media: "image", kind: "path", path: "/tmp/images/1.jpg" }]);
+  });
+
+  it("mediaGen=false: the grok-only path-in-JSON detection never fires", () => {
+    const client = clientWithQuirks(false);
+    const media: unknown[] = [];
+    client.on("mediaContent", (m) => media.push(m));
+
+    (client as any).emitToolMedia(initialCall);
+    (client as any).emitToolMedia(completedUpdate);
+
+    expect(media).toEqual([]);
   });
 });
 

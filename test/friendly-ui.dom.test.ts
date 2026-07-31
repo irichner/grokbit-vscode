@@ -128,20 +128,15 @@ describe("permission collapse helpers (pure)", () => {
   });
 });
 
-describe("welcome starter cards (real chat.js DOM)", () => {
-  it("renders starter cards once the session is ready", () => {
-    const { doc } = bootWebview(); // ready → setBusy:false → renderWelcomeStarters
-    const starters = doc.getElementById("welcome-starters") as HTMLElement;
-    expect(starters).not.toBeNull();
-    expect(starters.hidden).toBe(false);
-    const buttons = [...starters.querySelectorAll(".welcome-starter")] as HTMLButtonElement[];
-    expect(buttons.length).toBeGreaterThanOrEqual(4);
-    expect(buttons.map((b) => b.dataset.starterId)).toContain("explain");
-    expect(buttons.map((b) => b.dataset.starterId)).toContain("plan");
-    expect(buttons.map((b) => b.dataset.starterId)).toContain("imagine");
-    expect(buttons.map((b) => b.dataset.starterId)).not.toContain("business-doc");
-    // Document-type icons moved to the activity-bar launcher (not welcome).
-    expect(starters.querySelectorAll(".welcome-doc-type")).toHaveLength(0);
+describe("welcome screen (real chat.js DOM)", () => {
+  // The "Try one of these" starter cards + business task chips were removed
+  // from the welcome screen; the pure catalogs above are retained but unrendered.
+  it("renders no starter cards or task chips on a ready session", () => {
+    const { doc } = bootWebview();
+    expect(doc.getElementById("welcome-starters")).toBeNull();
+    expect(doc.querySelectorAll(".welcome-starter")).toHaveLength(0);
+    expect(doc.querySelectorAll(".welcome-task-chip")).toHaveLength(0);
+    expect(doc.body.textContent).not.toContain("Try one of these");
   });
 
   it("seedComposer host message fills Create <type>: in the composer", () => {
@@ -149,80 +144,6 @@ describe("welcome starter cards (real chat.js DOM)", () => {
     const input = doc.getElementById("input") as HTMLTextAreaElement;
     dispatch(window, { type: "seedComposer", text: "Create Word document: " });
     expect(input.value).toBe("Create Word document: ");
-  });
-
-  it("insert starter fills the composer with a ready-to-edit prompt", () => {
-    const { window, doc } = bootWebview();
-    const input = doc.getElementById("input") as HTMLTextAreaElement;
-    const explain = doc.querySelector('.welcome-starter[data-starter-id="explain"]') as HTMLButtonElement;
-    expect(explain).not.toBeNull();
-    click(window, explain);
-    expect(input.value).toMatch(/Explain this project/i);
-  });
-
-  it("plan starter posts setMode plan and seeds a planning prompt", () => {
-    const { window, posted, doc } = bootWebview();
-    const plan = doc.querySelector('.welcome-starter[data-starter-id="plan"]') as HTMLButtonElement;
-    click(window, plan);
-    expect(posted).toContainEqual({ type: "setMode", modeId: "plan" });
-    const input = doc.getElementById("input") as HTMLTextAreaElement;
-    expect(input.value.toLowerCase()).toContain("plan");
-  });
-
-  it("imagine starter seeds /imagine for image generation", () => {
-    const { window, doc } = bootWebview();
-    const imagine = doc.querySelector('.welcome-starter[data-starter-id="imagine"]') as HTMLButtonElement;
-    click(window, imagine);
-    const input = doc.getElementById("input") as HTMLTextAreaElement;
-    expect(input.value.startsWith("/imagine")).toBe(true);
-  });
-
-  it("hides starters during onboarding and restores them when cleared", () => {
-    const { window, doc } = bootWebview();
-    dispatch(window, { type: "onboarding", state: "auth-required" });
-    expect((doc.getElementById("welcome-starters") as HTMLElement).hidden).toBe(true);
-
-    // Unknown mode clears onboarding markup and re-shows starters.
-    dispatch(window, { type: "onboarding", state: "ready" });
-    expect((doc.getElementById("welcome-starters") as HTMLElement).hidden).toBe(false);
-  });
-
-  it("hides starters while the session is priming (startingPhase)", () => {
-    const { window, doc } = bootWebview();
-    dispatch(window, { type: "initialized", info: { version: "0.2.91" } });
-    expect((doc.getElementById("welcome-starters") as HTMLElement).hidden).toBe(true);
-    dispatch(window, { type: "setBusy", value: false });
-    expect((doc.getElementById("welcome-starters") as HTMLElement).hidden).toBe(false);
-  });
-
-  it("voice starter pulses the mic and does not post voiceStart or setMode", () => {
-    const { window, posted, doc } = bootWebview();
-    dispatch(window, { type: "voiceConfigured", value: true });
-    // Re-render after voiceConfigured so the voice card is present.
-    const voice = doc.querySelector('.welcome-starter[data-starter-id="voice"]') as HTMLButtonElement;
-    expect(voice).not.toBeNull();
-    posted.length = 0;
-    const mic = doc.getElementById("mic-btn") as HTMLButtonElement;
-    click(window, voice);
-    expect(mic.classList.contains("starter-pulse")).toBe(true);
-    expect(posted.filter((m: any) => m.type === "voiceStart" || m.type === "setMode")).toHaveLength(0);
-    // Welcome stays up — user can pick another card.
-    expect((doc.getElementById("welcome") as HTMLElement).hidden).toBe(false);
-  });
-
-  it("voice-setup starter when unconfigured only nudges the mic (no host capture)", () => {
-    const { window, posted, doc } = bootWebview();
-    dispatch(window, { type: "voiceConfigured", value: false });
-    const setup = doc.querySelector('.welcome-starter[data-starter-id="voice-setup"]') as HTMLButtonElement;
-    expect(setup).not.toBeNull();
-    posted.length = 0;
-    const mic = doc.getElementById("mic-btn") as HTMLButtonElement;
-    click(window, setup);
-    expect(mic.classList.contains("starter-pulse")).toBe(true);
-    expect(posted.some((m: any) => m.type === "voiceStart")).toBe(false);
-    expect(posted.some((m: any) => m.type === "setMode")).toBe(false);
-    expect((doc.getElementById("welcome") as HTMLElement).hidden).toBe(false);
-    expect((doc.getElementById("welcome-starters") as HTMLElement).hidden).toBe(false);
   });
 });
 

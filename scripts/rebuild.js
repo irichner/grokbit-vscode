@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Cross-platform entry for the full rebuild:
-//   bump package.json patch → package .vsix → reinstall into VS Code → Marketplace publish
+//   bump package.json CalVer (YYYY.M.N) → package .vsix → reinstall into VS Code → Marketplace publish
 // Invoked as: npm run rebuild
 // Delegates to scripts/install.ps1 (Windows) or scripts/install.sh (elsewhere).
 // Optional args are forwarded:

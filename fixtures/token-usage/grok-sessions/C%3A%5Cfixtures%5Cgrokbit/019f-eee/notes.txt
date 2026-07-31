@@ -1,0 +1,2 @@
+A grok session directory with no signals.json — contributes nothing, and must
+not raise. (Git cannot track an empty directory, hence this placeholder file.)

@@ -4,7 +4,11 @@
 // gear popover / mode button / context donut and onto a native VS Code affordance
 // (the direction the fork is already taking). This module is framework-free (no
 // `vscode` import) so it can be unit-tested like the other pure modules; the
-// impure `GrokSidebar` gathers the live state and feeds it in.
+// impure `GrokSidebar` gathers the live state and feeds it in. `backends.ts` is
+// equally framework-free, so importing `BackendId` from it doesn't compromise
+// that (see docs/plans/claude-code-backend.md § WP3).
+
+import { BackendId } from "./backends";
 
 /** The mode a session is in, as the UI labels it (see displayMode in sidebar). */
 export type StatusMode = "agent" | "plan" | "yolo";
@@ -13,10 +17,17 @@ export interface StatusBarInputs {
   /** Is there an active session panel to describe? When false the item hides
    *  (unless a background session needs the user — see needsYouCount). */
   hasActive: boolean;
+  /** Which agent backend the active session runs on. Undefined behaves exactly
+   *  like "grok" (every existing caller/test predates the second backend). Only
+   *  Claude gets an explicit callout — grok stays the quiet default, mirroring
+   *  `backendBadgeLabel` in webview-helpers.js. */
+  backend?: BackendId;
   /** Resolved model display name (e.g. "Grok Build"), already looked up from the
    *  client's model list. Empty/undefined falls back to a neutral label. */
   modelName?: string;
-  /** grok.defaultEffort ("", "low", "medium", …). Empty = CLI default (hidden). */
+  /** Reasoning effort for the active session ("", "low", "medium", …). Empty =
+   *  no effort axis (the CLI default, or a backend with none at all — e.g.
+   *  Claude, whose `effortLevels` is empty; see `src/backends.ts`). Hidden either way. */
   effort?: string;
   /** The active session's derived mode. */
   mode?: StatusMode;
@@ -99,8 +110,13 @@ export function computeStatusBar(inputs: StatusBarInputs): StatusBarView {
     };
   }
 
-  const model = (inputs.modelName || "").trim() || "Grok";
-  const parts: string[] = [model];
+  // grok stays the quiet default (no badge); only Claude gets an explicit
+  // callout, mirroring backendBadgeLabel in webview-helpers.js.
+  const isClaude = inputs.backend === "claude";
+  const model = (inputs.modelName || "").trim() || (isClaude ? "Claude" : "Grok");
+  const parts: string[] = [];
+  if (isClaude) parts.push("Claude");
+  parts.push(model);
   if (inputs.effort) parts.push(capitalize(inputs.effort));
   if (inputs.mode) parts.push(MODE_LABEL[inputs.mode]);
   const pct = contextPct(inputs.usedTokens, inputs.contextWindow);
@@ -113,7 +129,13 @@ export function computeStatusBar(inputs: StatusBarInputs): StatusBarView {
   if (needsYou > 0) text += `  $(bell) ${needsYou}`;
 
   const tip: string[] = [`Grokbit — ${model}`];
-  tip.push(`Effort: ${inputs.effort ? capitalize(inputs.effort) : "CLI default"}`);
+  if (isClaude) tip.push("Backend: Claude Code");
+  // Claude has no reasoning-effort axis at all (CLAUDE_EFFORT_LEVELS is empty in
+  // src/backends.ts) — "Effort: CLI default" would be a meaningless line for it,
+  // not just an empty one, so the whole line is omitted rather than shown blank.
+  if (inputs.effort || !isClaude) {
+    tip.push(`Effort: ${inputs.effort ? capitalize(inputs.effort) : "CLI default"}`);
+  }
   if (inputs.mode) tip.push(`Mode: ${MODE_TOOLTIP[inputs.mode]}`);
   if (pct != null) {
     tip.push(`Context: ${toK(inputs.usedTokens!)} / ${toK(inputs.contextWindow!)} (${pct}%)`);
