@@ -1,3 +1,0 @@
-description = "Plan review defaults: no edits"
-default_capability_mode = "read-only"
-reasoning_effort = "high"

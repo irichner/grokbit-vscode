@@ -1,0 +1,44 @@
+{
+  "$comment": [
+    "This file is not loaded automatically. Claude Code reads hooks from settings",
+    "files (project .claude/settings.json, or user ~/.claude/settings.json), not",
+    "from a skill's own hooks/ directory — only plugins get an auto-loaded",
+    "hooks/hooks.json, and this is a skill. Copy the value of the `hooks` key",
+    "below into your settings file's own `hooks` key, merging PostToolUse arrays",
+    "if you already have one. Grok Build has no hook mechanism at all (its",
+    "config is TOML, not settings.json) — there run `check_drift.py --ci`",
+    "manually or from your own CI directly; see references/provenance.md.",
+
+    "Advisory only, by design: PostToolUse fires after every Edit/Write/MultiEdit",
+    "of any file (Claude Code's own matcher syntax only matches on tool name, not",
+    "file path), so path filtering happens INSIDE check_drift.py --hook, which",
+    "reads the tool-call JSON Claude Code passes on stdin and skips silently when",
+    "the edited file sits in a noise directory. It always exits 0. Enforcement",
+    "lives in CI, not here — wire `check_drift.py --ci` into your CI config",
+    "directly, the same way you would any other check.",
+
+    "Paths below assume the canonical single-source install location",
+    "documented in references/host-adapters.md: .grokbit/skills/grokbit-document/.",
+    "Adjust if you installed this skill somewhere else.",
+
+    "The command line assumes a POSIX-ish shell (bash/zsh, or Git Bash on",
+    "Windows) runs hook commands — the same assumption this project's own",
+    ".claude/hooks/*.sh already make. It tries python3, then python, then the",
+    "Windows py launcher, in that order, and never fails loudly: no interpreter",
+    "found just means no drift check ran this time."
+  ],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PY=$(command -v python3 || command -v python || command -v py); [ -n \"$PY\" ] && \"$PY\" .grokbit/skills/grokbit-document/scripts/check_drift.py --hook; true",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
