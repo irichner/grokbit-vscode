@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain JS module, no types
-import { looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, formatLauncherMetaTooltip, activityPeek, activityPosText, backendBadgeLabel, inferPermissionKind, permissionDiffFromRawInput, sessionSetupModel, capabilityGroupsView, sessionToggleGroup, welcomeGuide, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK } from "../media/webview-helpers.js";
+import { looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, formatLauncherMetaTooltip, activityPeek, activityPosText, backendBadgeLabel, inferPermissionKind, permissionDiffFromRawInput, sessionSetupModel, capabilityGroupsView, sessionToggleGroup, welcomeGuide, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK, CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups } from "../media/webview-helpers.js";
 import { buildPrompt } from "../src/prompt-builder";
 import { makeExplicitChip, makeImplicitChip } from "../src/chips";
 
@@ -889,6 +889,47 @@ describe("sessionToggleGroup", () => {
   it("defaults to agent mode when called with no opts at all", () => {
     expect(() => sessionToggleGroup()).not.toThrow();
     expect(sessionToggleGroup().items[0].on).toBe(false);
+  });
+});
+
+describe("visibleCapabilityGroups", () => {
+  it("keeps a grokbit group and drops skill/agent/command", () => {
+    const input = [
+      { kind: "grokbit", title: "Grokbit workflow", total: 1, items: [{ kind: "grokbit", name: "grokbit-plan" }] },
+      { kind: "skill", title: "Skills", total: 1, items: [{ kind: "skill", name: "plan" }] },
+      { kind: "agent", title: "Agents", total: 1, items: [{ kind: "agent", name: "explore" }] },
+      { kind: "command", title: "Commands", total: 1, items: [{ kind: "command", name: "new" }] },
+    ];
+    const out = visibleCapabilityGroups(input);
+    expect(out.map((g: { kind: string }) => g.kind)).toEqual(["grokbit"]);
+    expect(out[0]).toBe(input[0]);
+  });
+
+  it("drops a group with an unknown kind", () => {
+    const out = visibleCapabilityGroups([
+      { kind: "workflow", title: "Workflows", total: 1, items: [{ kind: "workflow", name: "x" }] },
+      { kind: "grokbit", title: "Grokbit workflow", total: 1, items: [{ kind: "grokbit", name: "grokbit-plan" }] },
+    ]);
+    expect(out.map((g: { kind: string }) => g.kind)).toEqual(["grokbit"]);
+  });
+
+  it("returns [] for undefined or non-array input", () => {
+    expect(visibleCapabilityGroups(undefined)).toEqual([]);
+    expect(visibleCapabilityGroups(null as unknown as never[])).toEqual([]);
+    expect(visibleCapabilityGroups({} as unknown as never[])).toEqual([]);
+  });
+
+  it("returns a fresh array, not the caller's", () => {
+    const input = [
+      { kind: "grokbit", title: "Grokbit workflow", total: 1, items: [] },
+    ];
+    const out = visibleCapabilityGroups(input);
+    expect(out).not.toBe(input);
+    expect(out).toEqual(input);
+  });
+
+  it("exposes CAPABILITY_VISIBLE_KINDS as the allowlist (one-entry revert path)", () => {
+    expect(CAPABILITY_VISIBLE_KINDS).toEqual(["grokbit"]);
   });
 });
 

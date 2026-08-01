@@ -671,6 +671,25 @@
     ],
   };
 
+  // Data, not logic — which CapabilityKind groups Grokbit Actions actually
+  // renders. Applied by each mount *before* capabilityGroupsView so the
+  // builder stays generic (its unit tests construct skill/agent/command groups
+  // and must keep working) and so viewGroups.length empty-state checks see the
+  // post-filter count. Restoring a kind is one array entry — the one-entry
+  // revert path if product later wants Skills/Agents/Commands back in the UI.
+  const CAPABILITY_VISIBLE_KINDS = ["grokbit"];
+
+  /**
+   * Pure filter: keep only groups whose `kind` is in CAPABILITY_VISIBLE_KINDS.
+   * Returns a fresh array (never the caller's). Non-array / missing input → [].
+   * Unknown kinds and non-visible kinds are dropped. Does not mutate groups.
+   */
+  function visibleCapabilityGroups(groups) {
+    if (!Array.isArray(groups)) return [];
+    const allow = new Set(CAPABILITY_VISIBLE_KINDS);
+    return groups.filter((g) => g && allow.has(g.kind));
+  }
+
   // No configured list for a kind, or none of its named items are installed
   // on this machine: still collapse to the first N items rather than showing
   // every row, so the panel is compact for everyone, not only on the
@@ -1182,6 +1201,7 @@
     sessionSetupModel,
     CAPABILITY_KIND_LABELS, capabilityGroupsView, sessionToggleGroup,
     welcomeGuide, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK,
+    CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;
