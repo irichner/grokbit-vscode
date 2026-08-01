@@ -1978,8 +1978,11 @@ textarea#input {
    track, byte-for-byte today's flex-column rendering. */
 .capability-group-items {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
-  gap: 2px 14px;
+  /* Track 300px (was 260) for readable multi-line tile copy; keep
+     min(100%, …) inside minmax so a ~250px split-editor tab never gains a
+     horizontal scrollbar. No @media — body zoom breaks viewport queries. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 8px;
 }
 .capability-row {
   display: flex;
@@ -1989,7 +1992,19 @@ textarea#input {
   border-radius: 4px;
   cursor: pointer;
 }
+/* Tile chrome for discovered workflow rows only — not the Auto-accept
+   switch row (same .capability-row base). Recipe from .session-setup-card. */
+.capability-row:not(.capability-row-toggle) {
+  padding: 10px 12px 12px;
+  gap: 4px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, #444));
+  border-radius: var(--radius, 6px);
+}
 .capability-row:hover { background: var(--vscode-list-hoverBackground); }
+.capability-row:not(.capability-row-toggle):hover {
+  background: var(--vscode-list-hoverBackground);
+}
 /* An inert row (no invoke, no path — e.g. a built-in agent type) has no click
    handler at all; a hover highlight would still make it look clickable. */
 .capability-row.inert { cursor: default; }
@@ -2035,9 +2050,11 @@ textarea#input {
 .capability-row-desc {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Multi-line wrap — no nowrap/ellipsis and no CSS line clamp (that would
+     re-truncate at ~180 of 260 characters after the sentence-aware trim). */
+  white-space: normal;
+  overflow: visible;
+  line-height: 1.35;
 }
 /* Argument hint (frontmatter argument-hint / the ACP command's input.hint) —
    without this a click seeds a bare "/adr " with no clue what to type next. */

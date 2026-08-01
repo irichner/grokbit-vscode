@@ -744,10 +744,30 @@ describe("capability browser — WP1's grid layout survives WP2's row changes (s
     const idx = css.indexOf("\n.capability-group-items {");
     expect(idx).toBeGreaterThan(-1);
     const open = css.indexOf("{", idx);
-    const close = css.indexOf("}", open);
-    const rule = css.slice(idx, close + 1);
-    expect(rule).toContain("repeat(auto-fit, minmax(min(100%, 260px), 1fr))");
-    expect(rule).not.toContain("flex");
+    // Rule may include nested comments; close at the first top-level `}` after
+    // the property block — still works: minmax(...) is on one line.
+    const close = css.indexOf("grid-template-columns:", open);
+    const lineEnd = css.indexOf(";", close);
+    const rule = css.slice(idx, lineEnd + 1);
+    expect(rule).toContain("repeat(auto-fit, minmax(min(100%, 300px), 1fr))");
+    expect(rule).toContain("min(100%");
+    expect(rule).not.toMatch(/display:\s*flex/);
+  });
+
+  // T4: tiles wrap descriptions; causes (not layout) are source-checkable.
+  it("[R] .capability-row-desc wraps (no nowrap/ellipsis) and tiles exclude the toggle row", () => {
+    const css = read("../media/chat.css");
+    const descIdx = css.indexOf("\n.capability-row-desc {");
+    expect(descIdx).toBeGreaterThan(-1);
+    const descOpen = css.indexOf("{", descIdx);
+    const descClose = css.indexOf("}", descOpen);
+    const descRule = css.slice(descIdx, descClose + 1);
+    expect(descRule).not.toContain("white-space: nowrap");
+    expect(descRule).not.toContain("text-overflow: ellipsis");
+    expect(descRule).toMatch(/white-space:\s*normal/);
+    // Property form only — comments must not reintroduce a clamp.
+    expect(descRule).not.toMatch(/-webkit-line-clamp\s*:/);
+    expect(css).toContain(".capability-row:not(.capability-row-toggle)");
   });
 });
 
