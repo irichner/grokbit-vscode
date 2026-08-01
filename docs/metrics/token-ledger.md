@@ -1,6 +1,6 @@
 # Token & model usage ledger
 
-**Template version:** 0.1.14  
+**Template version:** 0.1.15  
 **Last updated:** 2026-08-01  
 **Policy:** update **VERSION** + this ledger on **every git commit** (`scripts/prepare_commit_metrics.py` / pre-commit hook).  
 **Source of figures:** session stats (`/context`, `/session-info`, host UI) — never invent.
@@ -13,8 +13,8 @@
 | Total output tokens (measured) | 0 |
 | Total tokens (measured) | 0 |
 | Measured entries | 0 |
-| Unmeasured commit stamps | 15 |
-| All ledger entries | 15 |
+| Unmeasured commit stamps | 16 |
+| All ledger entries | 16 |
 
 ## By model (measured only)
 
@@ -41,6 +41,7 @@
 | 2026-07-31 | commit-2026-07-31 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.12: auto unmeasured (no metrics in env/pending file) [unmeasured] |
 | 2026-08-01 | commit-2026-08-01 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.13: T1 visibleCapabilityGroups pure filter (actions-workflow-tiles) [unmeasured] |
 | 2026-08-01 | commit-2026-08-01 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.14: auto unmeasured (no metrics in env/pending file) [unmeasured] |
+| 2026-08-01 | commit-2026-08-01 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.15: auto unmeasured (no metrics in env/pending file) [unmeasured] |
 
 <!-- LEDGER_END -->
 

@@ -12,7 +12,25 @@ import { bootWebview, dispatch, click } from "./webview-harness";
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 
+// Grokbit Actions only renders CAPABILITY_VISIBLE_KINDS (["grokbit"]). Fixtures
+// that must appear on either mount use kind: "grokbit". A skill/agent/command
+// fixture is only useful for asserting it is filtered out.
 const GROUPS = [
+  {
+    kind: "grokbit",
+    title: "Grokbit workflow",
+    total: 3,
+    items: [
+      { kind: "grokbit", name: "plan", description: "Draft an implementation plan.", invoke: "/plan ", path: "/ws/.grok/skills/plan/SKILL.md", source: "Project (.grok)", origin: "disk" },
+      { kind: "grokbit", name: "new", description: "Start a new session.", invoke: "/new ", source: "Built in", origin: "acp" },
+      { kind: "grokbit", name: "explore", description: "Read-only exploration of the codebase.", source: "Built in", origin: "acp" },
+    ],
+  },
+];
+
+// Host still may send these; the filter must drop them so both mounts stay empty
+// of Skills/Agents/Commands when the suite is absent.
+const NON_GROKBIT_GROUPS = [
   {
     kind: "agent",
     title: "Agents",
@@ -102,14 +120,16 @@ describe("Grokbit Actions — the bundled workflow group", () => {
     expect(posted.some((m) => m.type === "send")).toBe(false);
   });
 
-  // Provisioning off, or a failed copy, is the same state: the host's scan
-  // matches nothing, no group is sent, and the menu is exactly what it was
-  // before this feature existed. Never an empty placeholder.
-  it("[R] degrades to plain discovery when the suite is absent", () => {
+  // Provisioning off, or a failed copy: host may still send Skills/Agents/
+  // Commands, but the visible-kinds filter drops them — honest empty state,
+  // not a heading with no rows and not a vanished panel.
+  it("[R] suite absent (only non-grokbit groups) → honest empty state, not Skills/Agents/Commands", () => {
     const { window, doc } = bootWebview();
-    sendCapabilities(window, GROUPS);
-    expect(headings(panelOf(doc))).not.toContain("Grokbit workflow");
+    sendCapabilities(window, NON_GROKBIT_GROUPS);
+    expect(headings(panelOf(doc))).toEqual([]);
     expect(panelOf(doc).hidden).toBe(false);
+    expect(panelOf(doc).textContent).toMatch(/no skills installed yet/i);
+    expect(panelOf(doc).textContent).not.toMatch(/Skills|Agents|Commands/);
   });
 });
 
@@ -120,7 +140,9 @@ describe("capability browser — welcome panel", () => {
     const panel = panelOf(doc);
     expect(panel.hidden).toBe(false);
     const headers = [...panel.querySelectorAll(".capability-group-title")].map((el) => el.textContent);
-    expect(headers).toEqual(["Agents", "Commands", "Skills"]);
+    expect(headers).toEqual(["Grokbit workflow"]);
+    const names = [...panel.querySelectorAll(".capability-row-name")].map((el) => el.textContent);
+    expect(names).toEqual(["plan", "new", "explore"]);
   });
 
   // [R] The row's primary text is the plain name, with the slash form beside
@@ -146,14 +168,14 @@ describe("capability browser — welcome panel", () => {
 
   it("a row with an argument hint renders .capability-row-hint; one without renders none", () => {
     const { window, doc } = bootWebview();
-    // Names deliberately avoid CAPABILITY_FEATURED's skill list — neither is
+    // Names deliberately avoid CAPABILITY_FEATURED's grokbit list — neither is
     // featured, so both fall back into view
     // (CAPABILITY_FEATURED_FALLBACK = 5 > 2 items) without needing to expand.
     const groups = [{
-      kind: "skill", title: "Skills", total: 2,
+      kind: "grokbit", title: "Grokbit workflow", total: 2,
       items: [
-        { kind: "skill", name: "adr", description: "Record an ADR.", invoke: "/adr ", hint: "[short decision title]", source: "Project (.grok)", origin: "disk" },
-        { kind: "skill", name: "review", description: "Review a change.", invoke: "/review ", source: "Project (.grok)", origin: "disk" },
+        { kind: "grokbit", name: "adr", description: "Record an ADR.", invoke: "/adr ", hint: "[short decision title]", source: "Project (.grok)", origin: "disk" },
+        { kind: "grokbit", name: "review", description: "Review a change.", invoke: "/review ", source: "Project (.grok)", origin: "disk" },
       ],
     }];
     sendCapabilities(window, groups);
@@ -215,8 +237,8 @@ describe("capability browser — welcome panel", () => {
   it("clicking a non-invocable row with a path posts openFile and leaves the composer untouched", () => {
     const { window, doc, posted } = bootWebview();
     const groups = [{
-      kind: "skill", title: "Skills", total: 1,
-      items: [{ kind: "skill", name: "internal-notes", description: "Model-only skill.", path: "/ws/.grok/skills/internal-notes/SKILL.md", source: "Project (.grok)", origin: "disk" }],
+      kind: "grokbit", title: "Grokbit workflow", total: 1,
+      items: [{ kind: "grokbit", name: "internal-notes", description: "Model-only skill.", path: "/ws/.grok/skills/internal-notes/SKILL.md", source: "Project (.grok)", origin: "disk" }],
     }];
     sendCapabilities(window, groups);
     posted.length = 0;
@@ -230,8 +252,8 @@ describe("capability browser — welcome panel", () => {
   it("[R] clicking a non-invocable row without a path posts nothing at all; the row carries the inert class", () => {
     const { window, doc, posted } = bootWebview();
     const groups = [{
-      kind: "agent", title: "Agents", total: 1,
-      items: [{ kind: "agent", name: "general-purpose", description: "Open-ended research and multi-step tasks.", source: "Built in", origin: "acp" }],
+      kind: "grokbit", title: "Grokbit workflow", total: 1,
+      items: [{ kind: "grokbit", name: "general-purpose", description: "Open-ended research and multi-step tasks.", source: "Built in", origin: "acp" }],
     }];
     sendCapabilities(window, groups);
     posted.length = 0;
@@ -522,7 +544,8 @@ describe("capability browser — session toggles (auto-accept)", () => {
     const pop = openPopover(doc, window);
     const titles = [...pop.querySelectorAll(".capability-group-title")].map((el) => el.textContent);
     expect(titles[0]).toBe("Session controls");
-    expect(titles).toContain("Skills");
+    expect(titles).toContain("Grokbit workflow");
+    expect(titles).not.toContain("Skills");
   });
 
   it("clicking the switch in agent mode posts exactly setMode:yolo and nothing else", () => {
@@ -729,21 +752,24 @@ describe("capability browser — WP1's grid layout survives WP2's row changes (s
 });
 
 // Featured subset + per-group expand (docs/plans/actions-panel-featured-
-// capabilities.md). "cold-review"/"init-repo" lead the operator's configured
-// skill featured names, so this group of 5 collapses to those two by default.
+// capabilities.md). CAPABILITY_FEATURED.grokbit lists the four suite steps;
+// an oversized grokbit group keeps the expand/+N more machinery covered
+// (LEAVE, not REPLACE) after Skills groups are filtered out of the UI.
 describe("capability browser — featured partition + expand", () => {
-  const MANY_SKILLS = [{
-    kind: "skill",
-    title: "Skills",
+  const MANY_WORKFLOWS = [{
+    kind: "grokbit",
+    title: "Grokbit workflow",
     total: 5,
     items: [
-      { kind: "skill", name: "cold-review", description: "Review a plan.", invoke: "/cold-review ", source: "Built in", origin: "acp" },
-      { kind: "skill", name: "init-repo", description: "Initialize a repo.", invoke: "/init-repo ", source: "Built in", origin: "acp" },
-      { kind: "skill", name: "alpha", description: "Alpha skill.", invoke: "/alpha ", source: "Built in", origin: "acp" },
-      { kind: "skill", name: "beta", description: "Beta skill.", invoke: "/beta ", source: "Built in", origin: "acp" },
-      { kind: "skill", name: "gamma", description: "Gamma skill.", invoke: "/gamma ", source: "Built in", origin: "acp" },
+      { kind: "grokbit", name: "grokbit-plan", description: "Plan first.", invoke: "/grokbit-plan ", source: "Grokbit", origin: "disk" },
+      { kind: "grokbit", name: "grokbit-implement", description: "Verify or revert.", invoke: "/grokbit-implement ", source: "Grokbit", origin: "disk" },
+      { kind: "grokbit", name: "grokbit-test", description: "Baseline, then verify.", invoke: "/grokbit-test ", source: "Grokbit", origin: "disk" },
+      { kind: "grokbit", name: "grokbit-document", description: "Derive, then check.", invoke: "/grokbit-document ", source: "Grokbit", origin: "disk" },
+      { kind: "grokbit", name: "alpha", description: "Extra workflow.", invoke: "/alpha ", source: "Grokbit", origin: "disk" },
     ],
   }];
+  const FEATURED_FOUR = ["grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document"];
+  const ALL_FIVE = [...FEATURED_FOUR, "alpha"];
 
   // Excludes the session-toggle row's own .capability-row-name (it shares the
   // class but is not part of the discovered-groups list under test here).
@@ -754,9 +780,9 @@ describe("capability browser — featured partition + expand", () => {
 
   it("renders only the featured rows by default; the rest are absent from the DOM, not merely hidden", () => {
     const { window, doc } = bootWebview();
-    sendCapabilities(window, MANY_SKILLS);
+    sendCapabilities(window, MANY_WORKFLOWS);
     const panel = panelOf(doc);
-    expect(rowNames(panel)).toEqual(["cold-review", "init-repo"]);
+    expect(rowNames(panel)).toEqual(FEATURED_FOUR);
     expect(panel.textContent).not.toContain("alpha");
     const expandBtn = panel.querySelector(".capability-expand") as HTMLElement;
     expect(expandBtn).not.toBeNull();
@@ -771,14 +797,14 @@ describe("capability browser — featured partition + expand", () => {
 
   it("clicking the expand link reveals the rest; the label flips to Show less and back", () => {
     const { window, doc } = bootWebview();
-    sendCapabilities(window, MANY_SKILLS);
+    sendCapabilities(window, MANY_WORKFLOWS);
     const expandBtn = panelOf(doc).querySelector(".capability-expand") as HTMLElement;
     click(window, expandBtn);
-    expect(rowNames(panelOf(doc))).toEqual(["cold-review", "init-repo", "alpha", "beta", "gamma"]);
+    expect(rowNames(panelOf(doc))).toEqual(ALL_FIVE);
     const collapseBtn = panelOf(doc).querySelector(".capability-expand") as HTMLElement;
     expect(collapseBtn.textContent).toBe("Show less");
     click(window, collapseBtn);
-    expect(rowNames(panelOf(doc))).toEqual(["cold-review", "init-repo"]);
+    expect(rowNames(panelOf(doc))).toEqual(FEATURED_FOUR);
     expect((panelOf(doc).querySelector(".capability-expand") as HTMLElement).textContent).toBe("Show all 5");
   });
 
@@ -787,7 +813,7 @@ describe("capability browser — featured partition + expand", () => {
   // grid — an in-grid link would render as a stray cell).
   it("[R] the expand link is a sibling of .capability-group-items, not a child of it", () => {
     const { window, doc } = bootWebview();
-    sendCapabilities(window, MANY_SKILLS);
+    sendCapabilities(window, MANY_WORKFLOWS);
     const groupEl = panelOf(doc).querySelector(".capability-group") as HTMLElement;
     expect(groupEl.querySelector(".capability-group-items .capability-expand")).toBeNull();
     const expandBtn = groupEl.querySelector(".capability-expand") as HTMLElement;
@@ -797,18 +823,19 @@ describe("capability browser — featured partition + expand", () => {
 
   it("+N more (host-cap overflow) stays out of the DOM while collapsed and appears only once expanded", () => {
     const { window, doc } = bootWebview();
-    sendCapabilities(window, [{ ...MANY_SKILLS[0], total: 43 }]);
+    sendCapabilities(window, [{ ...MANY_WORKFLOWS[0], total: 43 }]);
     const panel = panelOf(doc);
     expect(panel.querySelector(".capability-more")).toBeNull();
     click(window, panel.querySelector(".capability-expand") as HTMLElement);
     const more = panelOf(doc).querySelector(".capability-more");
     expect(more).not.toBeNull();
+    // total 43 − 5 rendered items = +38 more
     expect(more!.textContent).toBe("+38 more");
   });
 
   it("expansion state survives a setBusy re-render instead of silently re-collapsing", () => {
     const { window, doc } = bootWebview();
-    sendCapabilities(window, MANY_SKILLS);
+    sendCapabilities(window, MANY_WORKFLOWS);
     click(window, panelOf(doc).querySelector(".capability-expand") as HTMLElement);
     expect(rowNames(panelOf(doc)).length).toBe(5);
     dispatch(window, { type: "setBusy", value: true });
@@ -821,12 +848,12 @@ describe("capability browser — featured partition + expand", () => {
   // could silently drop this line in a future edit with nothing to catch it.
   it("[R] a session reset (clearMessages) re-collapses an expanded group", () => {
     const { window, doc } = bootWebview();
-    sendCapabilities(window, MANY_SKILLS);
+    sendCapabilities(window, MANY_WORKFLOWS);
     click(window, panelOf(doc).querySelector(".capability-expand") as HTMLElement);
     expect(rowNames(panelOf(doc)).length).toBe(5);
     dispatch(window, { type: "clearMessages" });
-    sendCapabilities(window, MANY_SKILLS);
-    expect(rowNames(panelOf(doc))).toEqual(["cold-review", "init-repo"]);
+    sendCapabilities(window, MANY_WORKFLOWS);
+    expect(rowNames(panelOf(doc))).toEqual(FEATURED_FOUR);
   });
 
   // [R] Unlike Refresh (a host round-trip) and row clicks (a composer seed),
@@ -836,13 +863,13 @@ describe("capability browser — featured partition + expand", () => {
     const { window, doc, posted } = bootWebview({ ready: false });
     dispatch(window, { type: "initialState", showCapabilities: true });
     dispatch(window, { type: "initialized", info: { version: "1.0.0" } });
-    sendCapabilities(window, MANY_SKILLS);
+    sendCapabilities(window, MANY_WORKFLOWS);
     const panel = panelOf(doc);
-    expect(rowNames(panel)).toEqual(["cold-review", "init-repo"]);
+    expect(rowNames(panel)).toEqual(FEATURED_FOUR);
     expect((panel.querySelector(".capability-row") as HTMLElement).classList.contains("locked")).toBe(true);
     posted.length = 0;
     click(window, panel.querySelector(".capability-expand") as HTMLElement);
-    expect(rowNames(panelOf(doc))).toEqual(["cold-review", "init-repo", "alpha", "beta", "gamma"]);
+    expect(rowNames(panelOf(doc))).toEqual(ALL_FIVE);
     expect(posted.length).toBe(0);
     for (const r of [...panelOf(doc).querySelectorAll(".capability-row")]) {
       expect(r.classList.contains("locked")).toBe(true);
@@ -851,7 +878,7 @@ describe("capability browser — featured partition + expand", () => {
 
   it("[R] the sessionToggleGroup ('Session controls') gets no expand link", () => {
     const { window, doc } = bootWebview();
-    sendCapabilities(window, MANY_SKILLS);
+    sendCapabilities(window, MANY_WORKFLOWS);
     click(window, doc.getElementById("capabilities-btn") as HTMLElement);
     const pop = popoverOf(doc);
     const toggleGroupEl = [...pop.querySelectorAll(".capability-group")]
@@ -866,14 +893,14 @@ describe("capability browser — featured partition + expand", () => {
   // later pops open on an unrelated setBusy/modeChanged instead.
   it("[R] expanding in the panel updates the popover immediately, with no extra render trigger needed", () => {
     const { window, doc } = bootWebview();
-    sendCapabilities(window, MANY_SKILLS);
+    sendCapabilities(window, MANY_WORKFLOWS);
     click(window, doc.getElementById("capabilities-btn") as HTMLElement); // open the popover
-    expect(rowNames(panelOf(doc))).toEqual(["cold-review", "init-repo"]);
-    expect(rowNames(popoverOf(doc))).toEqual(["cold-review", "init-repo"]);
+    expect(rowNames(panelOf(doc))).toEqual(FEATURED_FOUR);
+    expect(rowNames(popoverOf(doc))).toEqual(FEATURED_FOUR);
 
     click(window, panelOf(doc).querySelector(".capability-expand") as HTMLElement);
-    expect(rowNames(panelOf(doc))).toEqual(["cold-review", "init-repo", "alpha", "beta", "gamma"]);
-    expect(rowNames(popoverOf(doc))).toEqual(["cold-review", "init-repo", "alpha", "beta", "gamma"]);
+    expect(rowNames(panelOf(doc))).toEqual(ALL_FIVE);
+    expect(rowNames(popoverOf(doc))).toEqual(ALL_FIVE);
   });
 
   // [R] Expanding from INSIDE the popover is the mount where a bubbling click
@@ -881,7 +908,7 @@ describe("capability browser — featured partition + expand", () => {
   // open today because of the popover's own stopPropagation guard.
   it("[R] expanding in the popover updates the panel behind it immediately too, and the popover itself stays open", () => {
     const { window, doc } = bootWebview();
-    sendCapabilities(window, MANY_SKILLS);
+    sendCapabilities(window, MANY_WORKFLOWS);
     click(window, doc.getElementById("capabilities-btn") as HTMLElement); // open the popover
     const pop = popoverOf(doc);
     const expandInPopover = [...pop.querySelectorAll(".capability-expand")]
@@ -889,18 +916,18 @@ describe("capability browser — featured partition + expand", () => {
     expect(expandInPopover).toBeDefined();
     click(window, expandInPopover);
     expect(popoverOf(doc).hidden).toBe(false);
-    expect(rowNames(popoverOf(doc))).toEqual(["cold-review", "init-repo", "alpha", "beta", "gamma"]);
-    expect(rowNames(panelOf(doc))).toEqual(["cold-review", "init-repo", "alpha", "beta", "gamma"]);
+    expect(rowNames(popoverOf(doc))).toEqual(ALL_FIVE);
+    expect(rowNames(panelOf(doc))).toEqual(ALL_FIVE);
   });
 
   // The popover is closed for this one — appendCapabilityGroups must not
   // throw or otherwise assume the popover mount is available.
   it("expanding while the popover is closed only updates the panel, without error", () => {
     const { window, doc } = bootWebview();
-    sendCapabilities(window, MANY_SKILLS);
+    sendCapabilities(window, MANY_WORKFLOWS);
     expect(popoverOf(doc).hidden).toBe(true);
     expect(() => click(window, panelOf(doc).querySelector(".capability-expand") as HTMLElement)).not.toThrow();
-    expect(rowNames(panelOf(doc))).toEqual(["cold-review", "init-repo", "alpha", "beta", "gamma"]);
+    expect(rowNames(panelOf(doc))).toEqual(ALL_FIVE);
   });
 
   // [R] renderCapabilitiesPopoverBody clears body.innerHTML on every render;
@@ -911,7 +938,7 @@ describe("capability browser — featured partition + expand", () => {
   // own rebuild rather than being reset to 0.
   it("[R] expanding in the popover preserves its scroll position across the rebuild", () => {
     const { window, doc } = bootWebview();
-    sendCapabilities(window, MANY_SKILLS);
+    sendCapabilities(window, MANY_WORKFLOWS);
     click(window, doc.getElementById("capabilities-btn") as HTMLElement);
     const body = popoverOf(doc).querySelector(".studio-popover-body") as HTMLElement;
     Object.defineProperty(body, "scrollTop", { value: 42, writable: true, configurable: true });

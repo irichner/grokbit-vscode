@@ -969,12 +969,18 @@
       el.hidden = false;
       return;
     }
-    const viewGroups = capabilityGroupsView({ groups: cap.groups, backend: cap.backend });
+    const viewGroups = capabilityGroupsView({
+      groups: visibleCapabilityGroups(cap.groups),
+      backend: cap.backend,
+    });
     if (!viewGroups.length) {
       // Not onboarding (already gated above) and genuinely nothing discovered:
       // an honest empty state, not a vanished panel — hiding here is what makes
       // the feature look broken to a user who has nothing installed yet. Shown
       // regardless of `locked` — the line makes no clickability claim.
+      // Post-filter: non-grokbit groups never render, so this also fires when
+      // the suite is absent (provision off / failed copy) and only Skills/
+      // Agents/Commands would have been present.
       const p = document.createElement("p");
       p.className = "capabilities-empty muted";
       p.textContent = "No skills installed yet — just describe what you want in the message box.";
@@ -1020,7 +1026,10 @@
         body.appendChild(p);
         return;
       }
-      const viewGroups = capabilityGroupsView({ groups: cap.groups, backend: cap.backend });
+      const viewGroups = capabilityGroupsView({
+        groups: visibleCapabilityGroups(cap.groups),
+        backend: cap.backend,
+      });
       if (!viewGroups.length) {
         const p = document.createElement("p");
         p.className = "studio-popover-empty muted";
@@ -1100,7 +1109,7 @@
 
   // ---------- markdown ----------
 
-  const { looksLikeFileRef, formatRelativeTime, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext, backendBadgeLabel, capabilityGroupsView, sessionToggleGroup, welcomeGuide } = globalThis.GrokWebviewHelpers;
+  const { looksLikeFileRef, formatRelativeTime, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext, backendBadgeLabel, capabilityGroupsView, visibleCapabilityGroups, sessionToggleGroup, welcomeGuide } = globalThis.GrokWebviewHelpers;
 
   function escapeAttr(s) {
     return String(s == null ? "" : s)
