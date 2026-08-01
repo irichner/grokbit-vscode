@@ -983,7 +983,7 @@
       // Agents/Commands would have been present.
       const p = document.createElement("p");
       p.className = "capabilities-empty muted";
-      p.textContent = "No skills installed yet — just describe what you want in the message box.";
+      p.textContent = "No workflows available yet — just describe what you want in the message box.";
       el.appendChild(p);
       el.hidden = false;
       return;
@@ -1033,7 +1033,7 @@
       if (!viewGroups.length) {
         const p = document.createElement("p");
         p.className = "studio-popover-empty muted";
-        p.textContent = "No skills, commands, or agents found.";
+        p.textContent = "No workflows available.";
         body.appendChild(p);
         return;
       }

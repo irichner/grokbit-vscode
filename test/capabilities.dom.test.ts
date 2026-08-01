@@ -128,8 +128,8 @@ describe("Grokbit Actions — the bundled workflow group", () => {
     sendCapabilities(window, NON_GROKBIT_GROUPS);
     expect(headings(panelOf(doc))).toEqual([]);
     expect(panelOf(doc).hidden).toBe(false);
-    expect(panelOf(doc).textContent).toMatch(/no skills installed yet/i);
-    expect(panelOf(doc).textContent).not.toMatch(/Skills|Agents|Commands/);
+    expect(panelOf(doc).textContent).toMatch(/no workflows available yet/i);
+    expect(panelOf(doc).textContent).not.toMatch(/No skills installed yet|Skills|Agents|Commands/);
   });
 });
 
@@ -340,7 +340,7 @@ describe("capability browser — welcome panel", () => {
     sendCapabilities(window, []);
     const panel = panelOf(doc);
     expect(panel.hidden).toBe(false);
-    expect(panel.textContent).toMatch(/no skills installed yet/i);
+    expect(panel.textContent).toMatch(/no workflows available yet/i);
     expect((doc.getElementById("welcome") as HTMLElement).hidden).toBe(false);
   });
 
@@ -470,6 +470,29 @@ describe("capability browser — initialState / showCapabilities gating", () => 
     click(window, doc.getElementById("capabilities-btn") as HTMLElement);
     expect(posted.some((m) => m.type === "listCapabilities")).toBe(false);
     expect(popoverOf(doc).hidden).toBe(true);
+  });
+});
+
+// T5: empty-state + tooltip copy must name workflows, not skills/commands/agents.
+describe("capability browser — empty-state and tooltip wording (T5)", () => {
+  it("both mounts use the new empty-state strings; chat.js has no old wording", () => {
+    const { window, doc } = bootWebview();
+    sendCapabilities(window, []);
+    expect(panelOf(doc).textContent).toContain("No workflows available yet — just describe what you want in the message box.");
+    click(window, doc.getElementById("capabilities-btn") as HTMLElement);
+    expect(popoverOf(doc).textContent).toContain("No workflows available.");
+
+    const chatSrc = read("../media/chat.js");
+    expect(chatSrc).not.toContain("No skills installed yet");
+    expect(chatSrc).not.toContain("No skills, commands, or agents found");
+    expect(chatSrc).toContain("No workflows available yet — just describe what you want in the message box.");
+    expect(chatSrc).toContain("No workflows available.");
+  });
+
+  it("the Grokbit Actions button title names workflows only", () => {
+    const sidebarSrc = read("../src/sidebar.ts");
+    expect(sidebarSrc).toContain('title="Grokbit workflows — plan, implement, test, document"');
+    expect(sidebarSrc).not.toContain("Grokbit workflow, skills, commands & agents");
   });
 });
 
@@ -622,7 +645,7 @@ describe("capability browser — session toggles (auto-accept)", () => {
     const { window, doc } = bootWebview();
     sendCapabilities(window, []);
     const pop = openPopover(doc, window);
-    expect(pop.textContent).toContain("No skills, commands, or agents found.");
+    expect(pop.textContent).toContain("No workflows available.");
     expect(switchOf(pop)).not.toBeNull();
   });
 

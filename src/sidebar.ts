@@ -4641,7 +4641,7 @@ See design doc for the full state machine diagram.`;
     <button id="history-btn" class="toolbar-btn" title="Session history"></button>
     <button id="new-btn" class="toolbar-btn" title="New session"></button>
     <button id="docs-btn" class="toolbar-btn studio-top-btn" title="Workspace documents">Docs</button>
-    <button id="capabilities-btn" class="toolbar-btn studio-top-btn" title="Grokbit workflow, skills, commands & agents">Grokbit Actions</button>
+    <button id="capabilities-btn" class="toolbar-btn studio-top-btn" title="Grokbit workflows — plan, implement, test, document">Grokbit Actions</button>
     <div id="history-popover" class="toolbar-popover history-popover" hidden></div>
     <div id="docs-popover" class="toolbar-popover history-popover studio-popover" hidden></div>
     <div id="capabilities-popover" class="toolbar-popover history-popover studio-popover" hidden></div>
