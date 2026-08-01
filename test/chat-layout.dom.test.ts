@@ -110,7 +110,7 @@ describe("full-canvas layout — intrinsic grids, overflow-safe (source check)",
 
   it("[R] .capability-group-items is an auto-fit grid clamped with min(100%, …) inside minmax()", () => {
     const rule = ruleBlock(css, ".capability-group-items {");
-    expect(rule).toContain("repeat(auto-fit, minmax(min(100%, 260px), 1fr))");
+    expect(rule).toContain("repeat(auto-fit, minmax(min(100%, 300px), 1fr))");
     expect(rule).not.toContain("flex");
   });
 });

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **Grokbit Actions shows only the bundled workflow, as readable tiles.** The welcome canvas and top-bar Actions popover no longer list Skills / Agents / Commands — only `grokbit-plan` → `implement` → `test` → `document`, as bordered tiles with multi-line, sentence-complete descriptions (host cap 280, webview sentence-aware trim at 260). Host discovery is unchanged; a pure `visibleCapabilityGroups` allowlist filters at both mounts. Empty states and the button tooltip name workflows, not skills. ([media/webview-helpers.js](media/webview-helpers.js), [media/chat.js](media/chat.js), [media/chat.css](media/chat.css), [src/capabilities.ts](src/capabilities.ts), [src/sidebar.ts](src/sidebar.ts))
+
 ## 2026.7.1 — 2026-07-31
 
 ### Changed
