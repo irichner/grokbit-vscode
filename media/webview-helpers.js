@@ -610,15 +610,26 @@
     grokbit: "Grokbit workflow",
   };
 
-  // Longer than this and a row's description is clamped — mainly a guard on
+  // Longer than this and a row's description is clamped. Primarily a guard on
   // ACP-only "command" rows (grok's own builtins), whose description comes
-  // straight from the CLI with no server-side cap (disk skills/agents are
-  // already capped at CAPABILITY_DESCRIPTION_MAX_CHARS in src/capabilities.ts).
-  const CAPABILITY_ROW_DESCRIPTION_MAX = 140;
+  // straight from the CLI with no server-side cap — disk skills/agents are
+  // already capped at CAPABILITY_DESCRIPTION_MAX_CHARS (280) in
+  // src/capabilities.ts, which must stay ≥ this value so the host does not
+  // hard-clip before this sentence-aware trim runs. Prefer a sentence boundary
+  // (". " / "? " / "! ") at or after half the cap; otherwise hard-clip + "…".
+  const CAPABILITY_ROW_DESCRIPTION_MAX = 260;
   function truncateCapabilityDescription(desc) {
     const s = (desc == null ? "" : String(desc)).trim();
-    if (s.length <= CAPABILITY_ROW_DESCRIPTION_MAX) return s;
-    return s.slice(0, CAPABILITY_ROW_DESCRIPTION_MAX - 1).trimEnd() + "…";
+    const max = CAPABILITY_ROW_DESCRIPTION_MAX;
+    if (s.length <= max) return s;
+    const half = Math.floor(max / 2);
+    let cut = -1;
+    for (const sep of [". ", "? ", "! "]) {
+      const i = s.lastIndexOf(sep, max - 1);
+      if (i >= half) cut = Math.max(cut, i + 1); // include the terminator, drop the space
+    }
+    if (cut >= half) return s.slice(0, cut);
+    return s.slice(0, max - 1).trimEnd() + "…";
   }
 
   // Featured subset per CapabilityKind, shown by default with the rest behind
@@ -1202,6 +1213,7 @@
     CAPABILITY_KIND_LABELS, capabilityGroupsView, sessionToggleGroup,
     welcomeGuide, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK,
     CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups,
+    CAPABILITY_ROW_DESCRIPTION_MAX, truncateCapabilityDescription,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

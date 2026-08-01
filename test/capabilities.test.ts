@@ -8,6 +8,7 @@ import { describe, it, expect } from "vitest";
 import * as path from "node:path";
 import {
   AcpCommandLike,
+  CAPABILITY_DESCRIPTION_MAX_CHARS,
   CAPABILITY_GROUP_CAP,
   CAPABILITY_KIND_ORDER,
   CAPABILITY_ROOTS,
@@ -235,6 +236,9 @@ describe("capabilityFromSkillFile", () => {
     const item = capabilityFromSkillFile({ kind: "skill", rawText: text, filePath: skillDirPath, layout: "skill-dir", source: "Project (.grok)" });
     expect(item.description.length).toBeLessThan(long.length);
     expect(item.description.endsWith("…")).toBe(true);
+    // Host cap must leave room for the webview's 260-char sentence-aware trim.
+    expect(CAPABILITY_DESCRIPTION_MAX_CHARS).toBe(280);
+    expect(item.description.length).toBeLessThanOrEqual(CAPABILITY_DESCRIPTION_MAX_CHARS);
   });
 
   it("an unterminated fence is treated as no frontmatter, never throws", () => {

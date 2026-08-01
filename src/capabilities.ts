@@ -165,8 +165,10 @@ export const CAPABILITY_SCAN_FILE_CAP = 300;
  *  anyone with a well-stocked skills directory. */
 export const CAPABILITY_GROUP_CAP = 100;
 
-/** A description longer than this is truncated with a trailing ellipsis. */
-export const CAPABILITY_DESCRIPTION_MAX_CHARS = 160;
+/** A description longer than this is truncated with a trailing ellipsis.
+ *  Must stay ≥ the webview's CAPABILITY_ROW_DESCRIPTION_MAX (260) so the host
+ *  does not hard-clip before the sentence-aware view-model trim can run. */
+export const CAPABILITY_DESCRIPTION_MAX_CHARS = 280;
 
 /**
  * A capability `name` is arbitrary attacker-controlled text once it comes from
