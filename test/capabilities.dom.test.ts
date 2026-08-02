@@ -108,7 +108,7 @@ describe("Grokbit Actions — the bundled workflow group", () => {
     sendCapabilities(window, [SUITE_GROUP]);
     const panel = panelOf(doc);
     const names = [...panel.querySelectorAll(".capability-row-name")].map((el) => el.textContent);
-    expect(names).toEqual(["grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document"]);
+    expect(names).toEqual(["Explore", "Plan", "Implement", "Test", "Document"]);
     expect(panel.querySelector(".capability-expand")).toBeNull();
   });
 
@@ -711,6 +711,87 @@ describe("capability browser — Refresh affordance", () => {
   });
 });
 
+describe("capability browser — how-it-works Details", () => {
+  it("renders Details when hasDetail is set; click posts getCapabilityDetail without seeding compose", () => {
+    const { window, doc, posted } = bootWebview();
+    const groups = [{
+      kind: "grokbit", title: "Grokbit workflow", total: 1,
+      items: [{
+        kind: "grokbit",
+        name: "grokbit-plan",
+        description: "Work out a plan.",
+        invoke: "/grokbit-plan ",
+        hasDetail: true,
+        detailPath: "/ext/resources/skills/grokbit-plan/references/how-it-works.md",
+        source: "Grokbit",
+        origin: "disk",
+      }],
+    }];
+    sendCapabilities(window, groups);
+    const row = panelOf(doc).querySelector(".capability-row") as HTMLElement;
+    const details = row.querySelector(".capability-row-details") as HTMLButtonElement;
+    expect(details).not.toBeNull();
+    expect(details.textContent).toBe("Details");
+    posted.length = 0;
+    click(window, details);
+    expect(posted).toContainEqual({ type: "getCapabilityDetail", name: "grokbit-plan" });
+    const input = doc.getElementById("input") as HTMLTextAreaElement;
+    expect(input.value).toBe("");
+  });
+
+  it("fills the in-panel body from capabilityDetail markdown", () => {
+    const { window, doc } = bootWebview();
+    const groups = [{
+      kind: "grokbit", title: "Grokbit workflow", total: 1,
+      items: [{
+        kind: "grokbit",
+        name: "grokbit-explore",
+        description: "Map first.",
+        invoke: "/grokbit-explore ",
+        hasDetail: true,
+        detailPath: "/ext/resources/skills/grokbit-explore/references/how-it-works.md",
+        source: "Grokbit",
+        origin: "disk",
+      }],
+    }];
+    sendCapabilities(window, groups);
+    const details = panelOf(doc).querySelector(".capability-row-details") as HTMLElement;
+    click(window, details);
+    dispatch(window, {
+      type: "capabilityDetail",
+      name: "grokbit-explore",
+      markdown: "## Purpose\n\nRead-only orientation.",
+    });
+    const body = panelOf(doc).querySelector(".capability-row-detail-body") as HTMLElement;
+    expect(body.hidden).toBe(false);
+    expect(body.textContent).toContain("Purpose");
+    expect(body.textContent).toContain("Read-only orientation");
+  });
+
+  it("primary row click still seeds invoke when Details is present", () => {
+    const { window, doc, posted } = bootWebview();
+    const groups = [{
+      kind: "grokbit", title: "Grokbit workflow", total: 1,
+      items: [{
+        kind: "grokbit",
+        name: "grokbit-test",
+        description: "Verify.",
+        invoke: "/grokbit-test ",
+        hasDetail: true,
+        detailPath: "/ext/x.md",
+        source: "Grokbit",
+        origin: "disk",
+      }],
+    }];
+    sendCapabilities(window, groups);
+    posted.length = 0;
+    const row = panelOf(doc).querySelector(".capability-row") as HTMLElement;
+    click(window, row);
+    expect((doc.getElementById("input") as HTMLTextAreaElement).value).toBe("/grokbit-test ");
+    expect(posted.some((m) => m.type === "getCapabilityDetail")).toBe(false);
+  });
+});
+
 // A second, plainly-labelled door back to the capability browser once the
 // welcome screen (and its own door) is gone — docs/plans/
 // session-tab-ux-overhaul.md § Approach B bullet 5.
@@ -813,7 +894,7 @@ describe("capability browser — featured partition + expand", () => {
       { kind: "grokbit", name: "alpha", description: "Extra workflow.", invoke: "/alpha ", source: "Grokbit", origin: "disk" },
     ],
   }];
-  const FEATURED_FIVE = ["grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document"];
+  const FEATURED_FIVE = ["Explore", "Plan", "Implement", "Test", "Document"];
   const ALL_SIX = [...FEATURED_FIVE, "alpha"];
 
   // Excludes the session-toggle row's own .capability-row-name (it shares the

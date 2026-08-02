@@ -16,3 +16,12 @@ Not needed.
 ## Outcome — T1
 Rounds used: 1 of 2
 Unresolved at cap: none
+
+## T2 — Full suite regression
+Reviewed: run-only task — no code hunks
+
+Clean. No file changes; verify `npm test` 1410 passed.
+
+## Outcome — T2
+Rounds used: 1 of 2
+Unresolved at cap: none

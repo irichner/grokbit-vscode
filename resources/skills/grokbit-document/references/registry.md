@@ -55,7 +55,7 @@ Adding a third resolver means adding it here first, the same discipline `SKILL.m
 
 **`required: true`** means a section that is neither derivable nor answered blocks emission. Use sparingly; most gaps should degrade to a `TODO` marker rather than stopping the document.
 
-**`emit_at`** wires the type to a phase boundary. `plan-approval`, `implement-handoff`, `test-verdict`, or `on-request`. A changelog entry written at Implement handoff is accurate; the same entry written three weeks later is archaeology reconstructed from commit messages by a model that was not there.
+**`emit_at`** is **guidance for the skill and for humans**, not a wired extension hook. Values: `plan-approval`, `implement-handoff`, `test-verdict`, or `on-request`. When you finish plan approval / implement handoff / test verdict, **prefer** emitting types whose `emit_at` matches that boundary (e.g. changelog at handoff). The shipped Grokbit extension does **not** auto-fire document generation at those phase boundaries today — natural language and the Docs picker (when present) invoke the skill. Do not claim the product auto-emits docs at phase hooks.
 
 **`verify`** selects checks from `scripts/verify_doc.py`: `commands_run`, `paths_resolve`, `links_follow`, `samples_compile`, `citations_valid`. This list is exhaustive — every check named here is implemented, and nothing verify_doc.py can select is a no-op. (An earlier draft of this registry also listed `signatures_match`; it was never implemented — checking a documented signature against arbitrary source in an arbitrary language is not a thing a stdlib-only script can do honestly — and it has been removed from here and from every type that listed it, rather than left advertised and silently skipped.) **Optional; when a type omits it, the default is `[links_follow, citations_valid]`** — every type derives from *something* and can cite or link something, even a mostly-authored one, so those two checks are the floor. `commands_run`/`samples_compile`/`paths_resolve` only apply to types that plausibly contain runnable commands, real repo paths, or code samples, and are added per type accordingly.
 
@@ -84,11 +84,11 @@ Most types emit once per invocation to a fresh or fully-owned path. Two shapes n
 
 **`changelog`** targets `CHANGELOG.md`, which accumulates across every release. Emitting a new entry means **prepending** a new dated/versioned section above whatever is already there — never regenerating or overwriting the file. If it doesn't exist yet, create it with just the new section.
 
-**Regenerating a target that already exists.** If the output path already carries this skill's own `grokbit_type` frontmatter, it was written by this skill before and is safe to regenerate in place. If it exists with **no** `grokbit_type` frontmatter, a human wrote it and this skill has never touched it — do not overwrite silently, because the derivation logic has no way to know which of the existing prose is still true. Draft the proposed content, show it as a diff against the current file, and write only on confirmation. This is the common case for `README.md` and `CONTRIBUTING.md` specifically, since those are exactly the files a repo is likely to already have by hand.
+**Regenerating a target that already exists.** Presence of this skill's `grokbit_type` frontmatter is **not** enough to overwrite silently — users often hand-tune emitted docs and leave the frontmatter in place. Safe in-place regenerate only when **both** are true: (1) the file has `grokbit_type` frontmatter, and (2) a recorded content hash (or byte-identical prior emit) still matches the on-disk body (excluding volatile fields you intentionally refresh). If the path exists and either condition fails — no frontmatter, missing hash, or hash mismatch — treat it like human-authored work: draft the proposed content, show a diff against the current file, and write only on confirmation. Prefer writing a new path or versioned section when the type allows it (`changelog` prepend is already the model). This is the common case for `README.md` and `CONTRIBUTING.md`, and for any re-emit after drift repair advice.
 
 ## Extension contract
 
-The extension does three things and no more: **read the registry to populate the picker, compute coverage, invoke the skill.** Rendering and file writing are the skill's.
+**Target shape** (what a full Docs UX should do):
 
 ```
 1. Enumerate types/*.md → picker (grouped by category, label + answers)
@@ -97,9 +97,9 @@ The extension does three things and no more: **read the registry to populate the
 4. Render the returned doc path + verification report
 ```
 
-`slug` is required only when the type's `output` contains `{slug}` — `readme`, `changelog`, and `contributing` have none, so a natural-language "write me a README" should never be blocked on supplying a slug it doesn't need. Every other seeded type does need one; when there is no plan directory to draw it from, ask for a short kebab-case name during Step 3's gap-fill batch rather than refusing outright.
+**Shipped reality:** the Grokbit extension is a thin coding client. Docs browser / workspace doc listing may exist; a full type-registry picker with live coverage badges and phase-hook auto-emit is **not** guaranteed in every build. The skill must remain fully usable from natural language / slash invocation on both CLIs with **zero** extension UI. Treat the steps above as the contract for any future extension work — do not put section-assembly logic in TypeScript (CLI and extension would diverge).
 
-Resist putting section-assembly logic in TypeScript. The moment it lives there, the CLI and the extension produce different documents from identical inputs — which is precisely the `COEXIST` trap `grokbit-plan` now exists to force a decision about.
+`slug` is required only when the type's `output` contains `{slug}` — `readme`, `changelog`, and `contributing` have none, so a natural-language "write me a README" should never be blocked on supplying a slug it doesn't need. Every other seeded type does need one; when there is no plan directory to draw it from, ask for a short kebab-case name during Step 3's gap-fill batch rather than refusing outright.
 
 ## Writing a custom type
 

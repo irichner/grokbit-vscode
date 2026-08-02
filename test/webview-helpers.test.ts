@@ -1006,35 +1006,34 @@ describe("capabilityGroupsView", () => {
     expect(desc.endsWith("…")).toBe(true);
   });
 
-  // Real grokbit-plan frontmatter (resources/skills/grokbit-plan/SKILL.md) —
-  // asserting only that a constant changed proves nothing about what a tile shows.
-  it("sentence-aware trim keeps complete sentences on the real grokbit-plan description", () => {
-    const planDesc =
-      "Produce a verified, grounded implementation plan before any code is written. " +
-      "Runs a four-role pipeline (Business Analyst, Systems Analyst, Solutions Architect, Plan Reviewer) " +
-      "with bounded correction loops, and writes durable artifacts to .grokbit/plans/. " +
-      "Use this skill whenever the user asks to build, add, implement, refactor, migrate, integrate, " +
-      "or fix anything non-trivial — and especially when they describe a feature in vague terms, " +
-      "say \"let's build X\", ask \"how should I approach X\", or start work in an unfamiliar codebase. " +
-      "Use it even when the user did not say the word \"plan\". " +
-      "Do NOT use it for single-line edits, typo fixes, or questions that are purely informational.";
-    expect(planDesc.length).toBeGreaterThan(CAPABILITY_ROW_DESCRIPTION_MAX);
+  // Synthetic multi-sentence wall (> CAPABILITY_ROW_DESCRIPTION_MAX) so trim
+  // behavior stays covered without coupling the suite to live skill copy.
+  it("sentence-aware trim keeps complete sentences on a long multi-sentence description", () => {
+    const longDesc =
+      "First complete sentence stays intact under the row cap. " +
+      "Second complete sentence also ends with a period and a space. " +
+      "Third complete sentence is still under the display budget when cut here. " +
+      "Fourth sentence and everything after it should be dropped by the sentence-aware trim " +
+      "because the full string is deliberately longer than CAPABILITY_ROW_DESCRIPTION_MAX " +
+      "and must not appear in the truncated tile text the user sees.";
+    expect(longDesc.length).toBeGreaterThan(CAPABILITY_ROW_DESCRIPTION_MAX);
     const v = capabilityGroupsView({
       groups: [{
         kind: "grokbit", title: "Grokbit workflow", total: 1,
-        items: [{ kind: "grokbit", name: "grokbit-plan", invoke: "/grokbit-plan ", description: planDesc }],
+        items: [{ kind: "grokbit", name: "grokbit-plan", invoke: "/grokbit-plan ", description: longDesc }],
       }],
     });
     const desc = v[0].items[0].description;
     expect(desc.endsWith("…")).toBe(false);
     expect(desc.endsWith(".")).toBe(true);
-    expect(desc).toContain("artifacts to .grokbit/plans/.");
+    expect(desc).toContain("when cut here.");
+    expect(desc).not.toContain("Fourth sentence");
     expect(desc.length).toBeLessThanOrEqual(CAPABILITY_ROW_DESCRIPTION_MAX);
     // No mid-word cut: last char is sentence terminator, not a partial token.
     expect(desc).toBe(
-      "Produce a verified, grounded implementation plan before any code is written. " +
-      "Runs a four-role pipeline (Business Analyst, Systems Analyst, Solutions Architect, Plan Reviewer) " +
-      "with bounded correction loops, and writes durable artifacts to .grokbit/plans/.",
+      "First complete sentence stays intact under the row cap. " +
+      "Second complete sentence also ends with a period and a space. " +
+      "Third complete sentence is still under the display budget when cut here.",
     );
   });
 
@@ -1311,6 +1310,46 @@ describe("capabilityGroupsView — featured partition", () => {
     });
     expect(v[0].items[0].name).toBe("alawys-approve");
     expect(v[0].featuredCount).toBe(1);
+  });
+
+  it("passes through hasDetail and detailPath when the host stamped them", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "grokbit", title: "Grokbit workflow", total: 1,
+        items: [{
+          kind: "grokbit",
+          name: "grokbit-plan",
+          description: "Plan",
+          invoke: "/grokbit-plan ",
+          hasDetail: true,
+          detailPath: "/ext/resources/skills/grokbit-plan/references/how-it-works.md",
+          source: "Grokbit",
+          origin: "disk",
+        }],
+      }],
+    });
+    expect(v[0].items[0].hasDetail).toBe(true);
+    expect(v[0].items[0].detailPath).toContain("how-it-works.md");
+    expect(v[0].items[0].label).toBe("Plan");
+  });
+
+  it("omits detailPath when hasDetail is false even if detailPath was sent", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "skill", title: "Skills", total: 1,
+        items: [{
+          kind: "skill",
+          name: "other",
+          description: "x",
+          hasDetail: false,
+          detailPath: "/evil/path.md",
+          source: "User",
+          origin: "disk",
+        }],
+      }],
+    });
+    expect(v[0].items[0].hasDetail).toBe(false);
+    expect(v[0].items[0].detailPath).toBeUndefined();
   });
 });
 

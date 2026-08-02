@@ -10,6 +10,16 @@ grokbit-test       QA Automation · Frontend QA · AppSec · Release Engineer ·
 grokbit-document   Information Architect · Documentation Engineer · Technical Writer · Docs QA
 ```
 
+**Product how-it-works guides** (roles, loops, caps — also shown in Grokbit Actions → Details):
+
+- [explore](./grokbit-explore/references/how-it-works.md)
+- [plan](./grokbit-plan/references/how-it-works.md)
+- [implement](./grokbit-implement/references/how-it-works.md)
+- [test](./grokbit-test/references/how-it-works.md)
+- [document](./grokbit-document/references/how-it-works.md)
+
+Repo aggregate: [`docs/grokbit-workflows.md`](../../docs/grokbit-workflows.md).
+
 ## Install
 
 These skills ship inside the **Grokbit VS Code extension**, not as a standalone
@@ -43,12 +53,14 @@ so your fork shadows it without you editing the shared copy in place.
                                                   ▼
        verdict  ◀──  grokbit-test (verify)  ◀──  grokbit-implement
                             │                         ▲
-                            └── regression / CRITICAL ─┘
+                            └── regression / CRITICAL ─┘ (max 2 hand-back cycles)
                                         │
-                         3 deviations ──┴──▶ back to grokbit-plan
+              3 counting deviations ──┴──▶ back to grokbit-plan (max 2 replans)
 ```
 
-**Explore** maps relevant code in chat (read-only, cited) before you commit to a plan. It does not write plan artifacts; Plan Survey still opens files when you run `/grokbit-plan`.
+**Explore** maps relevant code in chat (read-only on files **and** machine state, cited) before you commit to a plan. It does not write plan artifacts; Plan Survey still opens files when you run `/grokbit-plan`.
+
+**Fast path.** Typos, one-liners, and pure docs tweaks may use a **short plan** (intent + 1–2 tasks, light survey) — Plan still requires human approval before Implement. Non-trivial behavior/schema/auth work uses the full pipeline.
 
 **Testing runs twice, and the first run is the important one.** Baseline mode executes before implementation to record how the system behaves today. Without it, "the cart total is $0" after a change is just a number — you have nothing to compare it against. A baseline captured after the fact agrees with the change perfectly and detects nothing.
 
@@ -75,11 +87,11 @@ Below ~30% coverage it recommends against generating. That preview is the honest
 
 **Staleness** is tracked via `derived_from: <path>@<commit>` frontmatter. `check_drift.py` flags the specific sections citing a changed source, not the whole file — stale-marking a forty-page guide because one signature moved trains people to ignore the marker. Deterministic git work, so it is a script rather than model work: faster, cheaper, more reliable.
 
-Derived types emit at phase boundaries (`emit_at: plan-approval`, `implement-handoff`, `test-verdict`). A changelog written at handoff is accurate; the same entry three weeks later is archaeology.
+`emit_at` on a type is **recommended timing** (plan-approval / implement-handoff / test-verdict / on-request), not a guarantee that the extension auto-fires docs at those hooks. Prefer emitting at those moments when you run the skill; CLI/natural language is always enough.
 
 ### Extension contract
 
-Read the registry to populate the picker, compute coverage, invoke the skill. Nothing else. Section-assembly logic in TypeScript means the CLI and the extension produce different documents from identical inputs — the exact `COEXIST` trap `grokbit-plan` exists to prevent.
+Target: read the registry → coverage → invoke skill → show path. **Shipped builds may only offer partial Docs UI**; the skill must work fully from slash/natural language. Never put section assembly in TypeScript.
 
 ## Shared state
 
@@ -148,7 +160,7 @@ The Maintenance Engineer in Test is now scoped to debris *this session created*.
 ## The five rules that carry the most weight
 
 1. **Verify or revert.** No partial task state, ever.
-2. **Three deviations and you re-plan.** The threshold an agent is least inclined to respect, and the one that prevents the most damage. Three contradictions means the survey misread the codebase's shape, and every remaining task rests on the same bad ground.
+2. **Three counting deviations and you re-plan (max two replans).** The threshold an agent is least inclined to respect, and the one that prevents the most damage. Three survey/shape contradictions mean the survey misread the codebase; dependency-gate rejections alone do not force a full re-plan.
 3. **Never edit a test to make it pass.** Doing so converts a regression into a silent one. The one narrow exception — retiring or regenerating an already-cited baseline test, and only after the change has shipped — happens in the open, recorded in `test/results.md`, and never to silence an UNKNOWN or REGRESSION finding.
 4. **Every superseded thing gets a disposition.** Undecided duplication is how a codebase with history rots.
 5. **Never write a claim you cannot source.** A gap is a visible `TODO`, never plausible prose. Confident invention is the one documentation defect that reads well enough to survive review.

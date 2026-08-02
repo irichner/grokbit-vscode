@@ -14,6 +14,8 @@
      on white would wash out. */
   --neon-cyan-ink: color-mix(in srgb, var(--neon-cyan) 55%, var(--vscode-foreground));
   --neon-magenta-ink: color-mix(in srgb, var(--neon-magenta) 55%, var(--vscode-foreground));
+  --neon-green: #39ff14;
+  --neon-green-ink: color-mix(in srgb, var(--neon-green) 55%, var(--vscode-foreground));
 }
 
 * { box-sizing: border-box; }
@@ -1913,6 +1915,7 @@ textarea#input {
   gap: 8px;
   background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
   border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, #444));
+  border-left: 2px solid color-mix(in srgb, var(--neon-cyan) 45%, var(--vscode-editorWidget-border));
   border-radius: var(--radius, 6px);
 }
 .session-setup-card[hidden] { display: none; }
@@ -2099,6 +2102,9 @@ textarea#input {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.capability-row[data-kind="grokbit"] .capability-row-name {
+  color: var(--neon-green-ink);
+}
 .capability-row-cmd {
   flex-shrink: 0;
   font-family: var(--vscode-editor-font-family, monospace);
@@ -2139,6 +2145,65 @@ textarea#input {
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
   white-space: nowrap;
+}
+/* Suite how-it-works: in-panel expand (data-driven hasDetail, not kind branch). */
+.capability-row-detail-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+}
+.capability-row-details {
+  font-size: 11px;
+  line-height: 1.2;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--vscode-button-border, var(--vscode-widget-border));
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  cursor: pointer;
+}
+.capability-row-details:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+}
+.capability-row-details:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.capability-row-details.secondary {
+  border-style: dashed;
+  opacity: 0.9;
+}
+.capability-row-detail-body {
+  flex: 1 1 100%;
+  max-height: 220px;
+  overflow: auto;
+  margin-top: 2px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-widget-border);
+  background: var(--vscode-editor-background);
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--vscode-foreground);
+  text-align: left;
+}
+.capability-row-detail-body h1,
+.capability-row-detail-body h2,
+.capability-row-detail-body h3 {
+  font-size: 12px;
+  margin: 0.6em 0 0.25em;
+}
+.capability-row-detail-body p,
+.capability-row-detail-body ul,
+.capability-row-detail-body table {
+  margin: 0.35em 0;
+}
+.capability-row-detail-body pre {
+  max-width: 100%;
+  overflow: auto;
+  font-size: 10.5px;
 }
 .capability-more {
   margin: 0;

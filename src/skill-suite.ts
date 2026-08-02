@@ -161,3 +161,73 @@ export function applySuiteKind(
     return { ...item, kind, source: "Grokbit" };
   });
 }
+
+/** Max bytes read for a suite how-it-works guide (lazy detail load). */
+export const HOW_IT_WORKS_MAX_BYTES = 64 * 1024;
+
+/**
+ * Absolute path to the product how-it-works guide for a suite skill inside the
+ * extension bundle (`resources/skills/<name>/references/how-it-works.md`).
+ */
+export function suiteHowItWorksPath(extensionRoot: string, skillName: string): string {
+  return path.join(extensionRoot, SUITE_BUNDLE_DIR, skillName, "references", "how-it-works.md");
+}
+
+/** Case-insensitive membership in the suite name list. */
+export function isSuiteSkillName(
+  name: string,
+  names: readonly string[] = SUITE_SKILL_NAMES,
+): boolean {
+  const lc = (name || "").toLowerCase();
+  return names.some((n) => n.toLowerCase() === lc);
+}
+
+/** Canonical suite skill name casing, or undefined if not a suite member. */
+export function canonicalSuiteSkillName(
+  name: string,
+  names: readonly string[] = SUITE_SKILL_NAMES,
+): string | undefined {
+  const lc = (name || "").toLowerCase();
+  return names.find((n) => n.toLowerCase() === lc);
+}
+
+export interface AttachSuiteHowItWorksOptions {
+  extensionRoot: string;
+  /** Injected existence check — pure relative to I/O. */
+  fileExists: (absPath: string) => boolean;
+  names?: readonly string[];
+}
+
+/**
+ * Stamp `hasDetail` / `detailPath` on re-keyed suite items when the guide
+ * file exists under the extension bundle. Non-suite items are unchanged.
+ */
+export function attachSuiteHowItWorks(
+  items: readonly CapabilityItem[],
+  opts: AttachSuiteHowItWorksOptions,
+): CapabilityItem[] {
+  const names = opts.names ?? SUITE_SKILL_NAMES;
+  return items.map((item) => {
+    if (item.kind !== "grokbit") return item;
+    const canonical = canonicalSuiteSkillName(item.name, names);
+    if (!canonical) return item;
+    const detailPath = suiteHowItWorksPath(opts.extensionRoot, canonical);
+    if (!opts.fileExists(detailPath)) return item;
+    return { ...item, hasDetail: true, detailPath };
+  });
+}
+
+/**
+ * Resolve a safe absolute path for reading a suite how-it-works guide.
+ * Rejects names outside {@link SUITE_SKILL_NAMES} so the host never opens
+ * arbitrary client-supplied paths.
+ */
+export function resolveSuiteHowItWorksPath(
+  extensionRoot: string,
+  skillName: string,
+  names: readonly string[] = SUITE_SKILL_NAMES,
+): { ok: true; path: string; name: string } | { ok: false; error: string } {
+  const canonical = canonicalSuiteSkillName(skillName, names);
+  if (!canonical) return { ok: false, error: "not-a-suite-skill" };
+  return { ok: true, path: suiteHowItWorksPath(extensionRoot, canonical), name: canonical };
+}

@@ -16,7 +16,8 @@
 <Short prose. No implementation plan.>
 
 ## Contracts / invariants
-- <things a later change must not break> — cite when possible
+- `<path>:<line>` — <invariant a later change must not break>
+- (Every bullet needs a citation, same as Hard rule 2. If you cannot open a file for it, put it under **Open unknowns** instead — never an uncited “must not break” claim.)
 
 ## Open unknowns
 - <what you did not open or could not confirm>

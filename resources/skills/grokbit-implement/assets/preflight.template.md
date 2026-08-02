@@ -5,7 +5,7 @@ Run before the first task. Record observed values, not expectations.
 | Check | Expected | Observed | Status |
 |---|---|---|---|
 | Git | installed, repo present, `user.name`/`user.email` set | not a repo | FIXED — ran `git init` + initial commit |
-| Dirty-tree snapshot | only if entry condition 2 was satisfied dirty | `git stash push -u -m "pre-implement snapshot <slug>"` \| WIP commit `<sha>` \| tree was clean, none needed | FIXED |
+| Dirty-tree snapshot | only if entry condition 2 was satisfied dirty; **must be restored at Step 6 handoff** | `git stash push -u -m "pre-implement snapshot <slug>"` (record exact message) \| WIP commit `<sha>` \| tree was clean, none needed | FIXED |
 | Runtime version | `.nvmrc` 20.x | 20.11.0 | PASS |
 | Deps installed | lockfile in sync | drift detected | FIXED — ran install |
 | Env vars | `.env.example` parity | `STRIPE_KEY` missing | BLOCKED |

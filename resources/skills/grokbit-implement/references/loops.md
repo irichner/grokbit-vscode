@@ -58,13 +58,17 @@ Attempt 3 is where the damage happens. Under pressure the model starts making th
 | **Runs** | Code Reviewer, then Software Engineer |
 | **Cap** | 2 rounds |
 
-**Body:** Reviewer classifies every hunk `IN_SCOPE` / `OUT_OF_SCOPE` / `INCIDENTAL`. For each `OUT_OF_SCOPE` hunk the engineer reverts it, or promotes it to a new task appended to `plan.md` with its own verify command.
+**Body:** Reviewer classifies every hunk `IN_SCOPE` / `OUT_OF_SCOPE` / `INCIDENTAL`. For each `OUT_OF_SCOPE` hunk the engineer either **reverts it from the current task's working tree before commit** or **promotes** it to a new task.
+
+**Promote means:** (1) the hunk is **reverted from this task's diff** so the current commit contains only `IN_SCOPE`/`INCIDENTAL` work; (2) a new task is appended (see below) that will re-apply that change under its own intent/files/verify; (3) the promoted task does **not** leave the out-of-scope hunk sitting in the current commit. Promote-without-revert would break the audit's guarantee either way (commit is dirty, or the new task has nothing left to do).
+
+After every revert of an `OUT_OF_SCOPE` hunk, **re-run the current task's `verify:`** before commit. A scope fix can break the task's own verify; shipping a green-but-stale verify is a hollow pass.
 
 **Promoting a hunk appends a task, and that changes what the approval checkbox means.** `plan.md`'s `## Approval` checkbox was ticked against the tasks that existed at that moment; a task appended afterward was never in front of the human who ticked it. So a promoted task: gets a title suffixed `(promoted from T<n>)`, so it reads as new-since-approval at a glance; is inserted immediately after the task that produced it, not appended to the end, so dependency order stays sane; and does **not** inherit the plan's existing approval — it needs its own one-line yes from the human before its Write step runs. This does not reopen `plan.md`'s approval on the whole plan; it is a small, additive approval scoped to the one new task, in the same spirit as the original gate at a fraction of the size. It is also not the "editing `plan.md` tasks" hard rule 5 forbids — that rule is about rewriting an existing task to match what got built; this appends a new one.
 
-**Exit:** zero unresolved `OUT_OF_SCOPE` hunks, and every promoted task has its one-line approval.
+**Exit:** zero unresolved `OUT_OF_SCOPE` hunks in the current task's tree, every promoted task has its one-line approval, and the current task's verify still passes after any reverts.
 
-**Cap behavior:** revert everything still contested and commit only the in-scope remainder.
+**Cap behavior:** revert everything still contested and commit only the in-scope remainder (after re-verify).
 
 Run the reviewer with fresh context wherever the host allows it. An engineer auditing its own diff will find the out-of-scope hunk reasonable, because it was reasonable when it wrote it.
 
@@ -94,9 +98,11 @@ Run the reviewer with fresh context wherever the host allows it. An engineer aud
 | **Runs** | Whichever role hit the trigger appends the entry; Orchestrator (see `references/roles.md` — this is the session itself holding the pipeline together, not a per-task dispatched role) counts it against the cap and enforces the stop, which is why counting across the whole session falls to it and no one else |
 | **Cap** | **3 deviations** |
 
-A deviation is: a survey claim contradicted by the actual file, a verify command that could not execute in this environment, a task blocked at cap, an out-of-scope change promoted to a new task, a dependency rejected, or a task requiring undeclared files. A baseline waiver recorded per the entry conditions is deliberately **not** on this list — it's a risk the user consented to, not a contradiction of the plan, and it does not consume any of the 3. A fix task appended per `SKILL.md` § Step 7 (hand-back intake) is likewise **not** on this list by itself — receiving the hand-back is not a deviation; only an already-enumerated type the fix task goes on to trigger while it runs counts, same as for any other task.
+**Count toward the cap (survey/shape contradictions):** a survey claim contradicted by the actual file; a task blocked at the I2 retry cap; a task requiring undeclared files; an out-of-scope change promoted to a new task (scope was wrong). These mean the plan/survey misread the codebase.
 
-**Body:** The role that hit the trigger appends to `implement/deviations.md` with the task ID, what the plan expected, what was actually found, and the citation. The Orchestrator counts every entry recorded since the last replan (or since the start) against the cap.
+**Record but do not count toward the replan cap:** a dependency rejected by I4 (supply-chain gate doing its job); a verify command that could not execute because of environment/shell mismatch once the command text is fixed (plan-spec noise, not survey shape — still record it); a baseline waiver the user consented to; receiving a hand-back from `grokbit-test` (Step 7). Mark each entry `counts: yes` or `counts: no` in `deviations.md` so the Orchestrator does not have to re-interpret prose.
+
+**Body:** The role that hit the trigger appends to `implement/deviations.md` with the task ID, what the plan expected, what was actually found, the citation, and `counts: yes|no`. The Orchestrator counts only `counts: yes` entries since the last replan (or since the start) against the cap.
 
 **Exit:** the plan runs to completion with fewer than 3.
 
@@ -108,6 +114,7 @@ The replan contract, specified once here because Implement is what triggers it:
 - **`plan.md` is rebuilt, not restarted.** Every completed task keeps its original ID and its original content. `progress.md`'s ledger keys against those IDs, and renumbering `T1` would silently orphan every row that already refers to it. New or revised tasks continue numbering from where the old plan stopped — if the old plan had 6 tasks, the rebuilt remainder starts at `T7`, even where it replaces what used to be `T4`.
 - **`progress.md` is not archived.** It is the session's memory across the whole slug, replan included, and every completed row must stay valid against the rebuilt `plan.md`'s preserved IDs.
 - **The deviation counter resets to zero, but the numbering in `deviations.md` does not.** The three that triggered this replan stay in the file as `D1`–`D3`; the next one recorded after the replan is `D4`. What resets is the cap — 3 more before the next stop, not 3 total for the whole slug. Mark the boundary in the file (see `assets/deviations.template.md`) so a later reader can tell `D1`–`D3` were the old survey's problem and `D4` onward are being measured against the corrected one.
+- **Replan depth cap: 2.** After the second Loop I5 replan for this slug (`replan-2/`), do **not** auto-replan again. Stop and hand the human: the deviations log, progress ledger, and a plain-language summary. Further planning needs explicit human direction (new slug, scope cut, or abandon). Unbounded replan loops burn sessions without converging.
 
 Completed tasks stay committed; the remaining plan is rebuilt on corrected ground.
 

@@ -1,8 +1,8 @@
 {
   "name": "grokbit",
   "displayName": "Grokbit",
-  "description": "Grokbit — VS Code client for xAI's Grok Build CLI — each session in its own editor tab, review edits in a diff before approving, @-mention files, resumable history, inline image/video, and voice. Requires the Grok Build CLI plus a SuperGrok or X Premium+ subscription (or an xAI API key). MIT, open-source. Based on grok-build-vscode by Paweł Huryn. Not affiliated with or endorsed by xAI.",
-  "version": "2026.8.3",
+  "description": "VS Code UI for Grok Build and Claude Code. Native chat tabs, Plan first + inline-diff approvals, Grokbit Actions (explore→plan→implement→test→document), file chips, resumable history, activity carousel, status-bar HUD, /imagine media, voice, math & Mermaid. Needs the Grok CLI + SuperGrok, X Premium+, or an xAI API key. MIT. Based on grok-build-vscode by Paweł Huryn. Not affiliated with xAI.",
+  "version": "2026.8.11",
   "publisher": "Grokbit",
   "author": {
     "name": "Israel Richner",
@@ -29,12 +29,15 @@
     "grok-build",
     "xai",
     "xai-grok",
+    "claude",
+    "claude-code",
     "acp",
     "acp-client",
     "agent-client-protocol",
     "agent",
     "ai",
     "chat",
+    "plan-mode",
     "thinking",
     "tool-calls",
     "sidebar"

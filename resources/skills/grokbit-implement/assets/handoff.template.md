@@ -27,5 +27,12 @@ Areas where verification effort is best spent, and why.
 ## Deviations
 See `deviations.md` — N recorded.
 
+## Dirty-tree snapshot
+| Kind | Identity | Restored at handoff? |
+|---|---|---|
+| none \| stash \| WIP commit | (stash message / SHA / —) | yes \| n/a \| conflict — see below |
+
+If a stash pop conflicted, leave the stash intact and list conflict paths here. Never drop a conflicted snapshot.
+
 ## Baseline reference
 Captured: `test/baseline.md`  | NOT CAPTURED — regression claims will be limited

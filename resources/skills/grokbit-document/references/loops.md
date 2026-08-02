@@ -46,9 +46,30 @@ every quickstart this skill produces, not just this one.
 `verify_doc.py --execute` is what actually runs the commands; without
 `--execute` they are only listed, which the script itself reports as a
 distinct, non-passing result — see hard rule 3 and `scripts/verify_doc.py`'s
-own `--help`. A cap-3 pass counts only if commands were actually executed.
-Listing them three times and calling it verification is not this loop; it is
-the exact failure mode this loop exists to prevent.
+own `--help`.
+
+**Command classification (required before `--execute`):** for every fenced
+command the type expects to run, classify it as:
+
+- **probe** — read-only inspect (`ls`, `node -c`, version checks, dry-runs)
+- **mutating** — install, migrate, deploy, rollback, delete, or anything that
+  changes data, services, or the tree
+- **long-running** — servers, watchers (do not hang D1 on these)
+
+Only **probe** commands may be executed automatically under `--execute`.
+**Mutating** and **long-running** commands must be marked
+`<!-- doc-verify:skip -->` (or equivalent skip fence) **or** listed in the
+verification report as `NOT EXECUTED — mutating/long-running; human must run`
+with the exact command text. A cap-3 pass counts when every **probe** command
+was executed and every other command is either skip-marked or explicitly
+reported as not executed for that reason. Listing every command three times
+without classifying or running probes is still not this loop.
+
+**CI / container env does not waive safety.** Env vars like `CI` or
+`CODESPACES` may mean a disposable filesystem, but they often still hold
+deploy tokens and network reach to real databases. Never treat CI as license
+to run mutating documented commands without the same classification and
+skip rules.
 
 ---
 

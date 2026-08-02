@@ -81,6 +81,8 @@
     // unlock, modeChanged reopening the popover, a Refresh); cleared only on
     // a session switch (resetForNewSession).
     capabilitiesExpanded: {},
+    // Pending in-panel how-it-works expand (name + DOM node to fill).
+    pendingCapabilityDetail: null,
     // grok.showCapabilities — arrives on every initialState (see the handler);
     // true is the config default, kept here so the request-from-initialState
     // gate has a sane value even before the first initialState lands.
@@ -746,6 +748,7 @@
     if (item.control === "switch") return buildCapabilityToggleRow(item);
     const row = document.createElement("div");
     row.className = "capability-row" + (item.inert ? " inert" : "") + (locked ? " locked" : "");
+    if (item.kind) row.dataset.kind = item.kind;
     if (item.description || item.source) {
       row.title = [item.description, item.source].filter(Boolean).join("\n");
     }
@@ -790,6 +793,59 @@
       hint.className = "capability-row-hint";
       hint.textContent = item.hint;
       row.appendChild(hint);
+    }
+    // Data-driven detail (hasDetail) — not a kind-string branch. Host stamps
+    // suite how-it-works guides; renderer only cares about the flag.
+    let detailBody = null;
+    if (item.hasDetail) {
+      const detailWrap = document.createElement("div");
+      detailWrap.className = "capability-row-detail-wrap";
+      const detailBtn = document.createElement("button");
+      detailBtn.type = "button";
+      detailBtn.className = "capability-row-details";
+      detailBtn.textContent = "Details";
+      detailBtn.title = "How this workflow works (roles, loops, caps)";
+      detailBody = document.createElement("div");
+      detailBody.className = "capability-row-detail-body";
+      detailBody.hidden = true;
+      if (!locked) {
+        detailBtn.onclick = (e) => {
+          e.stopPropagation();
+          const open = detailBody.hidden;
+          if (open) {
+            detailBody.hidden = false;
+            detailBody.textContent = "Loading…";
+            detailBtn.setAttribute("aria-expanded", "true");
+            vscode.postMessage({ type: "getCapabilityDetail", name: item.name });
+            // Cache pending target so capabilityDetail handler can fill this node.
+            state.pendingCapabilityDetail = { name: item.name, body: detailBody, path: item.detailPath };
+          } else {
+            detailBody.hidden = true;
+            detailBody.textContent = "";
+            detailBtn.setAttribute("aria-expanded", "false");
+            if (state.pendingCapabilityDetail && state.pendingCapabilityDetail.name === item.name) {
+              state.pendingCapabilityDetail = null;
+            }
+          }
+        };
+      } else {
+        detailBtn.disabled = true;
+      }
+      detailWrap.appendChild(detailBtn);
+      if (item.detailPath && !locked) {
+        const openEd = document.createElement("button");
+        openEd.type = "button";
+        openEd.className = "capability-row-details secondary";
+        openEd.textContent = "Open in editor";
+        openEd.title = "Open the full how-it-works guide as a file";
+        openEd.onclick = (e) => {
+          e.stopPropagation();
+          vscode.postMessage({ type: "openFile", path: item.detailPath });
+        };
+        detailWrap.appendChild(openEd);
+      }
+      detailWrap.appendChild(detailBody);
+      row.appendChild(detailWrap);
     }
     if (locked) {
       // No click handler at all — same treatment as .inert. A hover
@@ -2681,6 +2737,7 @@
     state.toolItemsByToolCallId.clear();
     state.toolFailuresById.clear();
     state.capabilitiesExpanded = {}; // new session — the old expansion choice doesn't belong to it
+    state.pendingCapabilityDetail = null;
     clearChangedFiles(); // switching sessions — the strip belongs to the old view
     state.activeAgentEl = null;
     state.activeAgentRaw = "";
@@ -5362,6 +5419,30 @@
         renderCapabilitiesPanel();
         if (capabilitiesPopover && !capabilitiesPopover.hidden) renderCapabilitiesPopoverBody();
         break;
+      case "capabilityDetail": {
+        // Lazy how-it-works body for Actions Details (postTo only, not buffered).
+        const pending = state.pendingCapabilityDetail;
+        const body = pending && pending.name === msg.name ? pending.body : null;
+        if (!body) break;
+        body.hidden = false;
+        body.textContent = "";
+        if (msg.error) {
+          body.textContent = msg.error === "not-a-suite-skill"
+            ? "No guide for this item."
+            : msg.error === "too-large"
+              ? "Guide is too large to show here — use Open in editor."
+              : "Could not load the guide.";
+          break;
+        }
+        const md = typeof msg.markdown === "string" ? msg.markdown : "";
+        // Reuse the chat markdown pipeline (escapes untrusted markup in inline()).
+        try {
+          body.innerHTML = renderMarkdown(md);
+        } catch {
+          body.textContent = md;
+        }
+        break;
+      }
       case "workspaceFileHits":
         // @-mention autocomplete results (Phase B). Ignore stale replies.
         if (state.atQuery == null) break;

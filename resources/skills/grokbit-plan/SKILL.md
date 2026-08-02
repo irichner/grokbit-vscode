@@ -1,6 +1,6 @@
 ---
 name: grokbit-plan
-description: Produce a verified, grounded implementation plan before any code is written. Runs a four-role pipeline (Business Analyst, Systems Analyst, Solutions Architect, Plan Reviewer) with bounded correction loops, and writes durable artifacts to .grokbit/plans/. Use this skill whenever the user asks to build, add, implement, refactor, migrate, integrate, or fix anything non-trivial — and especially when they describe a feature in vague terms, say "let's build X", ask "how should I approach X", or start work in an unfamiliar codebase. Use it even when the user did not say the word "plan". Do NOT use it for single-line edits, typo fixes, or questions that are purely informational.
+description: Work out a clear step-by-step plan you can approve before any code is changed.
 ---
 
 # Grokbit — Plan
@@ -37,6 +37,15 @@ If the conversation just ran **`grokbit-explore`**, treat its chat map as a **hi
 
 If `.grokbit/plans/<slug>/02-survey.md` already exists, this slug is not new — `grokbit-implement` handed it back after hitting its 3-deviation cap (Loop I5) and you are re-running from Survey on corrected ground. Reuse the same slug directory; do not mint a new one, or the paper trail of what is already committed gets orphaned. Before Survey overwrites anything, archive the current `02-survey.md` and `03-design.md` into `replan-1/` (increment the number on a second replan) — see `grokbit-implement/references/loops.md` § Loop I5 for the full replan contract, including why `plan.md`'s completed task IDs must survive unchanged.
 
+**Replan inputs (mandatory when this path fires).** Before Survey/Design run again, every role that rebuilds ground truth must read:
+
+- `implement/deviations.md` — what contradicted the old survey (the reason you are here)
+- `implement/progress.md` — which task IDs are already `done` / `blocked` (completed work must stay valid)
+- the current `plan.md` — preserve completed task IDs and ordering of done work; rebuild only the unfinished tail and any design that those deviations invalidate
+- the archived prior survey/design under `replan-N/` — so the new survey does not re-assert the same wrong claims
+
+Do not treat “an existing `02-survey.md`” alone as proof of Loop I5; if `implement/deviations.md` has no cap-hit boundary and there is no hand-back context, ask once whether this is a replan or a fresh plan on a reused slug name.
+
 Then detect host capability, because it changes how you run every subsequent step:
 
 - **Subagents available** (Claude Code `Task`, Grok Build subagent dispatch) → run each role in its own subagent with a fresh context window. This is strongly preferred: the Reviewer's value depends on it not having watched the Architect write the design.
@@ -46,7 +55,11 @@ Then detect host capability, because it changes how you run every subsequent ste
 
 Convert the request into testable done-criteria.
 
+**Proportionality.** Not every request needs the full six-artifact ceremony. If the change is clearly a typo, one-liner, comment, or pure docs tweak with no behavior risk, say so in `01-intent.md`, produce a **short plan** (intent + 1–2 tasks in `plan.md`, survey/design may be a few cited bullets rather than full multi-option design), and still get human approval before implement. If the blast radius is non-trivial (behavior, schema, auth, multi-file), run the full pipeline. When unsure, use the full pipeline.
+
 Ask **at most three questions, in one batch, once.** This cap is load-bearing. The audience is vibe coders; an interrogation loop is the fastest way to get the skill disabled. Ask only questions where a different answer produces a materially different plan. If you can infer it from the repo, infer it — an inferred answer written down as an assumption is better than a question asked.
+
+**Subagent mode and questions.** If Intake runs in a subagent, it cannot talk to the user directly. The session Orchestrator (the skill host) must relay the question batch to the user, collect answers, write them into the plan directory (e.g. a short `intake-answers.md` or into `01-intent.md` Assumptions), and only then continue Survey. Never invent answers to skip the relay.
 
 Bad question: "What styling approach would you like?" (inferable from the repo)
 Good question: "When a payment fails mid-checkout, should the cart be preserved or cleared?" (changes the data model, unknowable from the repo)
@@ -105,7 +118,13 @@ Present to the human: the chosen approach in three sentences, the task list with
 
 State the disposition table explicitly at the gate — what gets replaced, deprecated, kept in parallel, or left alone. This is the part a human is best placed to overrule, because it depends on plans and obligations that are nowhere in the repo.
 
-**Stop here.** Do not begin implementing. Wait for explicit approval — "go", "approved", "start". If the human edits `plan.md` directly, re-read it before proceeding; their edit is authoritative and overrides anything you concluded.
+**Stop here.** Do not begin implementing. Wait for the human’s verdict in the next message (or plan-review UI):
+
+- **Approved** (“go”, “approved”, “start”, or `[Plan approved]`) → hand off to baseline/`grokbit-implement` as the pipeline describes. Do not start coding inside Plan.
+- **Rejected / changes requested** (`[Plan rejected]` or prose that asks for revisions) → stay in Plan; revise `03-design.md` / `plan.md` (and re-enter Loop 3/4 as needed) using their comment as the brief. Do not implement.
+- **Cancelled** (`[Plan cancelled]`) → leave Plan without implementing; answer any follow-up comment normally.
+
+If the human edits `plan.md` directly, re-read it before any next step; their edit is authoritative. **Edits they make are not automatically re-validated** — call out that fact once, offer a quick Loop 4 pass over the edited tasks, and run it if they accept (or if the edit touches `verify:` / files / done-criteria).
 
 ## Output contract
 

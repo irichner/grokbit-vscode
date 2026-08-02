@@ -838,10 +838,16 @@
         const sourceBadge = typeof raw.sourceBadge === "string" && raw.sourceBadge.trim()
           ? raw.sourceBadge.trim()
           : undefined;
+        const hasDetail = !!raw.hasDetail;
+        const detailPath = typeof raw.detailPath === "string" && raw.detailPath
+          ? raw.detailPath
+          : undefined;
         return {
           kind: raw.kind,
           name: raw.name || "",
-          label: raw.name || "",
+          label: raw.kind === "grokbit" && (raw.name || "").startsWith("grokbit-")
+            ? (raw.name.slice(8).charAt(0).toUpperCase() + raw.name.slice(9))
+            : (raw.name || ""),
           invokeLabel: invoke ? invoke.trim() : undefined,
           description: truncateCapabilityDescription(raw.description),
           hint,
@@ -852,6 +858,8 @@
           workspaceSource: source.startsWith("Project") || !!sourceBadge,
           action,
           inert: action === "inert",
+          hasDetail,
+          detailPath: hasDetail ? detailPath : undefined,
         };
       });
       const total = typeof g.total === "number" && g.total >= items.length ? g.total : items.length;

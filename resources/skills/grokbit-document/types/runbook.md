@@ -35,6 +35,8 @@ verify: [commands_run, paths_resolve]
 
 Write for someone tired, stressed, and unfamiliar. That reader shapes every formatting decision: action first, explanation second or omitted, no prose the reader must parse before acting.
 
+**D1 execution rule for this type:** under Loop D1, only probe/read-only fenced commands may run with `--execute`. Rollback, migration, and deploy commands are mutating — mark them `<!-- doc-verify:skip -->` or report them as `NOT EXECUTED — mutating` (see `references/loops.md` § Loop D1). Never treat CI as license to run rollback against a real database.
+
 Organise by symptom, not by component. The reader knows what they are seeing — a 500, a stuck queue, a failed deploy. They do not know which component owns it, and asking them to work that out first is the failure of most runbooks.
 
 Every rollback command comes from a plan task's `rollback` field, where it was written by something that knew what the task changed. Those are more trustworthy than a rollback improvised under pressure.

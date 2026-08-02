@@ -78,7 +78,7 @@ Pass 3 usually finds nothing new; if it does, that is a signal the change is lar
 |---|---|
 | **Trigger** | A task list exists |
 | **Runs** | Solutions Architect, then Plan Reviewer for one pass once the checklist below is clean |
-| **Cap** | 3 passes (the Architect's checklist); the Reviewer's plan-level pass is a single round, not a capped loop of its own |
+| **Cap** | Architect checklist: up to **3** rewrite passes. Reviewer's plan-level pass: **exactly one** round per clean checklist (if it raises a `BLOCKER`, the Architect fixes and the Reviewer may take **one** more single pass — not an open-ended loop). Loop 3's 3-round design review is separate and does not share this budget. |
 
 **Body:** For each task, check every item below:
 

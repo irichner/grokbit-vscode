@@ -237,7 +237,7 @@ def check_paths(text: str, repo: Path) -> list[Finding]:
         seen.add(p)
         line = text[: m.start()].count("\n") + 1
         if not (repo / p.lstrip("/")).exists():
-            out.append(Finding("path", "MAJOR", f"path does not resolve: {p}", line))
+            out.append(Finding("path", "BLOCKER", f"path does not resolve: {p}", line))
     return out
 
 

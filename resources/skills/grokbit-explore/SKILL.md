@@ -1,6 +1,6 @@
 ---
 name: grokbit-explore
-description: Map relevant code before you change anything — a compact, cited orientation in chat (paths, contracts, unknowns). Use when the user asks to explore, orient, map, or understand a codebase or feature area, or before planning a non-trivial change. Do NOT use it to implement, edit product source, or write a plan — hand off to grokbit-plan for that.
+description: Look around your project and explain what matters — without changing any files.
 ---
 
 # Grokbit — Explore
@@ -20,11 +20,12 @@ Explore is optional in the sense that a user who already knows the area can skip
 
 ## Hard rules
 
-1. **Read-only on product source.** Do not edit application source, tests, configs, or package manifests as part of this skill. Do not implement features.
+1. **Read-only — files and machine state.** Do not edit application source, tests, configs, or package manifests. Do not implement features. Also do **not** run state-mutating commands: no installs, builds that write artifacts, test runs that update snapshots, migrations, formatters that rewrite files, or anything else that changes the working tree or external services. Prefer host plan mode when available. Read, grep, glob, list, and non-mutating inspect commands only.
 2. **Cite or flag.** Every claim about the repo is a `path:line` citation from a file you opened this session, or explicitly marked unknown. No plausible invention.
 3. **Chat map only.** Do **not** write plan artifacts under `.grokbit/plans/**`. Do **not** produce `01-intent.md`, `02-survey.md`, `plan.md`, or implement/test outputs. Do not require durable digests under `.grokbit/context/` for success.
 4. **Do not plan.** No approach trade-offs, no task lists, no “implement next” diffs. If the user wants a change, invite `/grokbit-plan` after the map.
 5. **Loops terminate.** Cap breadth; disclose sampling. An incomplete honest map beats a sprawling confident one.
+6. **Secrets stay out of the map.** If you open a credential-shaped file (`.env*`, keys, tokens), cite the **path only** — never paste values into chat.
 
 ## Pipeline
 
@@ -84,7 +85,7 @@ If Plan runs after Explore in the same conversation, Plan may use the chat as a 
 ## Failure modes to watch for
 
 - **Fake Survey.** Writing `02-survey.md` or claiming entity resolution is “done.” That is Plan’s job.
-- **Silent implementation.** “While I was here I fixed…” — revert; restate read-only.
+- **Silent implementation.** “While I was here I fixed…” — stop. Restore **only** the lines you changed, from content you already read earlier this session (or show the user the diff and let them decide). Never run destructive git commands (`git checkout --`, `git reset --hard`, `git clean`) to “undo” Explore mistakes — those wipe the user’s uncommitted work in the same files. Restate read-only and continue mapping.
 - **Uncited map.** Pretty architecture with no `path:line` is worse than “unknown.”
 - **Unbounded crawl.** Disclose caps; stop.
 - **Confusing with the built-in `explore` agent type.** This skill is the portable suite skill `grokbit-explore`; CLI agent names may differ by host.

@@ -4,6 +4,8 @@
 
 ### Changed
 
+- **Marketplace overview highlights all capabilities.** README leads with an always-visible capabilities matrix (sessions, dual agents, safety, Grokbit Actions, context/files, activity, awareness, models/media/voice, rich chat & power tools) instead of burying features only in collapsed details. Settings table gains Claude / Actions / launcher knobs. Short package description expanded to match. ([README.md](README.md), [package.json](package.json))
+- **Marketplace description rewritten for accuracy.** Short listing covers Claude Code, plan-first + inline diffs, file attach, Grokbit Actions, media, and voice. Keywords add `claude` / `claude-code` / `plan-mode`. ([package.json](package.json), [README.md](README.md))
 - **Grokbit Actions shows only the bundled workflow, as readable tiles.** The welcome canvas and top-bar Actions popover no longer list Skills / Agents / Commands — only `grokbit-plan` → `implement` → `test` → `document`, as bordered tiles with multi-line, sentence-complete descriptions (host cap 280, webview sentence-aware trim at 260). Host discovery is unchanged; a pure `visibleCapabilityGroups` allowlist filters at both mounts. Empty states and the button tooltip name workflows, not skills. ([media/webview-helpers.js](media/webview-helpers.js), [media/chat.js](media/chat.js), [media/chat.css](media/chat.css), [src/capabilities.ts](src/capabilities.ts), [src/sidebar.ts](src/sidebar.ts))
 
 ## 2026.7.1 — 2026-07-31

@@ -6,9 +6,9 @@
 >
 > Based on [phuryn/grok-build-vscode](https://github.com/phuryn/grok-build-vscode) by Paweł Huryn, MIT License.
 
-**Grokbit** is the friendly editor UI for Grok Build — ask questions, plan changes safely, review edits before they land, generate images & video, and dictate by voice. **Each chat is its own editor tab.** You do not need to use a terminal day to day.
+**Grokbit** is the friendly editor UI for **Grok Build** and optional **Claude Code**. Chat in native editor tabs, plan safely, review every edit before it lands, run a built-in explore → plan → implement → test → document workflow, attach files, generate images & video, and dictate by voice — without living in the terminal.
 
-Install the free `grok` CLI once, sign in (subscription or API key), and Grokbit is the GUI on top.
+Install the free `grok` CLI once, sign in (subscription or API key), and Grokbit is the GUI on top. Claude Code tabs use your existing `claude` login when that backend is enabled.
 
 **Install free from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=grokbit.grokbit) or [Open VSX Registry](https://open-vsx.org/extension/grokbit/grokbit)**
 
@@ -16,11 +16,118 @@ Install the free `grok` CLI once, sign in (subscription or API key), and Grokbit
 
 ---
 
+## Capabilities overview
+
+Everything Grokbit ships, at a glance. Details and screenshots follow below.
+
+### Sessions & layout
+
+| Capability | What you get |
+|---|---|
+| **Native session tabs** | Each chat is its own editor tab — keep several open and switch like any document. Full-width canvas by default (no narrow ribbon). |
+| **Activity-bar launcher** | Recent sessions (default last 30 days, scrollable & paged), status dots, rename/delete, split **New** for Grok or Claude. |
+| **Session setup card** | On a new tab: pick **Agent**, **Model**, **Thinking** depth, and **Mode** before you type. Changes on an empty tab are free. |
+| **Quick-settings popover** | Same four controls mid-session from the model chip in the composer toolbar. |
+| **Resumable history** | Resume, rename, delete, search, paginated load (100 at a time), clear-all (open tabs protected). Merged Grok + Claude list with backend badges. |
+| **Tab restore** | After a VS Code reload, tabs come back; the visible tab reconnects first. |
+| **Empty-session cleanup** | Abandoned primer-only “New session” tabs don’t clutter history (Grok). |
+
+### Two agents
+
+| Capability | What you get |
+|---|---|
+| **Grok Build** (default) | xAI’s coding agent via the Grok CLI — models, thinking depth, plan primer, `/imagine`, and more. |
+| **Claude Code** (optional) | Per-tab backend switch; launcher **New Claude session**; own auth/onboarding; history resumes on the correct backend. |
+| **Per-backend logout** | Log out of Grok or Claude without signing out of the other. |
+
+### Safety & control
+
+| Capability | What you get |
+|---|---|
+| **Agent mode** | Help right away; may ask before edits or commands. |
+| **Plan first** | Draft a plan before anything changes; client-side gate blocks workspace writes and non-read-only commands until you approve. |
+| **Auto accept** | Apply edits without per-change prompts when you trust the session. |
+| **Permission cards + inline diffs** | Green/red diff *inside* the chat card — Allow this change / Allow always / Don’t allow. No focus-stealing diff editor tab. |
+| **Path/command-bound grants** | “Allow always” stays scoped to the path or command when the payload carries one. |
+| **Inline questions** | Multiple-choice cards from the agent; collapse to a green ✓ after you answer; replay on resume. |
+| **Remembered mode** | Last non-plan mode (Agent / Auto accept) is remembered for new sessions; Plan first is always deliberate. |
+
+### Grokbit Actions (bundled workflow)
+
+Ships with the extension and works on **both** Grok and Claude. Click a tile to seed the composer — nothing sends until you press Enter.
+
+| Skill | Purpose |
+|---|---|
+| **`/grokbit-explore`** | Map relevant code first — compact, cited orientation before changes. |
+| **`/grokbit-plan`** | Grounded, reviewed plan — claims from the repo, tasks with proof commands. |
+| **`/grokbit-implement`** | One task at a time; each check passes or is reverted — no half-finished state. |
+| **`/grokbit-test`** | Baseline behavior before the change, then prove what did and didn’t change. |
+| **`/grokbit-document`** | Write the doc, then run every command in it. |
+
+How they work in depth: [docs/grokbit-workflows.md](docs/grokbit-workflows.md) (also **Details** on each tile in-app). Skills install into `~/.grok/skills` and `~/.claude/skills` on activation (`grok.skills.provision`). Set **`grok.actionsScope`** to `all` to also list your discovered skills, agents, and CLI commands in Actions; default is workflow-only. Slash **`/` autocomplete** always has CLI commands.
+
+### Context & files
+
+| Capability | What you get |
+|---|---|
+| **File chips** | Drag from Explorer, **+** button, right-click **Grokbit: Send File**, or **Alt+G**. |
+| **Active-editor context** | Optional auto-include of the open file (`grok.includeActiveFileByDefault`). Explicit attachments rank stronger. |
+| **Shift-drag embed** | Embed file contents as a fenced block instead of a path reference. |
+| **Docs browser** | Top-bar **Docs** — browse business documents in the workspace; open, reveal, attach, or seed into the composer. |
+| **Document cards** | When a turn produces a doc path — Copy / Open / Reveal. Generation via CLI skills (`/docx`, `/pptx`, `/xlsx`, …) or plain language. |
+
+### While the agent works
+
+| Capability | What you get |
+|---|---|
+| **Activity carousel** | One compact strip per turn (current action, step counter, ‹ › peek); collapses to a plain-language summary (e.g. *Explored 5 items, edited 2 files · 9 steps*). Off = classic stream (`grok.compactActivity`). |
+| **Tool rows** | Category icons, expandable command output + copy, failed tools with a short reason, view-diff on past edits. |
+| **Files-changed strip** | Scannable `auth.ts +12 −3` chips above the composer for this turn’s applied edits. |
+| **Thinking control** | Full traces off by default; *Thinking…* stand-in; toggle live (`grok.showThinking`). Continuous progress affordance mid-turn. |
+| **Streaming answers** | Agent text streams live with markdown, code, tables. |
+
+### Awareness & multi-session
+
+| Capability | What you get |
+|---|---|
+| **Status dots** | Blue working · yellow needs you · green/red unread done · gray at rest — on launcher and history rows. |
+| **Status-bar HUD** | Always-visible model · thinking · mode · context % · working spinner · “needs you” count. Click to jump to chat. |
+| **Background notifications** | Optional passive “Go to session” when a hidden tab needs you (`grok.notifyWhenWaiting` — never steals focus). |
+
+### Models, media & voice
+
+| Capability | What you get |
+|---|---|
+| **Model picker** | Choose the model from setup card, model chip, gear, or command palette. Cross-agent switches restart cleanly. |
+| **Thinking depth** | Per-tab reasoning effort (none → xhigh) for Grok; omitted cleanly for Claude (no effort axis). |
+| **Image & video** | `/imagine` and `/imagine-video` render **inline** (subscription Grok features); copy path / open in VS Code; resume-safe. Reference-photo edit when the CLI offers it. |
+| **Voice control** | Mic in the composer → live STT; say **“grok send”** (configurable) to submit. Needs `ffmpeg` + a separate xAI API key (pay-as-you-go). |
+
+### Rich chat & power tools
+
+| Capability | What you get |
+|---|---|
+| **Markdown** | Full formatting — code, lists, tables. |
+| **LaTeX** | MathJax offline; hover to copy or export PNG/SVG. |
+| **Mermaid** | Inline diagrams (theme-aware); hover to copy or export. |
+| **Slash commands** | Type `/` for CLI autocomplete (`/compact`, `/imagine`, your skills, …). |
+| **MCP tools** | Configure in the CLI config; gear links to config; new session to reload. |
+| **Context donut** | How full the conversation window is; `/compact` or new session to free room. |
+| **Chat zoom** | Zoom only the chat panel 60–300% (`grok.chatFontScale`). |
+| **Keyboard shortcuts** | `Ctrl/Cmd+;` open, `Alt+G` attach file, Enter/Ctrl+Enter send — listed in gear → Keyboard shortcuts. |
+| **Sign out** | Per-backend logout; history stays on disk. |
+| **Telemetry** | Anonymous `session_start` only (install id + mode/model/effort) — never content, code, or paths. Opt out anytime. |
+
+![Multiple sessions in the launcher with status dots, each session its own editor tab](docs/screenshots/NewSession.png)
+
+---
+
 ## Who this is for
 
 - **Prefer a GUI over the terminal** — chat, approve changes, and manage history without memorizing CLI commands.
 - **Want a safety net** — Plan first mode, permission cards, and inline diffs so you always see what will change.
-- **Work in VS Code / Cursor / similar** — Grok sits next to your files, not in a separate app.
+- **Work in VS Code / Cursor / similar** — the agent sits next to your files, not in a separate app.
+- **Use Grok and/or Claude Code** — one extension, per-tab choice of agent.
 
 Engineers can still use the CLI; this extension does not remove power features — it wraps them in plain language.
 
@@ -30,7 +137,8 @@ Engineers can still use the CLI; this extension does not remove power features �
 
 - **VS Code** 1.94+ (or a compatible editor — Cursor, Windsurf, VSCodium).
 - **The Grok Build CLI** (`grok`) on macOS, Linux, or Windows. A native Windows build is supported — no WSL required (WSL2 + Remote-WSL still works if you prefer it).
-- **A login:** either a **SuperGrok or X Premium+** subscription (`grok /login`) or an xAI API key. Subscription unlocks **Grok Build**; an API key can also unlock additional models and **grok-imagine**. (Grok's free tier does **not** include the CLI agent.)
+- **A login for Grok:** either a **SuperGrok or X Premium+** subscription (`grok /login`) or an xAI API key. Subscription unlocks **Grok Build**; an API key can also unlock additional models and **grok-imagine**. (Grok's free tier does **not** include the CLI agent.)
+- **For Claude Code tabs (optional):** Claude Code / `claude` CLI signed in, plus the ACP adapter (onboarding can **Install** it for you).
 - **For voice control only** (optional): [`ffmpeg`](https://ffmpeg.org) on `PATH`, and a *separate* xAI API key for Speech-to-Text (pay-as-you-go — your CLI login does **not** cover it). See [Voice control](#voice-control).
 
 ---
@@ -86,29 +194,29 @@ Reload VS Code (**Ctrl+Shift+P → Developer: Reload Window**) and click the Gro
 
 ## Quick start
 
-1. **Open** Grokbit (activity bar icon, or `Ctrl/Cmd+;`). The **launcher** lists sessions; **New session** opens a chat tab.
-2. **Type your first message.** The welcome screen's **Session setup** card lets you pick agent, model, thinking depth, and mode before you start — changing them on a fresh tab is free.
-3. **Press Enter** to send. Grok streams an answer. While it works you may see *Thinking…* (turn on full thinking details in the gear menu if you want them).
-4. **Approve actions.** When Grok wants to edit a file or run a command, a **permission card** appears — review the **inline diff**, then *Allow this change*, *Allow always*, or *Don't allow*.
+1. **Open** Grokbit (activity bar icon, or `Ctrl/Cmd+;`). The **launcher** lists sessions; **New session** opens a chat tab (split button for Grok vs Claude).
+2. **Type your first message.** The welcome screen’s **Session setup** card lets you pick agent, model, thinking depth, and mode before you start — changing them on a fresh tab is free.
+3. **Press Enter** to send. The agent streams an answer. While it works you may see *Thinking…* (turn on full thinking details in the gear menu if you want them).
+4. **Approve actions.** When the agent wants to edit a file or run a command, a **permission card** appears — review the **inline diff**, then *Allow this change*, *Allow always*, or *Don't allow*.
 5. **Choose a mode** (Agent / Plan first / Auto accept), **model**, and **thinking depth** from the bottom toolbar and gear menu.
 6. **Come back later** — history and launcher list past chats for this project so you can resume anytime.
 
 ---
 
-## Features & capabilities
+## Features in depth
 
-_Click any feature to expand._
+_Expand any section for detail and screenshots._
 
 <details>
 <summary><strong>Native session tabs + activity-bar launcher</strong></summary>
 
-Each chat lives in its **own editor tab** (like a document). The left activity bar is a **launcher**: recent sessions (up to 7), status dots, rename/delete, and **New session**. Full history and search live in the chat tab’s history popover. You can keep several chats open and switch between them like any other tabs.
+Each chat lives in its **own editor tab** (like a document). The left activity bar is a **launcher**: a scrollable Recent list (default last 30 days via `grok.launcherHistoryDays`), status dots, rename/delete, and **New session** (Grok or Claude). Full history and search live in the chat tab’s history popover. You can keep several chats open and switch between them like any other tabs.
 
 A tab uses the **whole editor canvas** by default — no centred column, no width setting. Cards and capability rows flow into more columns as the tab gets wider; the transcript, composer, and code blocks are always full-bleed. The one exception is agent reply text, which keeps a left-aligned ~95-character reading measure so long paragraphs stay legible without narrowing anything else.
 
 Closing a tab stops that chat’s live process but keeps history on disk (unless it was an empty “new session” you never used). After a VS Code reload, tabs can restore; the visible tab reconnects first.
 
-The small line above **New session** reads e.g. `v3.0.4 · 1.0B tokens`. That is **not your usage** — it is what building Grokbit itself has cost, aggregated across every maintainer and every session, baked into the build and identical for everyone (hover for the exact number and the date it was measured). Your own session's context lives in the composer donut and the status-bar percentage.
+The small line above **New session** reads e.g. `v2026.8.9 · 1.2B tokens`. That is **not your usage** — it is what building Grokbit itself has cost, aggregated across every maintainer and every session, baked into the build and identical for everyone (hover for the exact number and the date it was measured). Your own session's context lives in the composer donut and the status-bar percentage.
 
 ![Multiple sessions in the launcher with status dots, each session its own editor tab](docs/screenshots/NewSession.png)
 
@@ -117,43 +225,33 @@ The small line above **New session** reads e.g. `v3.0.4 · 1.0B tokens`. That is
 <details>
 <summary><strong>Session setup card</strong> — pick agent, model, thinking, and mode up front</summary>
 
-A new empty session shows a short value prop and a **Session setup** card: **Agent** (Grok / Claude Code), **Model**, **Thinking** depth, and **Mode** (Agent / Plan first / Auto accept). A brand-new tab has no history, so changing any of them there is free and invisible — nothing to restart, nothing to lose. The same four controls stay available mid-session from the model chip in the composer toolbar.
+A new empty session shows a short value prop and a **Session setup** card: **Agent** (Grok / Claude Code), **Model**, **Thinking** depth, and **Mode** (Agent / Plan first / Auto accept). A brand-new tab has no history, so changing any of them there is free and invisible — nothing to restart, nothing to lose. The same four controls stay available mid-session from the model chip in the composer toolbar. Claude omits the Thinking row (no reasoning-effort axis).
 
 </details>
 
 <details>
-<summary><strong>Grokbit Actions</strong> — a built-in workflow, plus everything your agent can already do</summary>
+<summary><strong>Grokbit Actions</strong> — bundled workflow on both agents</summary>
 
 **Grokbit Actions** is on the welcome canvas of every new session, and any time from the **Grokbit Actions** button in the top bar or "Browse Grokbit Actions…" beside the composer's **+** button.
 
-It leads with the **Grokbit workflow** — five skills that ship with the extension and work identically on Grok and Claude Code:
+By default it shows the **bundled Grokbit workflow** as bordered tiles — five skills that ship with the extension and work identically on Grok and Claude Code (see the [capabilities table](#grokbit-actions-bundled-workflow) above).
 
-| | |
-|---|---|
-| `/grokbit-explore` | Map relevant code first — a compact, cited orientation in chat before you change anything. |
-| `/grokbit-plan` | Turn a vague request into a grounded, reviewed plan — every claim read from the repo, every task with a command that proves it worked. |
-| `/grokbit-implement` | Work the plan one task at a time. Each task passes its check or is reverted; there is no half-finished state. |
-| `/grokbit-test` | Record how things behaved *before* the change, then prove what did and didn't change afterward. |
-| `/grokbit-document` | Write the README, changelog, runbook or spec — then actually run every command in it. |
+**How the workflows work (full technical):** roles, loops, caps, artifacts, and human gates for each step — [docs/grokbit-workflows.md](docs/grokbit-workflows.md). In the extension, open a workflow tile’s **Details** control for the same guide in-panel.
 
-Below that sits everything the selected CLI already had — your own **skills**, **agents/subagents**, and its built-in **slash commands** (including model-only skills the slash menu hides). Every row leads with a plain name and description, not a slash token; the `/command` form (and an argument hint, when the CLI has one) shows beside it as a small chip, so you learn the shortcut by seeing it. Every row is a real, discovered capability, never an invented prompt suggestion:
+Click a tile to seed the composer (e.g. `/grokbit-plan `) — nothing is sent until you press Enter. Your own skills, agents, and the CLI’s slash commands still work via **`/` autocomplete**. Set **`grok.actionsScope`** to `all` if you want Actions itself to list discovered skills, agents, and commands as well as the workflow.
 
-- Click an invocable command or skill to seed the composer (e.g. `/grokbit-plan `) — nothing is sent until you press Enter.
-- Click a non-invocable skill or agent to open its source file.
-- A built-in agent type with no source file (e.g. grok's `general-purpose`/`explore`/`plan`) is informational only.
-
-The workflow skills are installed into `~/.grok/skills` and `~/.claude/skills` when the extension starts, and refreshed when it updates — which is what lets the CLI actually run them. Because that is a per-user install, they also show up in Grok and Claude Code sessions you start outside VS Code. Set **`grok.skills.provision`** to `off` to manage your own skills instead, or **`grok.showCapabilities`** to `false` to hide the browser entirely.
+The workflow skills are installed into `~/.grok/skills` and `~/.claude/skills` when the extension starts, and refreshed when it updates. Because that is a per-user install, they also show up in Grok and Claude Code sessions you start outside VS Code. Set **`grok.skills.provision`** to `off` to manage your own skills instead, or **`grok.showCapabilities`** to `false` to hide Actions entirely.
 
 </details>
 
 <details>
-<summary><strong>Business Studio (3.0)</strong> — tasks + docs browser</summary>
+<summary><strong>Business Studio (3.0)</strong> — docs browser</summary>
 
 Thin-client Studio surfaces (not a separate Office app, not five permanent sidebar tabs):
 
 - **Docs** (chat top bar) — browse a capped list of business documents already in the workspace; open, reveal in the OS, attach as context, or seed a path into the composer.
 
-When a turn produces a document path, a **document card** still offers Copy path / Open / Reveal. Generation still uses Grok CLI skills (`/docx`, `/pptx`, `/xlsx`, …) and ordinary file tools — ask in plain language or use slash skills from autocomplete. This is not a built-in Office suite.
+When a turn produces a document path, a **document card** still offers Copy path / Open / Reveal. Generation still uses CLI skills (`/docx`, `/pptx`, `/xlsx`, …) and ordinary file tools — ask in plain language or use slash skills from autocomplete. This is not a built-in Office suite.
 
 </details>
 
@@ -162,9 +260,9 @@ When a turn produces a document path, a **document card** still offers Copy path
 
 | Mode | In plain English |
 |---|---|
-| **Agent** (default) | Grok can help right away. It **may ask** before editing files or running commands. |
-| **Plan first** | Grok drafts a plan first. **Nothing changes** in your project until you approve the plan. |
-| **Auto accept** | Grok acts **without asking** for permission on each change. Use when you trust the session. |
+| **Agent** (default) | The agent can help right away. It **may ask** before editing files or running commands. |
+| **Plan first** | The agent drafts a plan first. **Nothing changes** in your project until you approve the plan. |
+| **Auto accept** | The agent acts **without asking** for permission on each change. Use when you trust the session. |
 
 Your last non-plan mode (Agent or Auto accept) is remembered for **new** sessions. Plan first is always a deliberate choice for the task at hand.
 
@@ -175,10 +273,10 @@ Your last non-plan mode (Agent or Auto accept) is remembered for **new** session
 <details>
 <summary><strong>Permission cards with inline diff</strong> — see every edit before you approve</summary>
 
-When Grok proposes an edit, the **diff is shown inside the chat card** — green additions, red deletions, long unchanged stretches collapsed. Buttons use plain language:
+When the agent proposes an edit, the **diff is shown inside the chat card** — green additions, red deletions, long unchanged stretches collapsed. Buttons use plain language:
 
 - **Allow this change** — approve once
-- **Allow always** — approve this kind of action for the rest of the session (when the CLI offers it)
+- **Allow always** — approve this kind of action for the rest of the session (when the CLI offers it; path/command-bound when extractable)
 - **Don't allow** — reject
 
 The file is written only **after** you approve. Past edits stay reviewable via **view diff** on the tool row. Diffs never open a separate editor tab (so focus stays on chat).
@@ -186,14 +284,14 @@ The file is written only **after** you approve. Past edits stay reviewable via *
 </details>
 
 <details>
-<summary><strong>Questions from Grok</strong></summary>
+<summary><strong>Questions from the agent</strong></summary>
 
-Sometimes Grok needs a choice from you (multiple options). An **inline question card** appears; pick an option (and Submit if there are several questions). After you answer, the card collapses to a green “✓ your choice” summary. On resume, past answers replay as read-only cards.
+Sometimes the agent needs a choice from you (multiple options). An **inline question card** appears; pick an option (and Submit if there are several questions). After you answer, the card collapses to a green “✓ your choice” summary. On resume, past answers replay as read-only cards.
 
 </details>
 
 <details>
-<summary><strong>File context chips</strong> — point Grok at the right files</summary>
+<summary><strong>File context chips</strong> — point the agent at the right files</summary>
 
 - The **active editor** can be included automatically as context (setting: `grok.includeActiveFileByDefault`).
 - **Drag** files from the Explorer, right-click → **Grokbit: Send File**, press **Alt+G**, or use the **+** button to attach files.
@@ -205,9 +303,9 @@ Sometimes Grok needs a choice from you (multiple options). An **inline question 
 <details>
 <summary><strong>Session history — resume, rename, delete, clear all</strong></summary>
 
-The **clock** icon (and the launcher) lists this project’s sessions, newest first:
+The **clock** icon (and the launcher) lists this project’s sessions, newest first, **merged across Grok and Claude** with a backend badge on each row:
 
-- Click a row to **resume** (conversation, images, plans, and tools replay).
+- Click a row to **resume** (conversation, images, plans, and tools replay on the correct agent).
 - Hover to **rename** or **delete**.
 - **Search** filters by name across your whole history.
 - The list loads **100 at a time** and loads more as you scroll (stays fast with thousands of sessions).
@@ -235,7 +333,7 @@ Unread green/red badges persist across reloads until you open that session.
 <details>
 <summary><strong>Status-bar HUD + optional notifications</strong></summary>
 
-A native **status bar** item (bottom of VS Code) mirrors the active chat: model, thinking depth, mode, context %, working spinner, and a **bell** count when any session needs you. Click it to jump back to chat.
+A native **status bar** item (bottom of VS Code) mirrors the active chat: model, thinking depth, mode, context %, working spinner, and a **bell** count when any session needs you. Click it to jump back to chat. Claude omits the effort segment (no reasoning-effort axis).
 
 Optional setting **`grok.notifyWhenWaiting`** (off by default): a passive notification when a **background** tab needs you — it never steals focus; you choose *Go to session*.
 
@@ -258,16 +356,16 @@ The **microphone** in the composer records speech via [xAI Speech-to-Text](https
 </details>
 
 <details>
-<summary><strong>Tool activity</strong> — what Grok did, in plain language</summary>
+<summary><strong>Tool activity</strong> — what the agent did, in plain language</summary>
 
-While Grok works, each turn's activity rolls into **one compact carousel strip** instead of a scrolling list: the strip shows the current action (*Reading chat.js…*, *Running command…*) with a step counter, and **‹ ›** flips back through earlier steps. When the turn finishes it collapses to a one-line summary — e.g. *Explored 5 items, edited 2 files · 9 steps* — that expands to the full detail (tool rows, step narration, thinking). Commands can show **output**, failed tools turn red with a short reason, and a **files changed** strip above the composer summarizes applied edits this turn. Prefer the classic scrolling stream? Turn off `grok.compactActivity` (gear → **Config & debug → Compact activity view**).
+While the agent works, each turn's activity rolls into **one compact carousel strip** instead of a scrolling list: the strip shows the current action (*Reading chat.js…*, *Running command…*) with a step counter, and **‹ ›** flips back through earlier steps. When the turn finishes it collapses to a one-line summary — e.g. *Explored 5 items, edited 2 files · 9 steps* — that expands to the full detail (tool rows, step narration, thinking). Commands can show **output**, failed tools turn red with a short reason, and a **files changed** strip above the composer summarizes applied edits this turn. Prefer the classic scrolling stream? Turn off `grok.compactActivity` (gear → **Config & debug → Compact activity view**).
 
 </details>
 
 <details>
 <summary><strong>Model & thinking depth</strong></summary>
 
-Pick the **model** and **reasoning effort** (none → xhigh) from the gear menu or the small model chip in the toolbar. Effort is how deeply Grok “thinks” (more depth = more tokens/time). Changing effort restarts the session (optional summarize-and-restart). Some model switches restart when the CLI requires a different agent type — the extension handles that.
+Pick the **model** and **reasoning effort** (none → xhigh) from the gear menu or the small model chip in the toolbar. Effort is how deeply Grok “thinks” (more depth = more tokens/time) and is **per tab**, not global. Changing effort restarts that session only (optional summarize-and-restart). Some model switches restart when the CLI requires a different agent type — the extension handles that. Claude has no effort axis; the UI omits it cleanly.
 
 ![Model and reasoning-effort controls in the gear popover](docs/screenshots/ModelSelection.png)
 
@@ -316,7 +414,7 @@ Extra tools (browser automation, etc.) are configured in the **CLI** (`~/.grok/c
 <details>
 <summary><strong>Sign out</strong></summary>
 
-Gear → **Log out**, or command **Grokbit: Log Out** — runs `grok logout`, closes live session tabs, and shows the signed-out launcher. History stays on disk; sign in again to resume.
+Gear → **Log out of Grok/Claude** (label follows the tab’s backend), or command **Grokbit: Log Out** — signs out that backend only, closes its live session tabs, and shows the signed-out launcher. History stays on disk; sign in again to resume.
 
 </details>
 
@@ -337,18 +435,24 @@ Anonymous usage only: one `session_start` per real conversation with install id 
 | Setting | Default | Notes |
 |---|---|---|
 | `grok.cliPath` | `""` | Path to the `grok` binary. Empty = auto-discover. |
+| `grok.defaultBackend` | `"grok"` | Agent for **new** tabs: `grok` or `claude`. |
 | `grok.defaultModel` | `""` | Model ID for new sessions. Empty = CLI default. |
-| `grok.defaultEffort` | `""` | Thinking depth (`none` / `minimal` / `low` / `medium` / `high` / `xhigh`). Changing it restarts the session. |
+| `grok.defaultEffort` | `""` | Thinking depth seed for new Grok tabs (`none`…`xhigh`). Effort is per-session after that. |
 | `grok.defaultMode` | `""` | Mode for new sessions: Agent or Auto accept (Plan first is never remembered). Empty = Agent. |
 | `grok.includeActiveFileByDefault` | `true` | Auto-add the active editor as a context chip. |
 | `grok.useCtrlEnterToSend` | `false` | When true, Enter inserts a newline and Ctrl/Cmd+Enter sends. |
 | `grok.showThinking` | `false` | Show full thinking details in chat. |
 | `grok.compactActivity` | `true` | Roll each turn's activity into one carousel strip (off = classic scrolling stream). |
-| `grok.showCapabilities` | `true` | Show Grokbit Actions (the bundled workflow plus your own skills, agents, commands) on the welcome canvas and the top-bar button. |
-| `grok.skills.provision` | `auto` | Install the bundled Grokbit workflow skills into `~/.grok/skills` and `~/.claude/skills` so the CLIs can run them. `off` to manage your skills yourself. |
+| `grok.showCapabilities` | `true` | Show Grokbit Actions on the welcome canvas and top-bar button. |
+| `grok.actionsScope` | `"workflow"` | `workflow` = bundled pipeline tiles only; `all` = plus skills, agents, commands. |
+| `grok.skills.provision` | `auto` | Install the bundled Grokbit workflow skills into `~/.grok/skills` and `~/.claude/skills`. `off` to manage yourself. |
+| `grok.launcherHistoryDays` | `30` | Days of history in the launcher Recent list (`0` = unlimited). Chat history popover is always full. |
 | `grok.notifyWhenWaiting` | `false` | Passive notification when a background tab needs you. |
 | `grok.telemetry.enabled` | `true` | Anonymous usage telemetry (see Privacy). |
 | `grok.chatFontScale` | `100` | Chat-only zoom percent (60–300). |
+| `grok.claude.executablePath` | `""` | Optional path to a native `claude` binary. |
+| `grok.claude.adapterPath` | `""` | Path to the Claude ACP adapter entrypoint. Empty = auto / onboarding Install. |
+| `grok.claude.allowInheritedApiKey` | `false` | Allow inherited `ANTHROPIC_API_KEY` (off by default so subscription login wins). |
 | `grok.voiceApiKey` | `""` | xAI API key for voice STT (separate from CLI login). |
 | `grok.ffmpegPath` | `""` | Path to `ffmpeg`. Empty = PATH. |
 | `grok.voiceInputDevice` | `""` | Microphone override. Empty = system default. |
@@ -375,7 +479,7 @@ Anonymous usage only: one `session_start` per real conversation with install id 
 | `Grokbit: Send Selection` | Send the current text selection |
 | `Grokbit: Insert @-Mention` | Attach the active file from the editor |
 | `Grokbit: Show Logs` | Open troubleshooting logs |
-| `Grokbit: Log Out` | Sign out of the Grok CLI |
+| `Grokbit: Log Out` | Sign out of the active tab’s backend |
 
 | Key | Action |
 |---|---|
@@ -393,9 +497,9 @@ Also listed in-app: gear → **Keyboard shortcuts**.
 
 ## How it works
 
-The extension is intentionally **thin**: it talks to `grok agent stdio` and renders the results. Grok owns sessions, memory, tools, and models; Grokbit mediates file access, terminals, permissions, and the UI.
+The extension is intentionally **thin**: it talks to `grok agent stdio` (or the Claude Code ACP adapter) and renders the results. The CLI owns sessions, memory, tools, and models; Grokbit mediates file access, terminals, permissions, and the UI.
 
-**Plan first** is the one place the extension adds a safety layer: it blocks workspace writes and non-read-only commands until you approve a plan, using clear follow-up messages Grok understands.
+**Plan first** is the one place the extension adds a safety layer: it blocks workspace writes and non-read-only commands until you approve a plan, using clear follow-up messages the agent understands.
 
 Full architecture notes: **[docs/architecture.md](docs/architecture.md)**.
 
@@ -423,6 +527,7 @@ npm run package  # → grokbit-<version>.vsix
 - **Diff preview** compares proposed old vs new text (not necessarily disk at preview time); the write happens after you approve.
 - **No worktree UI** yet.
 - **Subagent inspector** is not shipped (the CLI does not expose nested subagent cards over ACP in current builds).
+- **Grokbit Actions** defaults to the bundled workflow only; set `grok.actionsScope` to `all` for skills/agents/commands in that menu (slash autocomplete always has CLI commands).
 - The launcher defaults to the **left** activity bar; move it to the secondary side bar manually if you want it on the right.
 
 ---

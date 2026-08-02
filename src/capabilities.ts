@@ -56,6 +56,14 @@ export interface CapabilityItem {
    *  display in the webview's pure view-model (`capabilityGroupsView`,
    *  `media/webview-helpers.js`), not here. */
   hint?: string;
+  /**
+   * Suite how-it-works guide available (Grokbit workflow tiles). Set by
+   * {@link attachSuiteHowItWorks} in `skill-suite.ts` when the guide file
+   * exists under the extension bundle — never invented for arbitrary skills.
+   */
+  hasDetail?: boolean;
+  /** Absolute path to `references/how-it-works.md` when {@link hasDetail}. */
+  detailPath?: string;
 }
 
 export interface CapabilityGroup {

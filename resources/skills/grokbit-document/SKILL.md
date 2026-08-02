@@ -1,6 +1,6 @@
 ---
 name: grokbit-document
-description: Write or regenerate any software project document — README, ADR, changelog, API reference, user guide, contributing guide, test plan, security posture, runbook, SDD, PDD, BRD. Derives what it can from existing .grokbit plan artifacts and source, asks only for what cannot be derived, then verifies every command, path, and link actually works. Use this skill whenever the user asks for documentation, a doc, a write-up, a spec, a guide, release notes, a changelog, or names any document type; when they click the Documentation icon in the Grokbit extension; or after a plan is approved or a change ships and a document should follow. Do NOT use it for inline code comments or docstrings — write those directly.
+description: Write clear project docs (like a README or guide) from your code and plans.
 ---
 
 # Grokbit — Document
@@ -11,11 +11,9 @@ That single asymmetry shapes everything here. The work is not producing prose �
 
 ## Two entry points
 
-**Extension (primary).** The user clicks the Documentation icon and picks a type. The extension invokes this skill with `{type_id, slug, target_path}`. No trigger ambiguity — the click is the intent.
+**Natural language / slash (primary on both CLIs).** "Write a runbook for the reset flow." Resolve to a type id from `types/`, confirm the match in one line, proceed.
 
-**Natural language (CLI).** "Write a runbook for the reset flow." Resolve to a type id from `types/`, confirm the match in one line, proceed.
-
-Either way the procedure below is identical. **Do not put document logic in the extension.** If section assembly lives in TypeScript, the CLI and the extension produce different documents from the same inputs, and you are maintaining two implementations of one thing.
+**Extension Docs UI (optional).** When the host offers a Documentation picker, it may invoke this skill with `{type_id, slug, target_path}`. Do not require that UI — the skill is complete without it. **Do not put document section-assembly logic in the extension.**
 
 ## Plan-less invocation
 
@@ -118,10 +116,15 @@ derived_from:
   - src/auth/reset.ts@a3f9c21
 authored_sections: [consequences]
 verified: 2026-07-30
+content_hash: <sha256 of body after frontmatter>
 ---
 ```
 
+Use `@WORKING` in `derived_from` when a source is uncommitted (see `references/provenance.md`). Respect the living-docs regenerate rule in `registry.md` before overwriting an existing path.
+
 Also update `.grokbit/context/<type>.md` — a compact digest for the next session's Systems Analyst survey. Same facts, different register: humans want narrative and worked examples, models want precise current statements with paths attached and no throat-clearing. Generate both from one source rather than letting them drift.
+
+**Manifest:** create or update `.grokbit/docs-manifest.json` with at least `{ "docs": [ { "type", "path", "verified", "derived_from", "content_hash" } ] }` for every emit this run. This is the skill's job — do not wait for an extension to invent the file.
 
 ## Staleness
 

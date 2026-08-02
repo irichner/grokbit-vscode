@@ -1,0 +1,907 @@
+{
+  "summary": "Multi-dimensional review of the Grokbit software development agent suite",
+  "logs": [
+    "82 raw findings, 82 after dedup, verifying top 6",
+    "[verify:3:Loop D1 is a deadlock on the primary aud] failed: You've hit your session limit · resets 2:30am (America/Chicago)",
+    "[verify:5:The process requires executing destructi] failed: You've hit your session limit · resets 2:30am (America/Chicago)",
+    "[verify:1:Replan path is structurally un-wired: no] failed: You've hit your session limit · resets 2:30am (America/Chicago)",
+    "[verify:4:Regenerating a previously-emitted doc si] failed: You've hit your session limit · resets 2:30am (America/Chicago)",
+    "[verify:6:Dirty-tree stash snapshot is created, re] failed: You've hit your session limit · resets 2:30am (America/Chicago)",
+    "[verify:2:UNKNOWN findings have no consumer — the] failed: You've hit your session limit · resets 2:30am (America/Chicago)"
+  ],
+  "result": {
+    "teamArchitecture": {
+      "summary": "The suite's team design is genuinely strong on verification discipline — context-isolated adversarial review, files-only role communication, capped loops with per-phase cap semantics, verify-or-revert, and an honest Orchestrator — but it is a QA-and-safety organization, not a complete engineering team. Nobody on the 18-role roster ever reviews code quality (the implement Code Reviewer explicitly disclaims it at grokbit-implement/references/roles.md:78), nobody owns durable tests for NEW behavior, nobody owns branch/PR/CI strategy (commits land directly on the checked-out branch), security review exists only after code is written, and there is no fast path — a typo fix draws the full ~25-invocation pipeline, which for the vibe-coder audience is exactly the retention failure the suite's own 3-question-cap rationale (grokbit-plan/references/loops.md:28) warns about but never applies to itself. The waterfall shape is better-mitigated than most (per-task verify commands, pre-implementation baseline, contract-defined backward edges), but three end-loading problems are unmitigated: security, visual feedback, and regression detection all arrive only at test time, and the test→implement hand-back can only append a task, so a design-shaped finding discovered at test has no route back to plan short of accumulating 3 unrelated deviations.",
+      "roster_assessment": "FULL ROSTER (18 named actors): Explore — Scope Setter (standard), Cartographer (cheap), Citation Checker (standard). Plan — Business Analyst (standard), Systems Analyst (cheap), Solutions Architect (expensive), Plan Reviewer (expensive). Implement — Build Engineer (cheap), Software Engineer (expensive), Supply Chain Security Analyst (cheap), Code Reviewer (expensive), Orchestrator (tier: none — the session itself). Test — QA Automation Engineer (expensive), Frontend QA Engineer (standard), Application Security Engineer (expensive), Release Engineer (standard), Maintenance Engineer (cheap). Document — Information Architect (standard), Documentation Engineer (cheap), Technical Writer (expensive), Docs QA (standard/expensive split by sub-duty).\n\nREAL ROLES (distinct prompt + duty + context, and the distinctness is load-bearing): Systems Analyst / Solutions Architect / Plan Reviewer — the reviewer's isolation (\"Not the architect's reasoning\", grokbit-plan/references/roles.md:91; loops.md:69 \"Context isolation is the whole mechanism\") is world-class design. Software Engineer vs Code Reviewer — distinct duty, fresh-context mandate (grokbit-implement/references/loops.md:69). QA Automation vs AppSec vs Frontend QA — genuinely different disciplines with different tool grants. Docs QA fresh-reader — the strongest isolation in the suite (document only, no repo; grokbit-document/references/roles.md:74) and correctly declared unperformable without it (roles.md:86). The Orchestrator is honestly defined as not-a-role (grokbit-implement/references/roles.md:103-111) with a correct argument for why cross-session counting cannot be delegated — this is excellent, not ceremony. Tier economics are mostly rational and explicitly reasoned (e.g. grokbit-test/references/loops.md:146 warning against cheaping out on judgment-heavy verification).\n\nCEREMONIAL/THIN: (1) Scope Setter (grokbit-explore/references/roles.md:7-13) — its entire duty is \"restate the request, ask at most one question, do not explore.\" That is a prompt preamble wearing a role name; it has no distinct context (it receives the raw request, same as the session) and standard-tier cost for a two-line job. (2) Citation Checker is a strict subset of the Plan Reviewer's Grounding check (grokbit-explore/references/roles.md:27-33 vs grokbit-plan/references/roles.md:97) — defensible across phases, but it is the same duty under different rules (drop-or-flag, cap 2 vs severity-graded findings, cap 3).\n\nOVERLOADED: QA Automation Engineer carries five distinct functions — baseline capture, regression replay, done-criteria coverage, failure triage (Loop T3), and baseline retirement (grokbit-test/references/roles.md:9-40) — plus the suite's most delicate write grants (two narrow test-file exceptions, roles.md:5). Triage in particular is debugging work, a different discipline stuffed into a QA role; in a world-class team root-cause analysis is its own function.\n\nTIER TENSION: Release Engineer is standard-tier (grokbit-test/references/roles.md:96) yet renders the single most consequential judgment in the suite — SHIP / SHIP WITH CAVEATS / DO NOT SHIP folding in every other role's findings (roles.md:114-116). The mechanical part (any REGRESSION/CRITICAL → DO NOT SHIP) is fine at standard tier, but \"SHIP WITH CAVEATS\" and caveat operationalization is judgment work assigned below the tier the suite's own loops.md:146 says judgment requires.\n\nSAME DUTY, TWO ROLES, DIFFERENT RULES: (a) Intake questioning — Scope Setter 1 question (explore/loops.md:16-18), Business Analyst 3 questions (plan/loops.md:22), Document gap-fill ask_cap 1-5 (document/SKILL.md:83); an Explore→Plan session can ask 4 questions across what the user experiences as one workflow, and the caps are never reconciled. (b) Secrets scanning — Code Reviewer checks \"Secrets, keys, tokens\" (implement/roles.md:95) with only IN_SCOPE/OUT_OF_SCOPE/INCIDENTAL disposal machinery; AppSec checks the same (test/roles.md:77) with CRITICAL-blocks-release machinery. A secret in an IN_SCOPE hunk fits none of the Code Reviewer's defined dispositions — the checks at implement/roles.md:89-95 have NO defined disposition path when they fire on an in-scope hunk (no severity, no block, no revert trigger). This is the roster's clearest unclear contract. (c) Debris — Code Reviewer flags debug residue/TODO per task pre-commit (implement/roles.md:94); Maintenance Engineer lists the same session-wide, advisory-only (test/roles.md:134-136). Partially defensible (dead-exports-across-tasks is genuinely invisible per-task) but the overlap is unacknowledged. (d) Dependency vetting — Supply Chain Analyst approves at install time (implement/roles.md:60-68); AppSec re-checks \"dependencies added this session\" at test time (test/roles.md:82) with no data flow between them: the AppSec engineer's inputs (roles.md:70) do not include the Analyst's verdicts.\n\nTHE STRUCTURAL HOLE: no role anywhere reviews the code itself. The Code Reviewer says so explicitly (\"You are not reviewing code quality in general — you are answering one question: did this change do only what it claimed?\", implement/roles.md:78). Test checks behavior, security, pixels, releasability, and debris. The only quality force is the Software Engineer's self-applied \"match the conventions in 02-survey.md\" (implement/roles.md:42) — an instruction with no reviewer. Design quality, clarity, duplication within new code, API shape, and the quality of any new tests are owned by nobody. A world-class team reviews every diff for these; this team never does.",
+      "missing_functions": [
+        {
+          "function": "Code-quality / maintainability review of the diff",
+          "why_it_matters": "The implement Code Reviewer audits scope only and explicitly disclaims quality review (grokbit-implement/references/roles.md:78); grokbit-test checks behavior/security/visual/release/debris only. Design of the produced code, naming, internal duplication, complexity, API shape, and the quality of new tests are reviewed by no role in any phase — the defining daily activity of a world-class team is entirely absent, so the suite ships working-but-unmaintainable code with full ceremony and no signal.",
+          "recommendation": "Add a second, separately-reported quality pass to Loop I3 (or a distinct expensive-tier role at implement Step 4): advisory findings (design, clarity, duplication, test quality) recorded in implement/05-review.md alongside the scope audit but never blocking, so scope-audit strictness is not diluted and the human sees a quality signal per task."
+        },
+        {
+          "function": "Debugging / root-cause protocol in Implement",
+          "why_it_matters": "Loop I2's entire discipline is 'state the diagnosis explicitly before editing' (grokbit-implement/references/loops.md:36-38). The phase that CANNOT fix (Test) has the real protocol — minimal repro, runtime-state capture, ranked confirmable hypotheses (Loop T3, grokbit-test/references/loops.md:53-58) — while the phase that MUST fix has none. Three weakly-diagnosed attempts then revert-to-clean discards salvageable tasks and wastes the expensive-tier budget the loops.md:120 budget note worries about.",
+          "recommendation": "Import Loop T3's structure into I2: attempt 2 requires a minimal reproduction and a confirmed (not just stated) hypothesis — run a check that distinguishes the hypothesis from its alternative before editing. Cheap to specify; directly raises the fraction of tasks that pass within cap."
+        },
+        {
+          "function": "Branch / PR / CI strategy",
+          "why_it_matters": "Hard rule 2 commits every task directly onto whatever branch is checked out (grokbit-implement/SKILL.md:26); preflight checks git exists (references/roles.md:16) but never which branch, whether a remote or CI exists, or whether CI is green. A multi-task feature lands as N commits sprayed onto main or a shared feature branch with no gathering point for human review — disqualifying in any team repo, and even for a solo vibe coder there is no single revert point for the whole change.",
+          "recommendation": "Preflight creates (or confirms) a work branch named from the slug; implement Step 6 handoff records the branch and the commit range; add a post-verdict step that offers squash/merge/PR per host. If the repo has CI config, Release Engineer checks its status instead of only building locally."
+        },
+        {
+          "function": "Right-sized fast path for small changes",
+          "why_it_matters": "No triviality gate exists anywhere: a typo fix draws BA intake + survey + a mandatory two-approach design (grokbit-plan/SKILL.md:72) + up to 3 adversarial rounds + human gate + baseline mode + preflight (full suite run + clean build) + task loop + scope audit + 8-15 verify-mode invocations (budgets: plan/loops.md:105-109, implement/loops.md:120, test/loops.md:144-150). The suite's own retention logic — 'an interrogation loop is the fastest way to get the skill disabled' (plan/SKILL.md:49) — applies with more force to whole-pipeline ceremony and is never applied to it. Users who bypass the suite for small changes lose its protections for the large ones.",
+          "recommendation": "Add a triage gate at Plan Step 0: below a stated threshold (single file, no behavior contract change, no schema/dep/security surface), emit a one-task plan.md with a verify command and skip Survey breadth, the two-approach mandate, and Loop 3; keep the human approval line and Implement's verify-or-revert. Make the fast-path decision itself a recorded, overridable artifact line."
+        },
+        {
+          "function": "Durable tests for NEW behavior",
+          "why_it_matters": "Baseline mode writes characterization tests for EXISTING behavior only (grokbit-test/SKILL.md:50). Loop T2 'find or construct a check, run it, record the observed output' (grokbit-test/references/loops.md:37) is ephemeral — nothing specifies those checks are committed as tests. No role owns test design for new code and no role reviews new-test adequacy, so the suite can ship a fully verified change with zero durable regression protection for the behavior it just added; the verification evaporates at verdict time.",
+          "recommendation": "Require in Plan Loop 4's checklist that every behavior-adding task's verify: is (or includes) a committed automated test, not just an ad-hoc command; have Loop T2 commit any constructed check that proved a done-criterion, mirroring baseline mode's existing commit grant."
+        },
+        {
+          "function": "Design-time security review",
+          "why_it_matters": "The Plan Reviewer's checklist (grokbit-plan/references/roles.md:95-127) covers unhappy path, data/migration, blast radius — no threat-model, authn/authz-model, or data-exposure bullet. AppSec first appears after code exists (grokbit-test/SKILL.md:90-96). Worse, a design-level security flaw found at Test has no route to Plan: the DO-NOT-SHIP hand-back can only append a fix TASK (grokbit-implement/SKILL.md:109-115), and the only path back to Plan is 3 accumulated deviations (SKILL.md:95) — so an authorization-model flaw gets patched as a task instead of redesigned.",
+          "recommendation": "Add 3-4 security bullets to the Plan Reviewer prompt (new trust boundaries, authz model for new endpoints/data, secrets handling, data exposure), and give the hand-back intake a shape triage: a finding that invalidates a design decision routes to grokbit-plan's replan path (same slug, Loop I5 archive contract) instead of appending a task."
+        },
+        {
+          "function": "Regression detection during implement (baseline replay per task)",
+          "why_it_matters": "Baseline tests are committed before implement (grokbit-test/SKILL.md:52) but nothing wires them into the task loop — implement Step 2 runs only the task's own verify: (grokbit-implement/SKILL.md:63-70), and baseline replay happens once, at verify mode (test/SKILL.md:58). A regression introduced at task 3 is discovered after task 12, with nine tasks built on top of it — the exact compounding the per-task verify discipline exists to prevent, un-applied to the suite's own best instrument.",
+          "recommendation": "For each task with a non-none baseline: field, append the corresponding characterization tests to that task's verify step (or run the baseline suite after each commit). The mapping already exists in plan.md; this is wiring, not new machinery."
+        },
+        {
+          "function": "Observability / operability review",
+          "why_it_matters": "No role asks whether the change emits enough logging/telemetry/error context to be operated; the only mention of logging in the suite is as a defect — 'Debug residue — logging' (grokbit-implement/references/roles.md:94). The runbook doc type exists (grokbit-document/SKILL.md:52) but nothing upstream ensures the code is diagnosable at 2am, so the suite systematically strips the one thing the runbook needs.",
+          "recommendation": "Distinguish debug residue from intentional operational logging in the Code Reviewer prompt, and add one Release Engineer check: do the new failure paths surface actionable errors (message + context) rather than swallowing them?"
+        },
+        {
+          "function": "Accessibility verification",
+          "why_it_matters": "Frontend QA exists precisely because 'the model that wrote this code never saw it' (grokbit-test/references/roles.md:50), but its checklist (roles.md:54-61) covers render/overlap/clickability/empty-states only — no keyboard reachability, focus management, contrast, or ARIA semantics. A11y defects are the same class of structurally-invisible-to-a-text-agent failure the role was created for, and for the vibe-coder audience nobody else will ever catch them.",
+          "recommendation": "Add three cheap headless checks to the Frontend QA list: every interactive control reachable by keyboard, focus visible after interaction, automated axe-core-style scan where available (reported UNVERIFIED when tooling is absent, per the existing Loop T5 idiom)."
+        },
+        {
+          "function": "Dependency hygiene for EXISTING dependencies",
+          "why_it_matters": "Loop I4 gates new installs only (grokbit-implement/SKILL.md:75) and AppSec scans 'dependencies added this session' only (grokbit-test/references/roles.md:82). A repo with a known-critical advisory in an existing dependency sails through every phase of every slug forever; no role owns updates, lockfile audit, or ongoing vulnerability posture.",
+          "recommendation": "Add one preflight line: run the ecosystem's native audit (npm audit, pip-audit, cargo audit) and record critical advisories in preflight.md as a surfaced risk (not a blocker) — mirrors the existing 'record pre-existing test failures' discipline exactly."
+        },
+        {
+          "function": "Whole-change rollback and post-ship discipline",
+          "why_it_matters": "Rollback is per-task ('git revert <commit>', grokbit-plan/assets/plan.template.md:24) and Release Engineer checks migration reversibility, but no artifact records how to revert the entire change (N commits, in what order, with which migration downs), and nothing owns 'how would we know in production this broke' — the pipeline ends at the verdict. World-class teams treat ship as the midpoint of a change's risk, not the end.",
+          "recommendation": "Have Release Engineer emit a rollback section in release-readiness.md: the full commit range, ordered revert procedure, migration downs, and the one observable signal that would indicate the change is failing in production."
+        },
+        {
+          "function": "Cross-slug knowledge management",
+          "why_it_matters": "Institutional memory is one file wide: .grokbit/handoff.md 'reflects only the most recent session' (grokbit-implement/SKILL.md:103); .grokbit/context/ digests exist only if the user separately runs Document; each slug's design rationale is stranded in its own 03-design.md and the Systems Analyst re-surveys from scratch every plan. The adr doc type exists but no phase ever emits one — the registry's emit_at boundaries (README.md:78: 'plan-approval', 'implement-handoff', 'test-verdict') have NO emitter: plan/implement/test SKILL.md never invoke grokbit-document (implement Step 6 invokes only grokbit-test, SKILL.md:101). The contract exists on one side only.",
+          "recommendation": "Wire the promised boundary emissions: plan approval offers an ADR when the design rejected a viable option; implement handoff offers the changelog entry; alternatively delete the emit_at promise. Additionally make .grokbit/context/ a first-class Survey input/output so ground truth accretes across slugs instead of being rediscovered."
+        }
+      ],
+      "recommendations": [
+        "Add a fast path: a triage gate at Plan Step 0 that routes sub-threshold changes (single file, no contract/schema/dep/security surface) to a one-task plan with a verify command, skipping Survey breadth, the two-approach mandate (grokbit-plan/SKILL.md:72), and Loop 3 while keeping human approval and verify-or-revert. Highest leverage: it protects adoption of the entire suite — users who must bypass it for small changes lose its protections for large ones, per the suite's own retention argument at grokbit-plan/SKILL.md:49.",
+        "Give someone ownership of code quality: a second, advisory quality pass in implement's Loop I3 (design, clarity, duplication, test quality), reported separately in implement/05-review.md so it never dilutes the scope audit. This closes the roster's single largest hole (grokbit-implement/references/roles.md:78 explicitly disclaims it; no other role covers it).",
+        "Fix the branch strategy: preflight creates/confirms a slug-named work branch, handoff records the commit range, and a post-verdict step offers merge/PR; Release Engineer consults CI status when CI config exists. Committing straight onto the checked-out branch (grokbit-implement/SKILL.md:26) is disqualifying in any shared repo and leaves no whole-change revert point even solo.",
+        "Make new behavior durably tested: Plan Loop 4 requires behavior-adding tasks' verify: to be a committed automated test, and Test Loop T2 commits constructed checks that proved done-criteria (mirroring baseline mode's existing commit grant at grokbit-test/references/roles.md:15). Today the suite can ship fully-verified changes with zero durable regression protection for what it just built.",
+        "Wire baseline replay into the task loop: tasks with non-none baseline: fields run their characterization tests as part of verify, so a task-3 regression surfaces at task 3, not after task 12 at verify mode. Pure wiring — the plan.md mapping already exists.",
+        "Move security partly upstream and fix the hand-back shape: add threat-model bullets (trust boundaries, authz model, data exposure) to the Plan Reviewer checklist (grokbit-plan/references/roles.md:95-127 has none), and give implement's Step 7 hand-back intake a shape triage so a design-invalidating finding routes to the Loop I5 replan path instead of being appended as a task (grokbit-implement/SKILL.md:109-115 currently permits only task-append).",
+        "Give Implement's Loop I2 the debugging protocol Test's Loop T3 already has: attempt 2 requires a minimal repro and a hypothesis confirmed by a distinguishing check before editing (grokbit-implement/references/loops.md:36-38 currently requires only a stated diagnosis).",
+        "Define the Code Reviewer's disposition path for non-scope findings: the checks at grokbit-implement/references/roles.md:89-95 (secrets, weakened assertions, behavior beyond intent) have no defined action when they fire on an IN_SCOPE hunk — the only machinery is scope classification. Specify severity and consequence (e.g. a secret or attempt-3 assertion-weakening blocks the commit and re-enters I2), and feed Supply Chain Analyst verdicts into AppSec's inputs so the two dependency checks stop being disconnected.",
+        "Wire or delete the emit_at contract: README.md:78 promises documents at phase boundaries but no phase invokes grokbit-document; have plan approval offer an ADR, implement handoff offer the changelog, and make .grokbit/context/ a first-class Survey input so knowledge accretes across slugs instead of living in the single-slot handoff (grokbit-implement/SKILL.md:103).",
+        "Round out the QA surface cheaply: add keyboard-reachability/focus/contrast checks to Frontend QA (grokbit-test/references/roles.md:54-61 has none), one preflight ecosystem-audit line for existing-dependency advisories (Loop I4 gates new installs only, grokbit-implement/SKILL.md:75), a whole-change rollback section in release-readiness.md, and distinguish operational logging from debug residue (grokbit-implement/references/roles.md:94 currently treats all logging as a defect).",
+        "Reconcile the intake regimes and add an expert dial: an Explore→Plan session can ask 4 questions across two roles under two different non-negotiable caps (grokbit-explore/references/loops.md:16-18 vs grokbit-plan/references/loops.md:22); count Explore's question against Plan's budget in-session, and allow a user-set 'ask me more' preference so the 3-question product cap stops binding expert users. Consider folding Scope Setter into the Cartographer dispatch (it is a prompt preamble, not a role — grokbit-explore/references/roles.md:7-13) and re-tiering the Release Engineer's verdict judgment to expensive or splitting verdict from build mechanics (grokbit-test/references/roles.md:96 vs the suite's own tier warning at grokbit-test/references/loops.md:146)."
+      ]
+    },
+    "crossAudit": "The suite's intra-skill machinery is genuinely strong — caps, precise revert semantics, verdict vocabularies, and the replan contract are specified with unusual care and are internally consistent — but the seams between skills are where it falls short of a world-class process. The two inter-phase cycles (implement<->test hand-back and implement->plan replan) are unbounded by design: hand-backs are explicitly exempted from the only counter and the replan counter resets each iteration, with no depth-aware escalation to the human. Several declared handoffs have no counterpart on the other side: the security repair path has no intake, failed done-criteria trigger neither DO NOT SHIP nor Step 7, nobody is assigned to tick the approval checkbox Implement requires, and Document's context digests and emit_at hooks are write-only/never-fired. Two state-handling holes can strand or corrupt user work: the dirty-tree stash is created and never restored anywhere, and baseline mode commits before any clean-tree discipline exists. Verdict/mode/disposition vocabularies (SHIP triad, INTENDED/REGRESSION/UNKNOWN, IN_SCOPE triad, REPLACE/DEPRECATE/COEXIST/LEAVE) are otherwise plumbed consistently, and diagrams agree with prose on pipeline ordering except one ambiguous T3 hand-back edge.",
+    "scriptsAudit": "The template layer is the strong half of this suite: every field and section the five SKILL.md files and their loops.md name is present in the corresponding asset template, including the subtle ones (plan.template.md's removes/baseline/state-after and approval checkbox, results.template.md's Reduced-mode and Baseline-retirement sections, deviations.template.md's waiver-vs-count distinction), and no prose-vs-template mismatch was found. The executable layer is weaker than its prose: most Step 5 and Staleness claims are genuinely implemented (anchor checking, citation existence, exit-code 3 for listed-not-verified, --execute refusal gate, no-provenance flagging, --ci), but the highest-severity problems are process-level — Loop D1's \"counts only if executed\" rule is unsatisfiable on the declared audience's machine and contradicts its own \"zero BLOCKER\" exit criterion, leaving an agent to choose between a false-clean ship, a permanent block, or self-passing the shell-execution bypass flag; and the shipped Claude Code hook hardcodes an install path the extension's real provisioning never creates, so the promised advisory drift check silently never runs. Below that sit real correctness defects: bash fences executed via cmd.exe//bin/sh under --execute, three classes of false-positive link BLOCKERs that hard-block documents under D1, and unresolvable paths that never fail the exit code despite loops.md declaring them BLOCKER-class. The __pycache__ bytecode is not a vsix or git defect (both ignore files exclude it) but exposes an unfiltered provisioning copy and absent payload-hygiene checks. The deepest gap for a world-class claim is that the suite's only executable enforcement tools ship with zero tests, in a repo whose own standard is a 1336-test floor.",
+    "reviews": {
+      "grokbit-explore": {
+        "findings": [
+          {
+            "severity": "MAJOR",
+            "title": "The prescribed remedy for accidental edits — an unqualified \"revert\" — can destroy the user's uncommitted work",
+            "detail": "The 'Silent implementation' failure mode instructs: \"revert; restate read-only.\" There is no guidance on HOW to revert. An agent following this literally reaches for `git checkout -- <file>` or `git reset --hard`, which are indiscriminate at file granularity: if the user had their own uncommitted changes in the same file (the norm for the declared vibe-coder audience, who commit rarely), those are destroyed along with the agent's edit. Worse, Explore takes no snapshot of pre-run state (no stash, no baseline commit — contrast grokbit-implement, whose revert semantics are anchored to a known clean state), so even a careful agent has nothing recorded to revert TO. The skill explicitly predicts this violation will happen (that's why the failure-mode bullet exists) and then prescribes a remedy that is unimplementable safely. Fix: replace \"revert\" with \"restore the exact prior content of only the lines you changed, from your own read of the file earlier this session; never run destructive git commands; if unsure, show the user the diff and let them decide.\"",
+            "file": "resources/skills/grokbit-explore/SKILL.md",
+            "line": 87,
+            "evidence": "**Silent implementation.** \"While I was here I fixed…\" — revert; restate read-only."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "The read-only contract bans edits but never bans state-mutating command execution, so \"without changing any files\" is unenforced",
+            "detail": "Hard rule 1 forbids *editing* files only. Nothing in SKILL.md forbids running commands, yet an agent naturally runs `npm test` / `npm install` / a build to confirm a claimed convention — mutating lockfiles, node_modules, build artifacts, and test snapshots, violating the frontmatter promise \"without changing any files\" (SKILL.md:3). roles.md:21 limits the Cartographer to \"read, grep, glob, list\", but in the sequential no-subagent mode (a defined, common path — host-adapters.md:11) one agent holds all tools and only prompt text fences it; SKILL.md, the file actually loaded first, never states the ban. host-adapters.md:14 concedes enforcement is \"Prefer host plan mode or self-discipline\", and while line 33 calls Grok plan mode \"ideal for Explore\", nothing instructs the agent or user to actually enter plan mode, and the skill cannot set the mode itself. A world-class read-only phase states explicitly: no installs, no builds, no test runs, no state-mutating commands — the fence must live in SKILL.md's hard rules, not in a per-role tool list two files deep.",
+            "file": "resources/skills/grokbit-explore/SKILL.md",
+            "line": 23,
+            "evidence": "1. **Read-only on product source.** Do not edit application source, tests, configs, or package manifests as part of this skill."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "The cite-check standard is defined three contradictory ways, so Loop E3's exit criterion is unmeetable as written",
+            "detail": "SKILL.md Step 3 says \"Re-open key citations\" (a subset). roles.md:33 instructs the Citation Checker to \"Spot-check citations\" (a sample). loops.md:50 sets E3's exit as \"every remaining claim has a re-opened citation or is marked unknown\" (total coverage). A role instructed to sample cannot honestly satisfy a total-coverage exit: the loop either exits dishonestly (claims full verification after a spot-check) or runs to its 2-round cap and \"drop[s] contested claims\" arbitrarily. Additionally, the 2-round structure is hollow: the Checker is the loop's only role, is forbidden from new exploration (roles.md:33), and no Cartographer-revision step exists between rounds (unlike Plan's Loop 3 Architect⇄Reviewer alternation), so round 2 re-checks an unchanged artifact. The phase's entire quality promise is citation integrity; the check that delivers it needs ONE rigor standard, stated identically in all three files, plus a defined between-rounds step or an honest cap of 1.",
+            "file": "resources/skills/grokbit-explore/references/loops.md",
+            "line": 50,
+            "evidence": "**Exit:** every remaining claim has a re-opened citation or is marked unknown."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "map.template.md licenses uncited invariants (\"cite when possible\"), directly contradicting Hard rule 2 in the highest-stakes section",
+            "detail": "Hard rule 2 (SKILL.md:24) states: every claim is a path:line citation or explicitly marked unknown — \"No plausible invention\", no third category. The template's Contracts / invariants section — the one section a downstream Plan/Implement will treat as load-bearing (\"things a later change must not break\") — says \"cite when possible\", creating exactly the forbidden third category: confident, uncited claims. And because the Citation Checker only re-opens *citations* (roles.md:33), an uncited invariant has no checker at all — it flows to the user and to the next phase with zero verification. This is the wrong-but-confident outcome the skill's own preamble warns against, structurally permitted by its own template. Fix: change the template line to require a citation or an explicit `unknown` marker, matching rule 2 verbatim.",
+            "file": "resources/skills/grokbit-explore/assets/map.template.md",
+            "line": 19,
+            "evidence": "- <things a later change must not break> — cite when possible"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "The no-subagent fallback (\"write-then-re-read of intermediate notes in chat\") is incoherent and provides zero isolation for the Citation Checker",
+            "detail": "roles.md:3 prescribes: \"run sequentially with write-then-re-read of intermediate notes in chat (Explore does not require disk artifacts).\" You cannot \"re-read\" chat — it is already in context; the phrase is copied from siblings whose fallback works precisely BECAUSE artifacts hit disk (grokbit-plan SKILL.md:43: \"write the artifact to disk, then re-read it from disk\"). Since Explore forbids disk artifacts, sequential mode has the Checker \"reviewing someone else's map\" (roles.md:33) that is actually its own map, same context, no mechanism whatsoever. This is Reviewer capture — a failure mode grokbit-plan names and mitigates (plan SKILL.md:131), and which grokbit-document's host-adapters.md:15 admits makes the check \"stop[] meaning anything\" without real isolation. Explore neither names the failure mode nor provides a mechanism. Fix: permit a scratch-file (temp dir, not .grokbit/plans/) intermediate note for sequential mode, or at minimum copy Plan's explicit adversarial-re-adoption instruction.",
+            "file": "resources/skills/grokbit-explore/references/roles.md",
+            "line": 3,
+            "evidence": "or run sequentially with write-then-re-read of intermediate notes in chat (Explore does not require disk artifacts)"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Model-tier inversion: the role doing all the code comprehension is 'cheap' while the trivial scoping role is 'standard'",
+            "detail": "The Cartographer — sole author of the architecture narrative (\"How it fits together\"), the contracts/invariants list, and every citation — is \"tier: cheap\" (roles.md:17, confirmed host-adapters.md:25). The Scope Setter, whose entire job is restating the user's question in a few lines, is \"tier: standard\" (roles.md:7). This is backwards: mapping an unfamiliar codebase's structure and identifying invariants a change must not break is the hardest cognitive task in the skill. The standard-tier Checker does not compensate — it verifies citations only (line-level facts), never the architectural prose or connection claims, so a cheap model's plausible-but-wrong \"How it fits together\" narrative reaches the user unreviewed. Combined with finding 4 (uncited invariants allowed), the design makes wrong-but-confident orientation a supported output path. Fix: Cartographer standard (or better), Scope Setter cheap.",
+            "file": "resources/skills/grokbit-explore/references/roles.md",
+            "line": 17,
+            "evidence": "## Cartographer — tier: cheap"
+          },
+          {
+            "severity": "MINOR",
+            "title": "Loop E2's cap unit — a \"pass\" — has no internal budget, so the cap does not actually bound work",
+            "detail": "E2 caps at \"3 map passes\" (loops.md:32) but never defines what bounds a single pass: no max files opened, no max greps, no token/size budget. The only numeric bound anywhere is \"~50 matches per symbol\" for caller-chasing (loops.md:38). grokbit-plan explicitly names this exact hazard about its own equivalent loop — \"A large repo can burn Loop 2's whole budget on breadth inside a single pass\" (plan SKILL.md:135) — yet Explore, the phase MOST exposed to open-ended charters (\"how does this whole repo work?\"), omits the warning and the per-pass budget. \"Sample large trees\" is advisory, not a bound. Fix: give a pass a concrete budget (e.g. N files opened per pass, disclosed in the map when hit), mirroring the sibling's own lesson.",
+            "file": "resources/skills/grokbit-explore/references/loops.md",
+            "line": 32,
+            "evidence": "| **Cap** | **3 map passes** |"
+          },
+          {
+            "severity": "MINOR",
+            "title": "Loop E2's trigger and exit reference \"charter entities\" — a set the Explore process never constructs",
+            "detail": "E2's trigger is \"Charter entities still unresolved\" (loops.md:30). But Explore's charter (SKILL.md Step 1) contains a question, an out-of-bounds note, and an assumption — no entity list. The term is imported from grokbit-plan's Loop 2, where the Systems Analyst explicitly builds an entity list from the intent (plan SKILL.md:62: \"list every entity the intent implies\"). Explore has no such enumeration step, so the central loop's continue/stop condition is evaluated against an undefined set — in practice, vibes. The secondary exit (\"enough material for the chat map exit criteria\", loops.md:36) partially rescues it, but the trigger remains un-evaluable. Fix: either have the Scope Setter enumerate charter entities explicitly (one line in its prompt), or restate E2's trigger in terms of the defined exit criteria (likely files + contracts + unknowns).",
+            "file": "resources/skills/grokbit-explore/references/loops.md",
+            "line": 30,
+            "evidence": "| **Trigger** | Charter entities still unresolved |"
+          },
+          {
+            "severity": "MINOR",
+            "title": "The Scope Setter's one clarifying question has no delivery channel under subagent dispatch",
+            "detail": "host-adapters.md:23 dispatches roles via \"Task tool per role when available\", but a Task subagent cannot interact with the user — its question returns to the orchestrator, not the human. So on exactly the hosts where the skill claims full capability, Loop E1's \"1 question\" affordance (loops.md:17) is dead: the cap-behavior fallback (\"proceed with the best assumption\") silently becomes the only behavior, and the user never sees the question the process decided was worth asking. The degradation is graceful (the assumption is listed under unknowns) but undisclosed and undesigned. Fix: state that the Scope Setter role must run in the main context (it is interactive), reserving subagent dispatch for Cartographer and Checker.",
+            "file": "resources/skills/grokbit-explore/references/host-adapters.md",
+            "line": 23,
+            "evidence": "**Dispatch:** Task tool per role when available; otherwise sequential."
+          },
+          {
+            "severity": "MINOR",
+            "title": "SKILL.md orders conventions to be recorded, but the mandated template has no section for them",
+            "detail": "Step 2 instructs the Cartographer: \"Record conventions only when observed\" (SKILL.md:53), and roles are told to \"Fill the structure in assets/map.template.md\" (roles.md:23) while the output contract mandates \"structured with assets/map.template.md sections\" (SKILL.md:82). But the template's sections are Charter / Relevant areas / How it fits together / Contracts / Open unknowns / Suggested next step — no Conventions section exists. Observed conventions (error-handling style, test layout — the facts Plan Survey most wants hinted) either get dropped or smuggled uncited into prose. Fix: add a `## Conventions observed` section to map.template.md, or delete the instruction.",
+            "file": "resources/skills/grokbit-explore/SKILL.md",
+            "line": 53,
+            "evidence": "- Record conventions only when observed"
+          },
+          {
+            "severity": "MINOR",
+            "title": "No proportionality fast-path: a trivial question invokes three roles and up to six loop iterations",
+            "detail": "A question like \"where is the login handler?\" nominally runs Scope Setter → Cartographer (up to 3 passes) → Citation Checker (up to 2 rounds), on subagent hosts as separate dispatches with real latency and token cost. The skill scales its ceremony by zero for question size — there is no \"if the charter resolves to a single file/symbol, answer with citations directly and skip E2/E3\" escape hatch. For the declared vibe-coder audience, the first experience of the flagship first-step skill will often be a 30-second question answered through a multi-role pipeline. World-class teams scale process to task size; Explore, the phase where trivial asks are most common, is the skill that most needs the small-question path and lacks it.",
+            "file": "resources/skills/grokbit-explore/SKILL.md",
+            "line": 31,
+            "evidence": "Scope ──▶ Map (read-only) ──▶ Cite-check ──▶ Present map in chat"
+          },
+          {
+            "severity": "MINOR",
+            "title": "The suite README's \"Loops at a glance\" termination table omits Explore's loops entirely",
+            "detail": "README.md lines 103–122 tabulate every loop, cap, and on-cap behavior for Plan, Implement, Test, and Document — the suite's audit surface for termination guarantees. E1/E2/E3 are absent. A reviewer auditing termination from the suite README concludes Explore has no bounded loops, when in fact it defines three with caps and on-cap behaviors (references/loops.md). Either the table is the suite's termination contract (then Explore's three rows belong in it) or it isn't (then its framing overclaims). One-table fix.",
+            "file": "resources/skills/README.md",
+            "line": 103,
+            "evidence": "| Phase | Loop | Exit criterion | Cap | On cap |"
+          }
+        ],
+        "gaps": [
+          "No use of the suite's own memory as an orientation source: grokbit-plan Step 0 reads .grokbit/handoff.md because \"a previous session may already have answered half of what you are about to ask\" (plan SKILL.md:34), and .grokbit/plans/** holds prior cited surveys/designs — the highest-value orientation material in a repo the suite has touched — yet Explore never mentions reading either. The orientation phase runs blind to the suite's own prior orientation.",
+          "No cross-session durability, in a host whose UX makes new sessions the norm: the map is chat-only and the Grokbit extension opens one session per tab, so an Explore map is unrecoverable the moment the user opens a fresh tab to plan. The skill forbids REQUIRING durable digests (correct) but never even offers an optional one-paragraph handoff note (e.g. appending to .grokbit/handoff.md, which Plan already reads), so the phase's entire output evaporates at the suite's most common session boundary.",
+          "No secrets hygiene: exploration naturally opens .env files, credential configs, and CI secrets, and nothing forbids quoting their values (or even flagging their paths) into the chat map — which persists in on-disk session history (chat_history.jsonl / Claude .jsonl). A world-class read-only phase has an explicit redaction rule: cite the path, never the content, of anything credential-shaped.",
+          "No use of version-control history as an orientation instrument: git log/blame for churn hot-spots, recent authorship, and commit messages around the charter area is standard world-class orientation practice (often faster and more reliable than reading cold source), is read-only by nature, and is never mentioned.",
+          "No guidance for degenerate repos: an empty/greenfield repo, a repo with no README/docs, or a non-code question (\"what does this product do?\") — the Cartographer's entry-point heuristic (README, module map, main packages) assumes a mature codebase and the skill defines no honest behavior when those don't exist.",
+          "No output-size bound or summary-first structure for the chat map: every loop is capped but the deliverable itself is not — nothing stops a 200-bullet 'Relevant areas' wall, which for a vibe-coder audience defeats the orientation purpose as surely as an uncited map. World-class practice: a hard bullet budget or a two-tier map (five-line summary, details below)."
+        ],
+        "strengths": [
+          "The scope discipline is genuinely excellent and enforced from both sides of the handoff: Explore refuses to masquerade as Survey (SKILL.md:19 \"chat orientation is memory, not an authoritative artifact\"; failure mode 'Fake Survey' at SKILL.md:86), and grokbit-plan reciprocates exactly (plan SKILL.md:36 \"treat its chat map as a hint list of paths to open, not as Survey\") — a two-sided contract that structurally prevents uncited chat from laundering into authoritative artifacts (SKILL.md:78 \"Never copy an uncited chat bullet into 02-survey.md\").",
+          "Every loop has a numeric cap AND a defined on-cap behavior that prefers honest incompleteness over invention (loops.md:3 \"Hitting a cap means disclose and present, not invent more detail\"; SKILL.md:27 \"An incomplete honest map beats a sprawling confident one\") — the right epistemics for an LLM-driven exploration phase.",
+          "The anti-scope-creep ending is unusual and correct for agent behavior: SKILL.md:68 \"If they only wanted orientation: stop. Do not invent a follow-up project\" directly counters the model's bias toward manufacturing next steps.",
+          "Explicit disambiguation from the host CLI's built-in `explore` agent type (SKILL.md:90) — a real, host-specific confusion (grok ships a built-in `explore` agent) that most skill authors would never think to name.",
+          "The cite-or-flag rule with a dedicated re-verification role (SKILL.md:24, roles.md:27-33) is far stronger than typical exploration prompts, even though its rigor standard needs unifying (see finding 3)."
+        ],
+        "summary": "grokbit-explore is the lightest skill in the suite and its core judgment is sound: a read-only, cited, chat-only orientation pass that explicitly refuses to impersonate Plan Survey, with capped loops and honest-incompleteness cap behaviors. However, its safety story is thinner than its promise: the frontmatter says \"without changing any files\" but the hard rules ban only edits (not state-mutating commands), enforcement is admitted to be self-discipline, and the sole remedy for a predicted violation is an unqualified \"revert\" that can plausibly destroy a user's uncommitted work. Its quality mechanism is also internally inconsistent — the cite-check rigor is defined three different ways across three files, the template licenses uncited invariants in the very section downstream phases treat as load-bearing, the no-subagent fallback's isolation mechanism is incoherent (write-then-re-read with nothing on disk to re-read), and the cheapest model tier is assigned to the role doing all the comprehension while the checker validates only citations, not the architecture prose. Termination is nominally bounded but the E2 cap unit (a \"pass\") has no internal budget — the exact hazard the sibling Plan skill warns about in its own text. Finally, the phase ignores the suite's own memory (handoff.md, prior plan artifacts) and offers no durable output, which matters acutely in a host whose one-tab-per-session UX makes cross-session continuation the norm. Good bones, reciprocated handoff contracts, and correct epistemics — but six MAJOR-grade holes separate it from a world-class orientation phase."
+      },
+      "grokbit-plan": {
+        "summary": "grokbit-plan is a genuinely strong planning spec at its core: the cite-or-flag grounding discipline, the four-disposition supersession machinery, removal-as-first-class-task, and capped loops with defined surrender behavior are better than most human team processes and directly target the model failure modes that matter. Its defects cluster at the seams rather than the center: the replan re-entry path from grokbit-implement is structurally un-wired at the role level (the roles that rebuild the plan are never given the files the replan contract requires), the approval gate defines only the happy path, the plan-level review pass contradicts its own cap in two places, and the strongly-preferred subagent dispatch mode breaks the intake-question mechanism it depends on. There is also a cost/quality inversion (the artifact declared most-trusted is assigned the weakest model) and zero proportionality — a typo fix and a schema migration get the identical six-artifact, multi-role ceremony. None of these are fatal for an attentive orchestrating agent, but a spec this precise about ownership and caps should not leave its highest-stakes paths to improvisation.",
+        "strengths": [
+          "Supersession/disposition machinery is world-class anti-decay design: four exhaustive dispositions with per-disposition obligations, 'Silence is not a fifth option', and the Reviewer instructed to treat an unmentioned item as MAJOR (references/roles.md:70-81, references/roles.md:103) — this is a discipline most real senior teams lack.",
+          "Every loop has a trigger, body, exit, cap, and a single generic cap-behavior that surfaces unresolved items instead of dropping them or spinning (references/loops.md:12) — 'A planner that spins is worse than one that ships a plan with three honest open questions' (SKILL.md:17).",
+          "Removal is a first-class verified task: REPLACE dispositions become tasks whose verify proves an ABSENCE ('rg returns no matches, AND npm test green'), ordered after the replacement is proven (assets/plan.template.md:40-54, SKILL.md:88).",
+          "Honesty-under-budget rules: large-repo survey shortcuts must be disclosed ('an undisclosed cap reads as a precise count and isn't one', references/loops.md:50), and skipped checks must be reported as gaps, never as passing (references/host-adapters.md:19).",
+          "The two-marker vocabulary (UNVERIFIED = how a fact was obtained vs UNRESOLVED — <loop> = a loop gave up) is precisely defined and consistently used across SKILL.md, loops.md, and the assumptions template (references/loops.md:5-10).",
+          "The baseline: field contract is coherently wired end-to-end: plan requires it per task (loops.md:89), grokbit-test baseline mode iterates exactly that field (grokbit-test/references/loops.md:16), and grokbit-implement enforces it as entry condition 4 with an explicit waiver path (grokbit-implement/SKILL.md:19) — verified, not just claimed.",
+          "Context-isolation rationale for review integrity is explicit and has a defined degraded mode ('A reviewer that watched the design get written will rationalize it', references/loops.md:69; write-then-re-read fallback SKILL.md:43).",
+          "verify: commands must target the user's actual shell/OS and declare cwd: for monorepos (references/loops.md:85-86, assets/plan.template.md:8-12) — a cross-platform failure mode most processes discover in production."
+        ],
+        "findings": [
+          {
+            "severity": "BLOCKER",
+            "title": "Replan path is structurally un-wired: no role's inputs include deviations.md, the old plan.md, or progress.md, so the rebuilt plan cannot honor the replan contract",
+            "detail": "Step 0 (SKILL.md:38) and grokbit-implement's Loop I5 (grokbit-implement/references/loops.md:105-112) require that on a replan the Survey re-runs 'on corrected ground' informed by implement/deviations.md, and that the rebuilt plan.md preserve every completed task's original ID and content ('renumbering T1 would silently orphan every row'). But roles.md dictates dispatch 'verbatim (plus the inputs listed)' (roles.md:3), and the listed inputs are: Systems Analyst = 01-intent.md only (roles.md:32); Solutions Architect = 01-intent.md, 02-survey.md, 04-review.md (roles.md:56). Neither role ever receives implement/deviations.md (the evidence that triggered the replan), the superseded plan.md, or progress.md (the ledger of completed IDs). In the strongly-preferred subagent mode, the SA re-surveys blind to the three recorded contradictions it exists to correct, and the Architect literally cannot preserve completed task IDs it has never seen — guaranteeing the exact orphaning the contract warns about, which sends grokbit-implement re-executing already-committed tasks against user code. Fix: add a replan-mode input augmentation to both role prompts (deviations.md + archived survey/design for the SA; old plan.md + progress.md completed-ID list for the Architect's Decompose phase) and state it in Step 0.",
+            "file": "resources/skills/grokbit-plan/references/roles.md",
+            "line": 56,
+            "evidence": "**Inputs:** `01-intent.md`, `02-survey.md`, and on later rounds `04-review.md`"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Step 0's replan detection heuristic is unsound: an existing 02-survey.md is treated as proof of an I5 hand-back",
+            "detail": "SKILL.md infers a replan solely from file existence. Three ordinary situations produce an existing 02-survey.md with no I5 hand-back: (1) a slug collision — two different requests deriving the same kebab-case slug ('fix login bug' twice); (2) a plan rejected or abandoned at the approval gate and re-requested; (3) a session that died mid-plan. In all three the skill will wrongly archive into replan-1/, follow the I5 contract, and 'preserve unchanged' task IDs from a plan the human never approved and implement never ran. The actual evidence of a replan — implement/deviations.md containing a cap-hit boundary marker (grokbit-implement/assets/deviations.template.md:43) — is never consulted. Fix: gate replan mode on deviations.md showing a cap-hit since the last replan, and define separate behavior for the collision/abandoned cases (new slug suffix, or resume).",
+            "file": "resources/skills/grokbit-plan/SKILL.md",
+            "line": 38,
+            "evidence": "If `.grokbit/plans/<slug>/02-survey.md` already exists, this slug is not new — `grokbit-implement` handed it back after hitting its 3-deviation cap (Loop I5)"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "The approval gate defines only the happy path: no protocol for rejection or requested changes, and human edits are exempted from re-validation",
+            "detail": "Step 5 handles exactly two outcomes: explicit approval, and the human editing plan.md directly. The most common real gate outcome — 'no, do X instead' or 'drop task 4 and use approach B' spoken in chat — has no defined path: does the Architect revise? Does that re-enter Loop 3 (and against whose cap)? Does a changed requirement re-open Intake? Nothing says. Meanwhile a direct human edit is declared 'authoritative and overrides anything you concluded' with no re-run of Loop 4's checklist — so an edit that blanks a baseline: field, breaks the parseable task-block format the extension and Implement depend on (SKILL.md:122), or introduces an unverifiable task silently voids the downstream contracts with grokbit-test and grokbit-implement. A world-class gate treats rejection as a first-class transition and re-validates (without overriding) human edits, flagging contract breakage back to the human.",
+            "file": "resources/skills/grokbit-plan/SKILL.md",
+            "line": 108,
+            "evidence": "Wait for explicit approval — \"go\", \"approved\", \"start\". If the human edits `plan.md` directly, re-read it before proceeding; their edit is authoritative and overrides anything you concluded."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Loop 4's plan-level Reviewer pass contradicts its own cap: 'a single round' vs 'up to 3', and its interaction with the Architect's 3-pass cap is undefined",
+            "detail": "loops.md:81 declares the Reviewer's plan-level pass 'a single round, not a capped loop of its own'. loops.md:97 says a BLOCKER 'sends the Architect back into this same loop' (implying the Reviewer runs again after), and the Loop budget (loops.md:107) says 'up to 3 if it keeps finding a BLOCKER'. Three mutually inconsistent statements. Also undefined: whether the Architect's re-entry consumes its own 3-pass checklist cap (which may already be exhausted when the BLOCKER arrives), and what the cap-behavior is when a BLOCKER survives the final pass — the exit criterion (loops.md:99) requires 'no BLOCKER', so a persistent one either violates the exit or falls to the generic cap rule (line 12) and ships to the gate as an assumption, which for a defined-as-'will produce broken software' finding deserves explicit treatment, not inference. Fix: pick one number, state which cap the re-entry consumes, and state the surviving-BLOCKER behavior explicitly.",
+            "file": "resources/skills/grokbit-plan/references/loops.md",
+            "line": 81,
+            "evidence": "**Cap** | 3 passes (the Architect's checklist); the Reviewer's plan-level pass is a single round, not a capped loop of its own"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Intake's question batch is undeliverable in the strongly-preferred subagent mode — no relay or answer-return protocol exists",
+            "detail": "The BA role prompt says 'ask at most three questions in a single batch' (roles.md:17), but SKILL.md:42 strongly prefers dispatching each role to an isolated subagent, and a Claude Code Task subagent (or Grok Build subagent) has no channel to the human — its output returns to the orchestrator. Nothing specifies that the orchestrator relays questions to the user, how answers travel back (roles.md:3 says roles communicate 'only through files on disk', and no answers file is defined — the intent template's 'Questions asked' section (intent.template.md:27) records them but nothing says who writes the answers or whether the BA is re-spawned with them), or whether the relay round-trip counts against Loop 1's 'one batch, once' cap. In practice the BA subagent either silently degrades to zero questions and all-assumptions, or the orchestrator improvises an unspecified two-dispatch dance. The load-bearing Loop 1 mechanism only actually works in the discouraged no-subagent mode. Fix: define the relay explicitly (BA emits questions in its output/file, orchestrator asks the human, BA re-dispatched once with answers appended to its inputs).",
+            "file": "resources/skills/grokbit-plan/references/roles.md",
+            "line": 17,
+            "evidence": "Then ask **at most three questions in a single batch** — and only questions whose answers would change the plan."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Cost/quality inversion: the artifact declared most-trusted and least-re-checked is assigned the cheapest model",
+            "detail": "roles.md:30 tiers the Systems Analyst 'cheap (high volume of reads, low judgment)' — mapped to Haiku on Claude Code (host-adapters.md:29) — while its own prompt states 'Everything you write will be trusted by an architect who will not re-check it, so a confident wrong statement from you becomes a real bug later' (roles.md:36). The role's actual duties are judgment-heavy, not mechanical: deciding what an intent implies, detecting supersession candidates, calling which of several prior attempts the live code paths actually use, identifying danger zones. The suite's own failure economics agree survey errors are the most expensive: grokbit-implement's archetypal deviation is 'a survey claim contradicted by the actual file' (grokbit-implement/references/loops.md:97), and three of them force a full replan. The Reviewer's citation spot-checks partially mitigate, but only for cited claims — a cheap model's worst failure is the entity it never thought to look for, which no spot-check catches. Fix: either split the SA into a cheap enumeration pass plus a standard/expensive synthesis pass, or move the whole role up a tier and take the savings elsewhere.",
+            "file": "resources/skills/grokbit-plan/references/roles.md",
+            "line": 30,
+            "evidence": "## Systems Analyst — tier: cheap (high volume of reads, low judgment)"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "The Architect's 'send the survey back for another pass' has no defined mechanism, artifact, or cap",
+            "detail": "roles.md:66 gives the Architect two options when the survey lacks a needed fact: 'Either send the survey back for another pass or record the gap as an assumption.' The first option is unimplemented: roles communicate only through files (roles.md:3) and no file carries a survey-gap request; Loop 2 is triggered by unresolved entities and run by the SA under its own 3-pass cap, which may already be exhausted; the pipeline diagram (SKILL.md:22) shows no Design→Survey backedge; and no cap bounds how many times the Architect may bounce the survey, making it either a dead letter (in which case only the assumption branch is real and the sentence over-promises) or an unspecified, unbounded Design↔Survey cycle. Fix: define it — e.g., the Architect appends a 'survey gaps' list to 04-review.md or a dedicated file, the SA gets exactly one supplemental pass against that list (a stated extension of or exception to Loop 2's cap), then remaining gaps become UNVERIFIED assumptions.",
+            "file": "resources/skills/grokbit-plan/references/roles.md",
+            "line": 66,
+            "evidence": "If you need a fact the survey does not contain, you may not invent it. Either send the survey back for another pass or record the gap as an assumption."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "No proportionality: every request, however small, gets the full six-artifact multi-role ceremony, including a mandatory second design option",
+            "detail": "There is no small-change path anywhere in the skill. A one-file, ten-line change still requires BA intake, a full survey with supersession table, a design with 'at least two viable approaches' (SKILL.md:72; 'A design with one option is a design that was never actually considered'), up to 3 adversarial review rounds, a decompose pass, and six markdown artifacts — 10+ role invocations by the skill's own budget. Two secondary harms: (1) for genuinely constrained changes where only one approach is viable, the two-option rule incentivizes fabricating a strawman Option B, which the Reviewer then spends a round on — process theater the skill otherwise campaigns against; (2) for the declared vibe-coder audience, disproportionate ceremony on small asks is exactly the 'fastest way to get the skill disabled' dynamic SKILL.md:49 itself identifies for questions. The skill names 'plan inflation' as a failure mode (SKILL.md:132) but only polices task-count inflation, never process-size. A world-class team right-sizes: define a plan-lite tier (single-task plans skip the design doc, keep intent + verify + baseline) with explicit entry criteria, and permit 'one viable option + why alternatives are non-viable' as a valid design.",
+            "file": "resources/skills/grokbit-plan/SKILL.md",
+            "line": 72,
+            "evidence": "Produce at least two viable approaches with an honest trade-off, then choose one and justify it against the intent's constraints. A design with one option is a design that was never actually considered."
+          },
+          {
+            "severity": "MINOR",
+            "title": "assumptions.md — the single artifact the human reads at the gate — has no owning role",
+            "detail": "Every other artifact has exactly one role whose Output line names it (01-intent.md=BA, 02-survey.md=SA, 03-design.md/plan.md=Architect, 04-review.md=Reviewer). assumptions.md appears in no role's Output. loops.md:12 says 'write the unresolved items to assumptions.md' with no actor named, and loops.md:10 says every UNVERIFIED 'gets copied there' — passive voice, no copier. grokbit-plan defines no Orchestrator role (grokbit-implement explicitly does, and even explains why counting 'falls to it and no one else'). In the subagent model where roles are dispatched verbatim with listed inputs/outputs, an unowned file is a file that tends not to get written — and this one is the gate's rolled-up ledger and the cap-behavior sink for all four loops. Fix: name the owner (the orchestrating session) explicitly, mirroring implement's Orchestrator framing.",
+            "file": "resources/skills/grokbit-plan/references/loops.md",
+            "line": 12,
+            "evidence": "**When any loop hits its cap:** write the unresolved items to `assumptions.md`, mark them `UNRESOLVED — <loop>`"
+          },
+          {
+            "severity": "MINOR",
+            "title": "Loop budget arithmetic is wrong: '1 + 3 + 3 + 3 = 10 role invocations' undercounts the worst case by roughly half",
+            "detail": "Each Loop 3 round is two role invocations (Reviewer appends findings, Architect revises — loops.md:62-64), so 3 rounds = 6, plus the Architect's initial design write, which no term covers. Loop 4's 3 Architect passes plus up to 3 plan-level Reviewer passes (per the same paragraph) push the true worst case to ~15-17 invocations, not 10. The number exists to sell bounded cost to price-sensitive users ('a plan that cost $0.40', loops.md:109), so understating it by ~40% undermines exactly the trust it is meant to build. Fix: recount, or state the budget in rounds rather than invocations.",
+            "file": "resources/skills/grokbit-plan/references/loops.md",
+            "line": 107,
+            "evidence": "Worst case is 1 + 3 + 3 + 3 = 10 role invocations, plus Loop 4's own plan-level Reviewer pass"
+          },
+          {
+            "severity": "MINOR",
+            "title": "SKILL.md Step 4's task-field enumeration has already drifted from the authoritative Loop 4 checklist: it omits depends: and state-after:",
+            "detail": "SKILL.md:82 presents itself as the Loop 4 requirement list ('every task must have an ID, a stated intent, the files it will touch, an explicit verify: command ..., a baseline: and a removes: field (or none), and a rollback') but omits two fields the real checklist makes mandatory: depends: (loops.md:88) and state-after: (loops.md:93), both also present in plan.template.md (lines 20, 25). It likewise never mentions the Verification matrix that Loop 4's exit requires (loops.md:95). Since SKILL.md is the always-loaded document and references load on demand, an agent economizing on reads will build task blocks from the incomplete list. Fix: either enumerate all fields or replace the partial list with a pure pointer to the checklist.",
+            "file": "resources/skills/grokbit-plan/SKILL.md",
+            "line": 82,
+            "evidence": "every task must have an ID, a stated intent, the files it will touch, an explicit `verify:` command that actually runs in the user's shell and OS (and from the right `cwd:` if this is a monorepo), a `baseline:` and a `removes:` field (or `none`), and a rollback"
+          },
+          {
+            "severity": "MINOR",
+            "title": "host-adapters.md contains two claims contradicted by the suite's own definitions and shipped behavior",
+            "detail": "(1) Line 64: 'Re-provisioning is version-stamped and only runs when the bundled suite is newer than what is already installed' — the shipped rule (src/skill-suite.ts shouldProvision, documented in CLAUDE.md § Grokbit Actions) is deliberately an inequality: a downgrade re-copies too, 'because the correct suite for an installed extension is the one that shipped with it'. The skill's own doc misdescribes the product it ships in. (2) Line 17: a missing headless browser must be reported 'as UNVERIFIED, never as passing' — but loops.md:5-8 defines the marker vocabulary as 'two markers, two different meanings, never used interchangeably', with UNVERIFIED strictly meaning 'a fact someone assumed rather than confirmed'; a skipped check is neither an assumed fact nor a loop cap-hit, so the instruction violates the vocabulary it sits one file away from (and visual verification is not a Plan-phase activity in any case). Both are one-line fixes.",
+            "file": "resources/skills/grokbit-plan/references/host-adapters.md",
+            "line": 64,
+            "evidence": "Re-provisioning is version-stamped and only runs when the bundled suite is newer than what is already installed."
+          }
+        ],
+        "gaps": [
+          "No security or privacy thinking at design time: the design template's risk surface is the unhappy-path table (network failure, empty state, concurrent edit, permission denied) and a migration section — no threat consideration, authZ-change review, secrets handling, or input-validation requirement. The suite defers all security to grokbit-test's post-implementation pass, which is exactly when design-level security flaws are most expensive to fix. A world-class team does security review at the design gate.",
+          "No repo-state anchoring or staleness contract: 02-survey.md citations are not pinned to a git SHA and nothing detects the repository changing between survey, approval, and implement start. A plan approved Friday against Monday's very different tree presents the same confident citations. World-class: record HEAD at survey time and have implement's preflight diff against it.",
+          "No plan-time smoke-check that the verify harness itself exists: Loop 4 validates verify: commands purely by inspection against the survey's conventions section. One cheap dry-run (does package.json actually have a test script? does the named runner exist?) would catch the most common downstream deviation class ('a verify command that could not execute in this environment' is an enumerated I5 deviation type) before the gate instead of after three of them force a replan.",
+          "No quality bar on rollbacks for stateful changes: the checklist requires only 'Has a rollback', and the template's example is 'git revert <commit>' — which does not un-apply a database migration, un-send an email, or un-publish a package. The design template asks 'Reversible:' for migrations but nothing forces the corresponding task's rollback: field to be a real down-migration. A world-class plan distinguishes code rollback from state rollback per task.",
+          "No non-functional requirements capture: the intent template's done-criteria are purely functional/observable; there is no prompt for performance budgets, accessibility, i18n, or observability (logging/metrics for the new code path), so the Reviewer has no basis to flag their absence and the plan cannot fail for lacking them.",
+          "No rollout/exposure planning for risky changes: no concept of feature flags, staged enablement, or kill switches even when the design's own migration section admits a mixed-version window — the plan goes from approval to full deployment of behavior with no intermediate exposure state.",
+          "No post-approval integrity protection on plan.md: the human's approval checkbox (plan.template.md:85) is a mutable markdown line with no snapshot or hash of what was approved; nothing distinguishes the approved text from later agent edits, so 'the human approved this plan' is unverifiable after the fact.",
+          "No estimation or risk-ranking of tasks: blast radius is a single header line (N files, N deps, schema y/n); individual tasks carry no risk or size signal beyond the ~200-line guide, so the human at the gate cannot see which of twelve tasks is the dangerous one — a world-class gate presentation leads with it."
+        ]
+      },
+      "grokbit-implement": {
+        "summary": "grokbit-implement is the strongest-engineered skill in the suite where it anticipated failure: verify-or-revert with a precise revert definition, the environmental-failure carve-out on the retry cap, the assertion-weakening watchlist, and the 3-deviation forced replan are all genuinely better than typical agent workflows. But the phase's edges are underspecified in ways that matter: the implement↔test hand-back cycle has no counter and is explicitly excluded from the deviation cap, the dirty-tree stash/WIP snapshot is taken but never restored anywhere in the pipeline, resume semantics re-enter capped blocked tasks with a fresh budget, and the scope audit's \"promote\" disposal never says whether the promoted hunk leaves the current commit. Several plan.md task fields the plan template says \"the Implement phase parses\" (state-after, rollback) are never read, and one of them (breaks-build) directly contradicts hard rule 1's \"no partial state.\" The result is a process that is world-class on the happy path and on single-task failure, but ambiguous or unbounded exactly where a real messy session (blocked tasks, oscillating regressions, dirty trees, misbookkeeping) would land.",
+        "strengths": [
+          "Revert-to-clean is defined once, precisely, and covers created files, not just git-checkout-restorable ones (references/loops.md:47: 'a task's most common shape of work is a *new* file... Skipping the delete step leaves exactly the debris this phase exists to prevent') — most agent workflows miss this entirely.",
+          "The cannot-execute carve-out protects the retry cap from environmental failures (references/loops.md:43: 'A retry cap that burns on bash: rg: command not found reverts code that never ran against a real check') — a sophisticated distinction few processes make.",
+          "Attempt-3 desperation is named, and the Code Reviewer cross-references retry history against weakened assertions (references/roles.md:93: 'a weakened check that appeared on attempt 3 is almost always a hollow pass') — this targets the model's actual incentive to hide failure.",
+          "The dependency gate checks registry existence first, explicitly framing hallucinated names as a typosquatting attack surface, not just an error (references/roles.md:62).",
+          "Deletions are audited in both directions, including the subtle 'declared removes: but deleted nothing leaves a duplicate' case (SKILL.md:89).",
+          "The replan contract preserves task IDs and does not archive progress.md, so the ledger stays valid across a replan (references/loops.md:108-109) — a real distributed-state discipline.",
+          "host-adapters.md:39 honestly refuses to invent a worktree merge procedure rather than hand-waving one — 'This suite has no defined merge procedure for that step, and does not invent one here.'"
+        ],
+        "findings": [
+          {
+            "severity": "MAJOR",
+            "title": "The implement↔test hand-back cycle is unbounded — no counter, and explicitly excluded from the only escalation cap",
+            "detail": "Step 7 appends a fix task per triage package, runs it, then 'redo Step 6 — rewrite implement/handoff.md and re-invoke grokbit-test in verify mode for a fresh pass' (line 113). Nothing counts these round trips. Line 115 explicitly rules the hand-back out of the 3-deviation cap, so a classic oscillation — fix A introduces regression B, fix B reintroduces regression A, each fix passing its own verify and a clean scope audit — cycles indefinitely: no role, counter, or artifact ever says 'this is the 4th hand-back; something is structurally wrong.' The per-fix-task 'one-line yes' is the only brake, and the declared audience (vibe coders who 'cannot tell whether the model succeeded' per grokbit-test SKILL.md:12) will click yes each time while each cycle burns a full 8–15-invocation verify pass. A world-class process caps repair cycles (e.g., 2 hand-backs then mandatory replan or human takeover) exactly the way this skill already caps everything else. Fix: give Step 7 its own cap with a defined escalation, mirroring Loop I5's design.",
+            "file": "resources/skills/grokbit-implement/SKILL.md",
+            "line": 113,
+            "evidence": "On completion, redo Step 6 — rewrite `implement/handoff.md` and re-invoke `grokbit-test` in verify mode for a fresh pass."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "The dirty-tree snapshot is taken but never restored — the user's uncommitted work vanishes into a stash (or is permanently committed) with no recovery step anywhere",
+            "detail": "Entry condition 2 and Step 1 mandate `git stash push -u` or a WIP commit before task 1 when proceeding dirty (SKILL.md:17, 53; roles.md:17). `git stash push -u` removes the user's uncommitted edits from the working tree entirely — and no step in the entire pipeline (Steps 2–7, the handoff template, Loop I5's replan contract) ever pops the stash or tells the user it exists. The WIP-commit alternative is worse: the user's half-done work becomes a permanent commit that every task commit then stacks on, with no unwind procedure. For the declared vibe-coder audience, work that silently disappeared into a stash is indistinguishable from destroyed work, and a later `git stash pop` (which nobody instructs) will conflict with task edits to the same files — also unaddressed. Fix: Step 6 (Handoff) must include a snapshot-restoration step — pop the stash (with conflict guidance) or tell the user in plain language where their work went, and the handoff template needs a 'Snapshot restored / still stashed as …' row.",
+            "file": "resources/skills/grokbit-implement/SKILL.md",
+            "line": 53,
+            "evidence": "snapshot the tree now, before returning control for the first task: `git stash push -u -m \"pre-implement snapshot <slug>\"` or a WIP commit, and record which one."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Preflight's `git init` + initial commit has no .gitignore or secret guidance — it can permanently bake .env secrets and node_modules into history, unreviewed",
+            "detail": "SKILL.md:51 and roles.md:16 have the Build Engineer offer `git init` plus an initial commit in a directory that, by construction, has no repository and therefore no .gitignore. A vibe coder's project directory routinely contains `.env` with live keys, `node_modules/`, build output, and local databases — an all-files initial commit bakes secrets into git history permanently (a later push leaks them; `git rm` does not remove history). The Code Reviewer scans diffs for 'Secrets, keys, tokens' (roles.md:95), but the initial commit precedes every review in the pipeline. This also contradicts the Build Engineer's own tool grant — 'read, shell (read-only commands and installs only — no source edits)' (roles.md:11) — which forbids nothing about creating commits, stashing the tree, or initializing repos, all of which its duties require; the host-adapters PreToolUse enforcement suggestion (host-adapters.md:31) would deadlock preflight if enforced as written. Fix: the git-init procedure must generate a stack-appropriate .gitignore and run a secret sweep before the initial commit, and the tool grant must be rewritten to match the role's actual duties.",
+            "file": "resources/skills/grokbit-implement/SKILL.md",
+            "line": 51,
+            "evidence": "If it's missing, offer to run `git init` plus an initial commit (ask first …)"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Scope-audit 'promote' never says whether the promoted hunk leaves the current diff — either reading breaks the audit's guarantee",
+            "detail": "Loop I3's body (loops.md:61) offers 'revert it, or promote it to a new task' and the 05-review template (line 9) records 'resolution: reverted | promoted to T<new>' as mutually exclusive — implying a promoted hunk is NOT reverted. But the commit happens after I3 exits, so a non-reverted promoted hunk ships inside the current task's commit: an unreviewed, unapproved change in a commit whose `git revert` rollback now drags it along — precisely the 'change nobody reviewed' the audit exists to prevent (SKILL.md:87). If instead the hunk IS reverted and re-done by the new task, the text never says so, and the new task's approval-before-Write makes sense — but then the template's exclusive-or is wrong. Additionally, I3's exit ('every promoted task has its one-line approval', loops.md:65) blocks the loop on a synchronous human response with no defined behavior for an absent human (commit without it? park the task? stop the pipeline?). Fix: one sentence — 'promotion always reverts the hunk from the current diff; the new task re-implements it' — plus a defined wait/timeout disposition.",
+            "file": "resources/skills/grokbit-implement/references/loops.md",
+            "line": 61,
+            "evidence": "For each `OUT_OF_SCOPE` hunk the engineer reverts it, or promotes it to a new task appended to `plan.md` with its own verify command."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "No re-verify after scope-audit hunk reverts — a task can be committed with a verify that no longer passes",
+            "detail": "Step 4 runs 'After a task's verify passes, before its commit' (SKILL.md:83), and Loop I3's cap behavior is 'revert everything still contested and commit only the in-scope remainder' (loops.md:67). Nothing re-runs the task's verify after hunks are reverted. An out-of-scope hunk can be load-bearing — e.g., the engineer widened a shared helper out of scope and the in-scope code calls it — so reverting it silently breaks the verify that already 'passed', and the commit lands broken anyway, violating hard rule 1's core guarantee ('every task either passes its verify command or gets reverted to clean', SKILL.md:10). Worse, a verify-after-revert failure is exactly the signal that the task genuinely needed an undeclared file (a defined deviation type), and the process never gets to see it. Fix: Loop I3's exit and cap behavior must both include 're-run the task's verify after any revert; if it now fails, record the undeclared-dependency deviation and treat per Loop I2.'",
+            "file": "resources/skills/grokbit-implement/references/loops.md",
+            "line": 67,
+            "evidence": "**Cap behavior:** revert everything still contested and commit only the in-scope remainder."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Resume semantics re-enter blocked tasks with a fresh retry budget, and the `skipped` status is never defined or assigned",
+            "detail": "SKILL.md:21 says 'Resuming is normal — read implement/progress.md and continue from the first task not marked done.' A `blocked` task is not marked done, so a resumed session continues FROM a task that already hit its 3-attempt cap and was reverted — nothing says the cap persists across sessions or that blocked tasks are skipped on resume, so each resume grants a fresh Loop I2 budget and the user ping-pongs on the same impossible task (bounded only if each re-block is re-recorded as a new deviation, which is also unstated). Meanwhile progress.template.md:18 defines a status vocabulary including `skipped` that no text in SKILL.md or loops.md ever assigns or handles — presumably for tasks whose dependency blocked, but that is a guess the executor must make. Fix: 'continue from the first task marked pending or in-progress; blocked stays blocked until replan or explicit human unblock; a task whose dependency is blocked is marked skipped and revisited only after replan.'",
+            "file": "resources/skills/grokbit-implement/SKILL.md",
+            "line": 21,
+            "evidence": "Resuming is normal — read `implement/progress.md` and continue from the first task not marked `done`."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Nothing runs the project's test suite between preflight and the test phase — cross-task breakage is invisible until after all tasks complete",
+            "detail": "Step 2 runs only 'the task's verify: command' (SKILL.md:67); the full suite runs once in preflight (SKILL.md:57) and then not again until grokbit-test verify mode after handoff. A task whose narrow verify passes can break unrelated tests (shared helper, changed default — the exact blast radius SKILL.md:87 worries about), and the breakage surfaces only after every remaining task has been built on top of it, as a hand-back — the most expensive possible discovery path. Commit-per-task's promise that 'rollback [is] real rather than aspirational' (SKILL.md:26) is hollowed out: with no suite health recorded at any commit boundary, nobody knows which commit to revert. Plan Loop 4 permits suite runs inside individual verify commands (plan.template.md T6: 'AND npm test green') but that is per-plan discretion, not a phase discipline. A world-class team gates every commit on suite health. Fix: run the suite (or an affected subset) after each task's verify, diffed against preflight's pre-existing-failure list; a new failure is a finding at the task that caused it.",
+            "file": "resources/skills/grokbit-implement/SKILL.md",
+            "line": 67,
+            "evidence": "3. Run the task's `verify:` command, from its `cwd` when it names one other than `none`."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "plan.md fields `state-after: breaks-build` and `rollback:` are never consumed, and breaks-build directly contradicts hard rule 1's 'no partial state'",
+            "detail": "The plan template warns 'the Grokbit extension and the Implement phase parse it' (plan.template.md:5-6) and sanctions `state-after: working | breaks-build` (line 37; plan Loop 4 checklist line 93: 'explicitly left breaks-build and that is stated plainly at the gate'). grokbit-implement never mentions `state-after` anywhere — not in SKILL.md, roles.md, or loops.md — yet hard rule 1 declares 'every task either passes its verify command or gets reverted to clean. There is no partial state' (SKILL.md:10), and hard rule 2 commits each task. An executor facing an approved breaks-build task has contradictory instructions: commit a known-broken build (violating the phase's stated discipline, and stranding the repo broken if the session dies at that commit) or refuse the plan. The `rollback:` field is likewise never read by any implement role, despite every task carrying one. Fix: Step 2 must state how a breaks-build task is verified and committed (e.g., must be immediately followed by the task that restores `working`, both committed in the same sitting), and either consume `rollback:` in the blocked-task procedure or delete the field.",
+            "file": "resources/skills/grokbit-implement/SKILL.md",
+            "line": 10,
+            "evidence": "**every task either passes its verify command or gets reverted to clean.** There is no partial state."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "The deviation counter conflates unrelated signals — two routine dependency rejections plus one real contradiction forces a full Survey re-run",
+            "detail": "SKILL.md:95 states the cap's meaning: 'Three contradictions means the survey was wrong about the shape of the codebase.' But the enumerated deviation types (SKILL.md:93, loops.md:97) include 'a dependency rejected' — the dependency gate doing its normal job ('Reject, and the Software Engineer either uses the existing option', SKILL.md:79) — and 'a task blocked at cap', which can reflect implementation difficulty rather than survey error. So a healthy Analyst rejecting `moment` twice plus one genuine survey contradiction trips the most expensive escalation in the suite (archive design, re-run Survey, re-approve), on evidence that says nothing about the survey. The skill itself calls this 'the most important number in this skill' (SKILL.md:97) — a mis-calibrated most-important-number teaches users to distrust the escalation, which is the exact failure the threshold exists to prevent. Fix: count only survey-contradiction-class deviations (wrong export/signature/location, undeclared files, verify-cannot-execute) toward the replan cap; track rejections and blocks separately with their own dispositions.",
+            "file": "resources/skills/grokbit-implement/SKILL.md",
+            "line": 95,
+            "evidence": "Three contradictions means the survey was wrong about the shape of the codebase, and every remaining task rests on the same bad ground."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Revert-to-clean's destructive delete trusts an unverified self-reported `Created:` ledger instead of git's own record",
+            "detail": "Loop I2's cap behavior deletes 'every file this task created (per its progress.md entry's Created: list)' (loops.md:45); roles.md:44 has the SWE self-report which files it created vs modified. A single bookkeeping error — the SWE wholesale-rewrites a pre-existing tracked file and records it as Created, a plausible LLM error — means revert-to-clean DELETES a pre-existing file and never checks it out (it isn't on the modified list), and the next task's commit can silently sweep the deletion in. The entire skill is built on distrusting LLM self-reports (retry caps, fresh-context reviewers, 'record actual observed values rather than expectations'), yet its one destructive operation is driven purely by an LLM-maintained list when git itself holds ground truth: files untracked at task start (`git status --porcelain` snapshot, or `git stash`/`git clean -n` semantics) are the authoritative 'created' set. Fix: capture `git status --porcelain` at task start; revert-to-clean deletes only files untracked in that snapshot, using the ledger as a cross-check, not the source of truth.",
+            "file": "resources/skills/grokbit-implement/references/loops.md",
+            "line": 45,
+            "evidence": "delete every file this task created (per its `progress.md` entry's `Created:` list) and `git checkout` every tracked file this task modified"
+          },
+          {
+            "severity": "MINOR",
+            "title": "The cannot-execute carve-out lets the failing engineer unilaterally rewrite the verify command with no equivalence review",
+            "detail": "Loop I2:43 sanctions 'fix the *command* (not the code)' when a verify cannot execute, and the deviations template's own worked example (D3, deviations.template.md:34) shows the SWE rewriting `rg` to `grep -r` and self-certifying the rerun 'passed'. The classification (environmental vs. real failure) is made by the same role whose code just failed, and no role ever checks that the rewritten command still proves what the original did — the Code Reviewer audits the diff, not the deviations file. An SWE under attempt-pressure can launder a hard failure as an environment mismatch and substitute a weaker check, which is the skill's own top-listed fear ('a green verify bought by weakening the check', SKILL.md:132) entering through a sanctioned door. Mitigations exist (it is recorded as a deviation and counts toward the cap), so this is a hole in review coverage, not an open gate. Fix: require the scope-audit round for that task to explicitly confirm the rewritten command is equivalent in what it exercises, citing the deviation entry.",
+            "file": "resources/skills/grokbit-implement/references/loops.md",
+            "line": 43,
+            "evidence": "Record it in `implement/deviations.md` with the exact execution error, fix the *command* (not the code)"
+          },
+          {
+            "severity": "MINOR",
+            "title": "Promoted-task placement contradicts itself (appended vs. inserted), and Step 7's 'every task is already done' premise is false whenever handoff carried blocked tasks",
+            "detail": "SKILL.md:85 says 'promote it to a new task appended to plan.md' and hard rule 5 (line 29) describes both sanctioned actions as 'Appending a new task'; the deferred authority it points to says the opposite — 'is inserted immediately after the task that produced it, not appended to the end' (loops.md:63). An executor following SKILL.md verbatim mis-orders the plan the deferred definition calls 'sane.' Separately, Step 7 asserts 'By this point every task in plan.md is already done' and justifies insertion 'after the last existing task — every prior task is already done' (SKILL.md:109, 111) — but Step 6 hands off to grokbit-test with blocked tasks listed (handoff.template.md:12-13, and Step 2's cap behavior continues past them), and a DO NOT SHIP can arrive in exactly that state. Then both entry paths are live — line 21's resume rule ('first task not marked done' = the blocked task) and Step 7's intake — with no rule choosing between them or ordering the fix task relative to the still-blocked one. Fix: reconcile append/insert to one rule, and rewrite Step 7's premise to cover the blocked-tasks-outstanding case.",
+            "file": "resources/skills/grokbit-implement/SKILL.md",
+            "line": 111,
+            "evidence": "Insert it after the last existing task — every prior task is already done, so it can only be ordered last."
+          }
+        ],
+        "gaps": [
+          "No code-quality review exists anywhere in the phase: the Code Reviewer is explicitly scope-only ('You are not reviewing code quality in general', roles.md:78), so logic errors, missing edge cases, and poor error handling that happen to pass the single verify command ship unreviewed — a world-class team reviews the change itself, not just its boundary.",
+          "No branch isolation or whole-plan abandonment procedure: every task commits directly to the user's current branch, so a DO NOT SHIP verdict or an abandoned session leaves N unshippable commits on (typically) main with no defined unwind beyond per-task `git revert` — a world-class team implements on a branch where abandonment is deleting it.",
+          "No safety screening of plan-authored verify commands before execution: Implement runs `verify:` verbatim up to three times; a destructive command (rm -rf, git clean, db reset) that survived plan approval by a non-expert executes unchecked — a world-class process lints or sandboxes commands it did not write.",
+          "Dependency-gate trigger coverage is a hardcoded three-command list ('Any npm install, pip install, cargo add', SKILL.md:75): yarn/pnpm/bun/poetry/uv/go get are ungated, and editing package.json directly followed by a bare `npm install` bypasses the gate entirely; the gate also never mandates --ignore-scripts or post-install lockfile pinning, so an approved package's install scripts still run arbitrary code.",
+          "The progress.md `Cost` column demands per-task dollar figures ($0.12, $0.48 in the template) that neither host CLI exposes to the agent — the skill's own ethos is 'record actual observed values rather than expectations,' yet this field can only be fabricated; a world-class process either wires real cost telemetry or drops the column.",
+          "No concurrency protocol for artifacts: two sessions on the same slug (or two slugs sharing the single-slot .grokbit/handoff.md, which Step 6 acknowledges is last-writer-wins) clobber each other's progress.md/deviations.md with no lock, lease, or even a 'check for a live session' step.",
+          "No replan-count ceiling: Loop I5 can fire repeatedly (replan-1, replan-2, ...) with no rule that after N failed replans the correct action is human takeover rather than another Survey pass — the human approval gate is the only brake, same weakness as the hand-back cycle."
+        ]
+      },
+      "grokbit-test": {
+        "findings": [
+          {
+            "severity": "BLOCKER",
+            "title": "UNKNOWN findings have no consumer — the classification the skill most promotes vanishes at the verdict",
+            "detail": "SKILL.md line 66 insists 'UNKNOWN is a real category and you should use it' and roles.md line 30 says to 'Use UNKNOWN freely' precisely for suspicious differences. But nothing downstream consumes an UNKNOWN: Loop T3 triage triggers only on 'Any REGRESSION or failing criterion check' (loops.md:49); the verdict rule forces DO NOT SHIP only 'On any REGRESSION or an outstanding CRITICAL' (SKILL.md:120, roles.md:116); and release-readiness.template.md's Evidence block counts only 'Regressions: N' with no UNKNOWN row. Meanwhile SKILL.md:130 claims UNKNOWN tests 'belong to Step 6's hand-back instead' and roles.md:40 says they 'go back to grokbit-implement' — a path that does not exist, since grokbit-implement's Step 7 intake (its SKILL.md:109) accepts only DO-NOT-SHIP-on-REGRESSION/CRITICAL packages. Net effect: a genuine break honestly classified UNKNOWN (the skill's own recommended behavior) affects nothing, ships under a SHIP verdict, and leaves its baseline test red forever — becoming exactly the inherited-preflight rot Step 7 says it exists to prevent. Fix: define UNKNOWN's disposition explicitly — e.g., UNKNOWN forces SHIP WITH CAVEATS at minimum with each item listed for human adjudication, add an UNKNOWN count to the verdict Evidence block, and either give implement an intake trigger for adjudicated UNKNOWNs or state that the human resolves each to INTENDED/REGRESSION before the verdict can be SHIP.",
+            "file": "resources/skills/grokbit-test/SKILL.md",
+            "line": 130,
+            "evidence": "Never touch a test behind a `REGRESSION` or `UNKNOWN` finding here — those stay red, unedited, and belong to Step 6's hand-back instead."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "A change that fails its own done-criteria can be verdicted SHIP WITH CAVEATS, and its triage package has no receiver",
+            "detail": "Loop T3 triggers on 'Any REGRESSION or failing criterion check' and its body ends 'Hand the package to grokbit-implement' (loops.md:49,57). But (a) the verdict rules never mention done-criteria failures — only REGRESSION and CRITICAL force DO NOT SHIP (SKILL.md:120, roles.md:116), so the Release Engineer may verdict SHIP WITH CAVEATS on a change whose acceptance criteria demonstrably failed; and (b) grokbit-implement's Step 7 intake is 'Triggered when grokbit-test's Step 6 verdict is DO NOT SHIP on a REGRESSION or an outstanding CRITICAL' (grokbit-implement/SKILL.md:109), so a failing-criterion triage package arrives at a door with no trigger to open it. The severity ordering is also inverted: an off-by-a-cent characterization diff (REGRESSION) hard-blocks, while 'the feature you asked for does not work' (failed criterion) is discretionary. Fix: add failing done-criterion checks to the DO NOT SHIP rule and to implement's intake trigger list.",
+            "file": "resources/skills/grokbit-test/references/loops.md",
+            "line": 49,
+            "evidence": "| **Trigger** | Any `REGRESSION` or failing criterion check |"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Loop T4's repair/acknowledgment machinery is undefined: no intake for HIGH-and-below fixes, no step obtains the human acknowledgment, no home for the rescan counter",
+            "detail": "T4's body says 'hand findings to Implement for repair, rescan after fixes land' with 'HIGH and below: 2 rescan rounds' (loops.md:73-75), but grokbit-implement's intake accepts only REGRESSION/CRITICAL-driven DO NOT SHIP hand-backs — a HIGH/MEDIUM finding has no sanctioned repair path at all. T4's exit says 'HIGH and below may ship with explicit written acknowledgment from the human' (loops.md:77), and security.template.md:26 has an 'acknowledged by <human> on <date>' cell, yet no step, role prompt, or loop anywhere in verify mode schedules asking the human — verify mode has zero defined human touchpoints before the verdict. So either the verdict quietly ships unacknowledged HIGHs as caveats (contradicting T4's exit condition) or the run deadlocks waiting for an acknowledgment nobody is tasked to request. Finally, 'rescan after fixes land' necessarily spans multiple verify invocations (fixes land via implement), and no artifact records which rescan round this is — the counter has no state location. Fix: route HIGH-and-below repairs through the same appended-task intake, add an explicit 'present findings to the human for acknowledgment' step before the verdict, and record the rescan round number in security.md.",
+            "file": "resources/skills/grokbit-test/references/loops.md",
+            "line": 75,
+            "evidence": "**Body:** Scan, classify by severity, hand findings to Implement for repair, rescan after fixes land."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "The Release Engineer's own prescribed command prints Kubernetes Secret values into the transcript",
+            "detail": "roles.md line 106 instructs `kubectl get secret <name> -o jsonpath='{.data}'` with the parenthetical '(keys only — never decode a Secret's value)'. That command does not return keys only — it prints the entire .data map including every base64-encoded value, and base64 is an encoding, not encryption; the 'never decode' caveat is no protection once the values are in an AI transcript and potentially quoted into `test/release-readiness.md`. This directly violates the same skill's 'Names only. Never print values' rule (release-readiness.template.md:35) and hands live credentials to the exact phase whose Security step exists to catch leaked secrets. Fix: prescribe a keys-only command, e.g. `kubectl get secret <name> -o go-template='{{range $k,$v := .data}}{{$k}}{{\"\\n\"}}{{end}}'` or `... -o json | jq -r '.data | keys[]'`. SKILL.md:112's shorthand 'kubectl get configmap/secret' needs the same correction.",
+            "file": "resources/skills/grokbit-test/references/roles.md",
+            "line": 106,
+            "evidence": "`kubectl get secret <name> -o jsonpath='{.data}'` (keys only — **never decode a Secret's value**)"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "No volatile-value or flake discipline anywhere: nondeterminism converts directly into false REGRESSIONs that hard-block the ship",
+            "detail": "Baseline mode says 'Write characterization tests that assert exactly what you observed' (roles.md:21, loops.md:19) with zero guidance on scrubbing timestamps, UUIDs, auto-increment ids, unordered collections, or ports — the values real 'actual outputs' are full of. A test asserting a captured timestamp fails on replay with no behavior change; Step 1 must classify it REGRESSION (nothing in the plan said it would change), and 'On any REGRESSION... the verdict is DO NOT SHIP' (SKILL.md:120) — so nondeterminism mechanically produces DO NOT SHIP, a T3 triage of a ghost, and a hand-back fix task the vibe-coder audience will approve without understanding. There is likewise no rerun/quarantine rule for a flaky pre-existing project test that was green at preflight and red at verify. Characterization-testing practice (approval testing) treats scrubbers and repeat-run stability checks as table stakes. Fix: T1 must require running each characterization test twice before commit and normalizing volatile values; Step 1 must require reproducing a REGRESSION once before classifying it.",
+            "file": "resources/skills/grokbit-test/references/roles.md",
+            "line": 21,
+            "evidence": "Write characterization tests that assert exactly what you observed. Commit them before implementation starts."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Baseline-mode visual captures are promised by the template but no role or loop can produce them",
+            "detail": "baseline.template.md:19-25 contains a '## Visual captures' table (`captures/settings-desktop-before.png`), and Step 3 depends on it ('Screenshot diffs against baseline captures where available', SKILL.md:86; roles.md:46 'baseline captures if present'; host-adapters.md:61 promises 'before/after screenshots side by side'). But baseline mode enters only Loop T1, which 'Runs: QA Automation Engineer' (loops.md:12), whose tools are 'read, shell, ... write to test files and the plan directory' (roles.md:15) — no headless browser, no screenshot tool. The Frontend QA Engineer, who has those tools, is dispatched only in verify mode (T5 trigger: 'Verify mode, change touched UI', loops.md:89). The Modes table confirms it: baseline mode writes only 'test/baseline.md, generated characterization tests' (SKILL.md:18). So the 'before' images the visual-diff feature requires are structurally never captured; every UI change silently degrades to intent-only visual checks and the flagship before/after comparison can never happen. Fix: dispatch the Frontend QA Engineer in baseline mode for UI-touching tasks, or add browser/screenshot to T1's toolset and the Modes table's baseline outputs.",
+            "file": "resources/skills/grokbit-test/assets/baseline.template.md",
+            "line": 19,
+            "evidence": "## Visual captures\nPaths are relative to this file's own directory"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "No re-verify protocol: the second verify pass after a hand-back overwrites the first pass's artifacts and their evidence",
+            "detail": "grokbit-implement's hand-back path ends 're-invoke grokbit-test in verify mode for a fresh pass' (its SKILL.md:113), but grokbit-test never defines what a second pass does to `test/results.md`, `test/security.md`, or `test/release-readiness.md` — one file each in the output contract (SKILL.md:136-141), no pass numbering, no archiving convention (contrast implement's explicit `replan-1/` archiving of superseded artifacts, its SKILL.md:128). Overwriting destroys the prior triage record, the human's written HIGH-severity acknowledgments in security.md's Outstanding column, and any basis for counting T4's '2 rescan rounds' across passes; Step 7's instruction to regenerate assertions 'to the value already captured in Step 1's Regression table' (SKILL.md:128) becomes ambiguous about which pass's table. Appending instead is also undefined and would corrupt the templates' single-table shapes. Fix: define the convention — e.g., archive the prior pass under `test/pass-N/` before rewriting, and stamp the pass number in each artifact header.",
+            "file": "resources/skills/grokbit-test/SKILL.md",
+            "line": 136,
+            "evidence": ".grokbit/plans/<slug>/test/\n├── baseline.md            pre-change behavior, captured before implementation\n├── results.md             regression findings",
+            "": null
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Baseline NOT CAPTURED areas are required to be restated at verify time, but no verify step, prompt, or template slot implements it",
+            "detail": "Loop T1's cap behavior mandates 'the verify run must say so rather than implying silence means safety' (loops.md:23), and baseline.template.md:28 repeats 'The verify run must say so explicitly.' Yet nothing in verify mode discharges the obligation: Step 1's instructions (SKILL.md:58-74), the QA Automation Engineer's verify prompt (roles.md:25-38), and results.template.md all lack any mention of NOT CAPTURED — the template's Regression table lists only replayed behaviors and the only honesty section, '## Reduced mode', covers a wholly missing baseline, not a partial one. So a payment flow recorded NOT CAPTURED at baseline reads as clean in results.md and in the verdict's 'Regressions: N' evidence line — silence-implies-safety, the precise failure the skill names. Fix: add a '## Not regression-checked' section to results.template.md sourced from baseline.md's NOT CAPTURED list, and an explicit instruction in Step 1 and the role prompt to carry it forward into the verdict's caveats.",
+            "file": "resources/skills/grokbit-test/references/loops.md",
+            "line": 23,
+            "evidence": "Those areas cannot be regression-checked later, and the verify run must say so rather than implying silence means safety."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Standalone invocation — the likeliest vibe-coder entry — is undefined when plan artifacts do not exist",
+            "detail": "The skill's own description invites direct use ('Check that the change works and nothing else broke') and it ships as an independently invocable skill on both CLIs, but every verify step hard-depends on upstream artifacts: Step 1's INTENDED requires a `03-design.md` citation, Step 2 iterates `01-intent.md` done-criteria, Step 5 cross-checks `plan.md` `removes:` fields, and the Modes table lists them all as reads (SKILL.md:19). Loop T6 handles exactly one missing artifact — `test/baseline.md` — and nothing else. A user who says 'test my change' without having run explore/plan/implement gets: no criteria to check (Step 2 undefined on an empty set), every difference forced to UNKNOWN (which finding 1 shows goes nowhere), no preflight to diff the suite against (Step 1's second half undefined), and no defined reduced-mode statement for any of it. A world-class process degrades gracefully at its entry points; this one only degrades gracefully at one. Fix: extend T6 (or add a T6b) covering absent plan/intent/design/preflight — state what was missing, derive ad-hoc criteria from the user's stated request, and mark the rest UNVERIFIED.",
+            "file": "resources/skills/grokbit-test/SKILL.md",
+            "line": 3,
+            "evidence": "description: Check that the change works and nothing else broke — so you know if it is safe to ship."
+          },
+          {
+            "severity": "MAJOR",
+            "title": "'Start the real production command and hit a health endpoint' has no isolation, timeout, or teardown guidance",
+            "detail": "SKILL.md:116 and roles.md:109 instruct the Release Engineer to start the real production process, in a phase that runs largely unattended for a non-expert user. Three unaddressed hazards: (1) production commands read whatever env is present — a vibe coder's `.env`/`.env.production` frequently holds live credentials, and many stacks run migrations or seed jobs on boot, so 'start the real production command' can mutate production data from the test phase of a local pipeline; (2) no timeout or kill instruction — a server that binds a port and never exits hangs the shell in hosts without background-process management; (3) no port-conflict handling against the user's own running dev server, whose failure would be misreported as a broken build. The step's stated goal (build soundness + health) needs an explicit 'run against local/dummy env vars, never production credentials; bounded wait; always kill the process' contract. Compare the care the same step takes with env-var values ('names only, never values') — process-lifecycle and data-safety care is absent.",
+            "file": "resources/skills/grokbit-test/SKILL.md",
+            "line": 116,
+            "evidence": "Start the real production command and hit a health endpoint."
+          },
+          {
+            "severity": "MINOR",
+            "title": "AppSec prompt directs the role to a survey artifact its declared Inputs do not include",
+            "detail": "The Application Security Engineer is told to compare new endpoints 'against how existing endpoints in this repo do it — the survey recorded the pattern' (roles.md:78), i.e. to consult `02-survey.md`. But its Inputs line (roles.md:70) lists only 'the full change diff, implement/handoff.md, dependency additions'. Under the dispatch contract — subagents receive 'the role prompt plus the named inputs' (host-adapters.md:26) — an isolated-context AppSec subagent structurally cannot perform the comparison as instructed; it will either skip the check or hallucinate the repo's auth pattern. Fix: add `02-survey.md` to the AppSec Inputs line (and to the verify-mode Reads column of SKILL.md's Modes table).",
+            "file": "resources/skills/grokbit-test/references/roles.md",
+            "line": 78,
+            "evidence": "Compare against how existing endpoints in this repo do it — the survey recorded the pattern."
+          },
+          {
+            "severity": "MINOR",
+            "title": "No proportionality: the full 8-15 invocation, expensive-tier pipeline runs identically for a one-line change",
+            "detail": "Loop budget concedes the cost ('Verify mode runs roughly 8-15 invocations, and the roster itself is not cheap', loops.md:146) but the skill defines no risk-tiered reduced path: a one-line copy fix gets baseline capture, seven verify steps, five roles, deployment-target detection, env-parity tables, and migration analysis. For the declared vibe-coder audience this is the strongest incentive to skip the phase entirely — the worst possible outcome for a safety net. A world-class team scales verification to blast radius (e.g., docs-only or UI-copy changes get criteria + visual + security-lite; schema or auth changes get the full battery). The plan phase already produces the risk signal (files touched, `baseline:`/`removes:` fields, migrations) that a tiering rule could key off. Fix: add an explicit change-class table mapping plan signals to the subset of Steps 1-7 that must run, with everything skipped recorded as SKIPPED — <class rule>, keeping the honesty contract intact.",
+            "file": "resources/skills/grokbit-test/references/loops.md",
+            "line": 146,
+            "evidence": "Verify mode runs roughly 8–15 invocations, and the roster itself is not cheap."
+          }
+        ],
+        "gaps": [
+          "No flaky-test or quarantine policy anywhere: nothing distinguishes 'red because broken' from 'red because flaky' — no rerun rule, no stability check at baseline commit time, no quarantine list carried between sessions.",
+          "No test-adequacy measure for NEW code: the phase checks stated done-criteria and old behavior (baseline replay), but new logic paths that have neither a criterion nor a pre-existing behavior are never required to be exercised — no changed-line coverage, branch coverage, or mutation check on the diff.",
+          "No rollback rehearsal: grokbit-plan mandates a rollback per task and release-readiness.template.md asks 'Reversible: yes', but nothing ever executes a rollback or a down-migration to prove reversibility — a world-class release-readiness check exercises the escape hatch, not just asserts it.",
+          "No performance regression check beyond bundle/image size delta: no latency, memory, query-count, or startup-time comparison against baseline, even though the baseline phase is the natural place to capture those numbers.",
+          "No accessibility pass in visual QA: the Frontend QA checklist (render, clip, overlap, states) omits contrast, focus order, keyboard reachability, and ARIA — standard items on a world-class FE QA checklist and cheap to add headlessly (e.g., axe-core).",
+          "No global cap or escalation rule on test↔implement hand-back round trips: each round has a one-line human approval, but a vibe coder will rubber-stamp; a world-class process escalates to replan (grokbit-plan) after N failed verify rounds the way implement's own 3-deviation rule escalates.",
+          "No test-data/fixture strategy for baseline capture: 'exercise the real code path' is silent on auth, seeded databases, and external services beyond the NOT CAPTURED escape hatch — a world-class characterization effort defines how to stand up representative state.",
+          "No artifact-hygiene rule for the skill's own outputs: screenshots and verbatim 'observed output' captures can embed PII, tokens, or secrets rendered on screen into .grokbit/plans/<slug>/test/, which the Security step never scans because it scans the change diff, not the test artifacts.",
+          "No cross-browser/device dimension in visual verification: one headless engine at two widths is assumed sufficient; no statement of the limit, so a vibe coder reads PASS as 'works everywhere'.",
+          "No machine-readable verdict: the extension is named as the one consumer the team controls (host-adapters.md § The Grokbit extension), yet the verdict/severity/counts exist only as prose markdown — a world-class pipeline emits a small structured summary (JSON front-matter or a fixed table) so the UI cannot misparse SHIP WITH CAVEATS."
+        ],
+        "strengths": [
+          "Baseline-before-implementation as a hard structural requirement, with retroactive baselining explicitly named and rejected ('A baseline captured after the first edit is not a baseline', SKILL.md:52; 'an instrument calibrated against the thing it is supposed to measure', loops.md:25) — this is correct regression methodology most agent workflows get wrong.",
+          "Verification/repair separation enforced at the tool-grant level, not just as advice: roles get no write access to source (roles.md:3), T3 forbids fixing during triage with the rationale that a fix here bypasses Implement's scope audit (loops.md:63), and host-adapters.md:30 shows how to make it a real PreToolUse invariant.",
+          "The Step 7 baseline-retirement lifecycle (SKILL.md:124-132, Loop T7) closes a rot loop nearly every process ignores — intentionally-red characterization tests polluting the next session's preflight — with a carve-out from hard rule 1 that is narrowly scoped (INTENDED-only, post-verdict, same citation, own commit) and defended against abuse in the failure-modes list (SKILL.md:147).",
+          "The UNVERIFIED-never-blank discipline is applied consistently across surfaces: env-parity rows ('a blank cell reads as checked-and-clean', SKILL.md:114), missing headless browser (Loop T5 prerequisite), reduced mode (Loop T6), and the capability-detection table (host-adapters.md:20) — honest uncertainty reporting is the phase's genuine differentiator for the non-expert audience.",
+          "The asymmetric security cap with articulated reasoning ('A leaked key is not recoverable by trying again tomorrow, so this is the one place the suite refuses to make the trade', loops.md:81) is the right exception to the otherwise-bounded loop design.",
+          "The narrow suite-diff exclusion for INTENDED-red baseline tests (SKILL.md:70) anticipates a subtle false-regression interaction between the baseline mechanism and preflight diffing, and bounds the exclusion explicitly so it cannot widen into a loophole."
+        ],
+        "summary": "grokbit-test's core design is genuinely strong — baseline-before-change characterization, structural verification/repair separation, the UNVERIFIED-never-blank honesty contract, and the Step 7 retirement lifecycle are things most real teams lack. The failures concentrate at the seams: the UNKNOWN classification the skill actively promotes has no consumer at the verdict and its promised hand-back path does not exist (BLOCKER); failing done-criteria force neither a verdict nor an intake; Loop T4's repair, acknowledgment, and rescan machinery points at mechanisms that are never defined; and repeated verify passes have no artifact-versioning model, so hand-back cycles overwrite their own evidence. Two operational-safety slips undercut the phase's own safety posture: the prescribed kubectl invocation prints Secret values, and 'start the real production command' carries no isolation or teardown guidance. For the declared vibe-coder audience, the biggest fit problems are an undefined standalone entry (no path when plan artifacts don't exist) and zero proportionality — the full expensive-tier battery runs identically for a one-line change, which is the strongest incentive to skip the safety net entirely."
+      },
+      "grokbit-document": {
+        "findings": [
+          {
+            "severity": "BLOCKER",
+            "title": "Loop D1 is a deadlock on the primary audience's machine: it can neither pass nor safely run, and the two texts defining its exit contradict each other",
+            "detail": "loops.md defines D1's formal exit as 'zero BLOCKER findings' (L30) but then states 'A cap-3 pass counts only if commands were actually executed. Listing them three times and calling it verification is not this loop' (L49-51), and host-adapters.md states flatly that without a disposable container 'Loop D1 cannot exit clean' (L20). Cap behavior is 'block. Do not emit the document' (loops.md L32). Six of twelve seeded types carry commands_run (readme, contributing, runbook, user-guide, test-plan, api-reference). The declared audience is a vibe coder clicking a button in VS Code on their own laptop — no container, no CI. Strict reading: every command-bearing doc (i.e., the skill's own stated most-common request, the README) hits cap 3 and is permanently blocked. Loose reading: an agent exits on the formal 'zero BLOCKER' criterion with all-PENDING results and ships a doc whose 'single highest-value check' (SKILL.md L99) never ran. The only third option the text offers is passing --i-understand-this-runs-shell, which roles.md itself declares unsafe ('never treat a --execute run outside a disposable environment as safe just because the flag exists', L82). No safe degradation path (e.g., 'ship with commands visibly marked UNVERIFIED') is defined anywhere; SKILL.md L99 explicitly forbids the ship-with-warning path. A fix must pick one: define a container-provisioning step, or define an honest degraded emission mode, and make loops.md's Exit line and prose agree.",
+            "file": "resources/skills/grokbit-document/references/loops.md",
+            "line": 49,
+            "evidence": "A cap-3 pass counts only if commands were actually executed. ... Cap behavior: block. Do not emit the document. / host-adapters.md L20: Commands stay listed, not run, and Loop D1 cannot exit clean"
+          },
+          {
+            "severity": "BLOCKER",
+            "title": "Regenerating a previously-emitted doc silently destroys the user's hand edits — the frontmatter-presence rule contradicts 'treat their edit as authoritative'",
+            "detail": "registry.md § Living documents: 'If the output path already carries this skill's own grokbit_type frontmatter, it was written by this skill before and is safe to regenerate in place' (L87). The diff-and-confirm protection applies only to files with NO frontmatter. But host-adapters.md L95-97 tells the extension to 'Let the user edit any emitted document ... treat their edit as authoritative, the same rule the rest of this suite applies to every artifact.' A user edit does not remove the grokbit_type frontmatter, and authored_sections tracks only Step-3 gap answers, not post-emit manual edits — so nothing distinguishes a pristine emitted doc from a hand-tuned one. The destroy path is fully wired: emit README → user tunes it → source drifts → check_drift.py's own report says 'Regenerate with grokbit-document' (print_report, L305) → regeneration overwrites in place with no diff, no confirmation. This is the one place in the skill that can destroy user work, and it is reached by following the skill's own advice. Fix: record a content hash at emit time (in the manifest the skill already promises but never writes — see separate finding) and route any hash mismatch through the same diff-and-confirm path as a human-authored file.",
+            "file": "resources/skills/grokbit-document/references/registry.md",
+            "line": 87,
+            "evidence": "If the output path already carries this skill's own `grokbit_type` frontmatter, it was written by this skill before and is safe to regenerate in place."
+          },
+          {
+            "severity": "BLOCKER",
+            "title": "The process requires executing destructive documented commands — a runbook's rollback and migration commands — and CI auto-detection waives the safety acknowledgment exactly where deploy secrets live",
+            "detail": "types/runbook.md requires verify: [commands_run, ...] (L33) and its body mandates real rollback commands from plan tasks (L40: 'Every rollback command comes from a plan task's rollback field'). Loop D1 requires those commands 'actually executed' to pass (loops.md L49). So verifying a runbook means running rollback/migration commands against whatever environment is present. verify_doc.py's looks_containerized() (L118-121) treats any of CI/CONTAINER/REMOTE_CONTAINERS/CODESPACES env vars as license to --execute with no acknowledgment flag — but a CI runner is disposable only in filesystem terms; it typically holds deploy tokens, DB credentials, and network reach, so 'rollback the migration' can hit a real database. The one guard, the <!-- doc-verify:skip --> fence directive, is opt-in per fence and is mentioned only in verify_doc.py's docstring (L26-28); neither SKILL.md, loops.md, roles.md, nor types/runbook.md instructs the Technical Writer to mark destructive commands — and marking them all would in turn re-trigger the D1 deadlock (commands never 'actually executed'). A world-class process would classify commands (read-only probe vs mutating vs long-running) before execution and require skip-marking of mutating commands as a lint, not an optional courtesy.",
+            "file": "resources/skills/grokbit-document/types/runbook.md",
+            "line": 33,
+            "evidence": "verify: [commands_run, paths_resolve] ... 'Every rollback command comes from a plan task's `rollback` field' — combined with verify_doc.py L121: return any(os.environ.get(v) for v in (\"CI\", \"CONTAINER\", ...))"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "emit_at phase hooks and the extension's Documentation picker/coverage preview are fictional — nothing in the suite or the shipped extension implements either",
+            "detail": "registry.md defines emit_at: 'plan-approval', 'implement-handoff', 'test-verdict' (L58), and adr.md (L44 'Emit at plan approval, while the reasoning is fresh') and changelog.md (L43 'Emit at implement handoff. Written three weeks later this becomes archaeology') stake their whole value on those hooks. Grep of grokbit-plan, grokbit-implement, grokbit-test, and grokbit-explore finds zero references to grokbit-document, emit_at, or any of the three hook names — no phase ever fires them, so every 'derived' type is in practice on-request archaeology, the exact failure its own body text warns about. Likewise SKILL.md's 'Extension (primary)' entry point (L14: invokes with {type_id, slug, target_path} from a Documentation icon) and registry.md's Extension contract (L89-98: enumerate types, compute coverage badges, invoke) describe UI the shipped extension does not have — per the project's own map, the capability surface renders only five workflow tiles that seed the composer with slash text; there is no picker, no coverage computation, no typed invocation. That matters beyond staleness: SKILL.md L79 calls the coverage preview 'the honest replacement for the conversational necessity gate that the click removed' — the safety story for one-click generation rests on a preview that never happens. Either wire the hooks/picker or rewrite these files to describe the natural-language path as primary.",
+            "file": "resources/skills/grokbit-document/references/registry.md",
+            "line": 58,
+            "evidence": "**`emit_at`** wires the type to a phase boundary. `plan-approval`, `implement-handoff`, `test-verdict`, or `on-request`. — no other skill in resources/skills/ mentions grokbit-document or any of these hook names (verified by grep)"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Provenance is undefined for uncommitted sources, and the suite's own happy path produces docs that fail its own CI gate forever",
+            "detail": "provenance.md L20 defines derived_from as '<path>@<commit> — the commit the content was read at.' Nothing anywhere defines what the Documentation Engineer records when the source is untracked or modified in the working tree — which is the NORMAL state of .grokbit/plans/** at document time: the suite never commits automatically (host repo convention), documents are emitted immediately after implement/test, and this very repo's git status shows its plan directories as untracked ('?? .grokbit/plans/...'). The two possible behaviors are both defective: (a) record no/any sha → check_drift.py reports 'untracked' or 'unknown-commit', and FAIL_STATUSES (L71) plus '--ci exits 1 when any finding of any status exists' (docstring L37) means CI is permanently red for a correctly-generated doc; (b) record HEAD's sha while reading dirty content → git diff recorded..HEAD compares committed states only, so genuine drift between the read content and the committed content is invisible — the provenance lies. roles.md's Documentation Engineer ('capture both the content and the source commit', L37) gives no instruction for either case. A world-class pipeline defines this: e.g., record @worktree with a content hash, or block emission until sources are committed.",
+            "file": "resources/skills/grokbit-document/references/provenance.md",
+            "line": 20,
+            "evidence": "`derived_from` is `<path>@<commit>` — the commit the content was read at, not the commit the doc was written at. — vs check_drift.py L71: FAIL_STATUSES = {\"drifted\", \"deleted\", \"untracked\", \"unknown-commit\", ...}"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "verify_doc.py grades unresolvable paths MAJOR while loops.md D1 declares them BLOCKER — broken paths ship and D1 exits clean anyway",
+            "detail": "loops.md D1 body item 2 (L22-23) enumerates BLOCKER defects: 'a command that failed, a path or link that doesn't resolve, a broken anchor, a cited source that doesn't exist, a code sample that doesn't parse.' But check_paths emits Finding(\"path\", \"MAJOR\", ...) (verify_doc.py L240), and main() computes the failing exit solely from severity == \"BLOCKER\" (L476, L499). So a doc referencing `src/auth/reset.ts` when the file is actually `src/auth/reset-token.ts` produces a MAJOR, exit code 0, D1's 'zero BLOCKER findings' exit is satisfied on pass one, and the doc ships — directly contradicting the loop's promise that path resolution has 'teeth.' (Aggravating: check_paths only inspects backtick-quoted inline tokens matching a narrow regex, L85, so paths in prose or tables are never checked at all, which loops.md never discloses.) Either promote path findings to BLOCKER or rewrite loops.md's defect list to match the script; today an agent following loops.md and an agent trusting the script's exit code reach opposite verdicts on the same document.",
+            "file": "resources/skills/grokbit-document/scripts/verify_doc.py",
+            "line": 240,
+            "evidence": "out.append(Finding(\"path\", \"MAJOR\", f\"path does not resolve: {p}\", line)) — vs loops.md L22-23: 'Every `BLOCKER` finding is a defect: a command that failed, a path or link that doesn't resolve...'"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Six of twelve seeded types fall below the registry's own declared verification floor — the README's provenance is never checked by D1",
+            "detail": "registry.md L60 declares '[links_follow, citations_valid]' the floor: 'every type derives from *something* and can cite or link something, even a mostly-authored one, so those two checks are the floor.' But an explicit per-type verify list overrides the default, and the seeded types drop below it: readme (L33) and user-guide (L30) omit citations_valid; contributing (L32) and runbook (L33) omit BOTH citations_valid and links_follow; test-plan (L36) and api-reference (L26) omit links_follow. Consequences: the flagship README — the type hard rule 4 ('Every derived document carries provenance') most needs to hold for — can ship with a derived_from citing a nonexistent artifact and D1 never notices (check_drift only helps later, and only for statuses, not at emission); a 2am runbook ships with broken markdown links unchecked, for the one reader least able to route around them. Either the floor is real (make verify additive above it) or it is not (delete the claim); as written the registry's data contradicts the registry's prose.",
+            "file": "resources/skills/grokbit-document/types/contributing.md",
+            "line": 32,
+            "evidence": "verify: [commands_run, paths_resolve] — vs registry.md L60: 'those two checks are the floor' ([links_follow, citations_valid])"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "Loop D2 has contradictory instructions for the no-isolation host and an unactionable definition of 'attempt the task' — its exit can be satisfied vacuously",
+            "detail": "host-adapters.md L15 says on hosts without isolated subagents to 'Run roles sequentially; write-then-re-read between roles' including for D2, while roles.md L86 orders the opposite: 'If you have context from any of those, you cannot perform this check and should say so rather than performing it badly.' An agent on a single-context host cannot obey both; and if it obeys roles.md, loops.md defines no outcome for a D2 that never ran — 'Exit: zero BLOCKER findings' (L78) is trivially true of an unperformed check, so the skill's second-highest-value gate silently becomes a no-op with no Known-gaps note (cap behavior only covers surviving findings, not an unrun test). Separately, the isolated reviewer gets 'only the document and a clean environment' (SKILL.md L105) and must 'attempt the task the document describes' — but a README/user-guide task requires the repo, the app, and the network, none of which the reviewer has, so the 'attempt' is necessarily a mental walkthrough while the spec's language ('attempts', 'clean environment') claims execution. Define: (a) the precedence between the two instructions, (b) an explicit D2-SKIPPED outcome that itself forces a visible note in the emitted doc, (c) what the reviewer actually does (structured walkthrough audit), so the check's evidence class is honest.",
+            "file": "resources/skills/grokbit-document/references/host-adapters.md",
+            "line": 15,
+            "evidence": "Run roles sequentially; write-then-re-read between roles. Loop D2 (the fresh-reader test) needs this the most — vs roles.md L86: 'If you have context from any of those, you cannot perform this check and should say so rather than performing it badly.'"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "authored_sections' promised differential drift treatment is unimplemented — the exact 'advertised but silently absent' defect class the registry boasts of having eliminated",
+            "detail": "provenance.md L22-23: 'Drift detection must treat these differently: they cannot be regenerated, so a changed source means *review this*, not *rerun the generator*.' roles.md's Documentation Engineer repeats it (L43-44: 'drift detection has to treat them differently'). check_drift.py never reads authored_sections — the string does not appear in the script; findings carry no authored/derived distinction, and print_report's uniform closing advice is 'Regenerate with grokbit-document, or re-verify and bump the commit' (L305) — i.e., precisely the 'rerun the generator' instruction the design document forbids for authored content, which feeds the regeneration-clobbers-edits BLOCKER above. registry.md L60 explicitly celebrates removing signatures_match rather than leaving a check 'advertised and silently skipped'; this is the same defect left in place. Fix is small: parse authored_sections in check_drift.py, tag findings whose sections intersect it, and split the advice line.",
+            "file": "resources/skills/grokbit-document/scripts/check_drift.py",
+            "line": 305,
+            "evidence": "print(\"Regenerate with grokbit-document, or re-verify and bump the commit.\") — while provenance.md L22 requires 'a changed source means *review this*, not *rerun the generator*' for authored sections; 'authored_sections' appears nowhere in check_drift.py"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "The drift hook's hardcoded path and the 'Single-source install' section describe an install mechanism the product deleted — the hook is silently dead on the shipped install",
+            "detail": "hooks/doc-drift.json's command runs '.grokbit/skills/grokbit-document/scripts/check_drift.py' (L37), and host-adapters.md § Single-source install (L103-114) documents an install.sh that symlinks .grokbit/skills into .claude/skills and .grok/skills. The shipped product does neither: the extension's provisionSkillSuite copies resources/skills into ~/.grok/skills and ~/.claude/skills (home tier), and install.sh was deliberately deleted in favor of copy-provisioning (per the project map: 'Copy, not symlink, and the deleted install.sh is why'). So a user who follows doc-drift.json's own copy-in instructions on the actual default install gets a command that references a nonexistent script — and the trailing '; true' plus 'never fails loudly' design (comment L27-28) guarantees the failure is invisible forever: the advisory drift check, a headline feature of the Staleness section, silently never runs. The comment's 'Adjust if you installed this skill somewhere else' (L23) inverts reality — the documented canonical location is the one that doesn't exist. Update the default path to the provisioned home-tier location and delete or rewrite the Single-source install section.",
+            "file": "resources/skills/grokbit-document/hooks/doc-drift.json",
+            "line": 37,
+            "evidence": "\"command\": \"PY=$(command -v python3 || ...); [ -n \\\"$PY\\\" ] && \\\"$PY\\\" .grokbit/skills/grokbit-document/scripts/check_drift.py --hook; true\" — a path only the deleted install.sh layout (host-adapters.md L103-114) ever created"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "verify_doc.py executes bash/zsh blocks with the platform default shell and a flat 120s timeout — correct quickstarts fail as BLOCKERs and block emission",
+            "detail": "run() gives powershell/cmd explicit interpreters but for every SCRIPT_LANGS block falls through to 'argv, shell = script, True' (L379-380): on Linux CI — the environment the skill steers execution toward — shell=True is /bin/sh, which on Ubuntu is dash, so a valid ```bash block using [[ ]], arrays, or process substitution exits non-zero; on Windows it is cmd.exe, where a multi-line POSIX script is garbage. Each false failure is a BLOCKER (L417), and D1's cap behavior is 'do not emit' — so a document whose commands genuinely work when a human runs them is permanently blocked by interpreter mismatch, the inverse of the defect the check exists to catch. Separately, the default 120s timeout (L437) makes any long-running quickstart command — 'npm run dev', 'docker compose up', every serve/watch command, i.e. the archetypal first command of a README — time out into a BLOCKER; the only escape is doc-verify:skip, which un-verifies the doc's single most important command with no middle ground (start, probe, kill). Fix: dispatch bash/zsh blocks to the declared interpreter when present (bash -c / zsh -c), and add a directive or heuristic for long-running commands (e.g. doc-verify:background with a liveness probe).",
+            "file": "resources/skills/grokbit-document/scripts/verify_doc.py",
+            "line": 379,
+            "evidence": "else:\n        argv, shell = script, True — sh/bash/shell/zsh blocks all run under /bin/sh (dash on Ubuntu CI) or cmd.exe on Windows, never the declared interpreter"
+          },
+          {
+            "severity": "MAJOR",
+            "title": "The output contract promises .grokbit/docs-manifest.json that no step, role, or script ever writes — and the registry schema carries a coverage_source field defined nowhere and read by nothing",
+            "detail": "SKILL.md's Output contract (L137) lists '.grokbit/docs-manifest.json  type → path → provenance → last verified', and provenance.md § Manifest (L54-56) instructs the extension to render the doc set from it and CI to 'check completeness against the registry.' But Step 7 — the emission step — writes only the document and the .grokbit/context digest (L111-124); no role in roles.md owns the manifest, and neither script reads or writes it (check_drift discovers docs by walking DEFAULT_SCAN_PATHS, verify_doc takes explicit paths). Consumers are pointed at a file that never exists. In the same class: every type's frontmatter carries coverage_source (e.g. registry.md schema L18, readme.md L9), but the registry's field notes define every other field and never this one, and nothing in SKILL.md, roles.md, or the scripts consumes it — Step 2's coverage is computed from per-section derive_from, making coverage_source dead, undefined data in all twelve types. Both violate the registry's own stated discipline (L60: nothing advertised is 'left advertised and silently skipped'). Either add manifest emission to Step 7 (it is also the natural home for the content hash the regeneration BLOCKER needs) and define coverage_source, or delete both.",
+            "file": "resources/skills/grokbit-document/SKILL.md",
+            "line": 137,
+            "evidence": ".grokbit/docs-manifest.json  type → path → provenance → last verified — while Step 7 (L111-124) instructs writing only the doc and .grokbit/context/<type>.md; 'docs-manifest' appears in no script and no role"
+          }
+        ],
+        "strengths": [
+          "The no-sandbox honesty around command execution is genuinely rare and correct: verify_doc.py's SAFETY docstring (scripts/verify_doc.py L16-28) states plainly that --execute 'runs shell commands extracted from a text file, with the full inherited environment and network — there is no sandbox, and this script does not build one', and gates it behind container detection or an explicit scary flag rather than pretending safety.",
+          "'Listed is not verified' is enforced mechanically, not rhetorically: unexecuted commands are a distinct PENDING severity, a distinct exit code 3, and a printed warning ('Commands were listed, not run — this is NOT the same as verified', scripts/verify_doc.py L492-497, L499-502) — most doc tooling silently conflates the two.",
+          "check_drift.py's status taxonomy (drifted / deleted / untracked / unknown-commit / no-provenance / parse-error, scripts/check_drift.py L29-38) refuses to fold epistemically different failures into one bucket, and provenance.md L28-32 explicitly discloses that section attribution 'under-reports routinely' and tells the reader how to interpret an empty section list — self-aware tooling limits, stated in the tool's own docs.",
+          "Plan-less/source-only mode (SKILL.md L22-26) correctly identifies that the most common request (README on a repo with no plan history) must not be refused, and its coverage denominator redefinition ('sections with neither route are excluded from the denominator, not counted as failures') is honest arithmetic rather than a fudge.",
+          "The registry's removal of signatures_match rather than shipping an advertised no-op (references/registry.md L60: 'it was never implemented ... and it has been removed from here and from every type that listed it, rather than left advertised and silently skipped') is exactly the right discipline — even though findings above show it was not applied uniformly.",
+          "The two-reader design — docs/ for humans plus .grokbit/context/<type>.md digests for the next agent session, generated from one provenance-tracked source (references/provenance.md L46-52) — is a genuinely strong agentic-workflow insight ('documentation as context engineering') that most doc processes lack entirely.",
+          "Differentiated cap behavior with stated reasoning (references/loops.md L3-7, L87-91): D1 (machine-checkable) blocks at cap, D2 (judgment) ships with a visible dated 'Known gaps' note — matching enforcement strength to evidence class instead of applying one cap policy everywhere.",
+          "Every seeded type's derive_from anchor actually resolves against the sibling skills' templates (verified: intent/survey/design/plan/review templates in grokbit-plan/assets, preflight/handoff/progress in grokbit-implement/assets, baseline/results/security/release-readiness in grokbit-test/assets) — the cross-skill data contract is real, not aspirational, and registry.md L108 even warns custom-type authors to check it.",
+          "Per-type writing guidance is unusually good craft: runbook's 'organise by symptom, not by component' (types/runbook.md L38), changelog's reader-side framing (types/changelog.md L37), the ADR numbered-file collision rule with never-overwrite (references/registry.md L43), and security-posture's 'never restate a secret, even redacted, even rotated' (types/security-posture.md L42)."
+        ],
+        "gaps": [
+          "No external-link checking at any tier: verify_doc.py skips http/https targets entirely (SKIP_PREFIX, check_links) and check_drift has no concept of them — dead external links are the single most common real-world doc-rot vector, and a world-class pipeline checks them at least in an opt-in networked mode.",
+          "No handling of long-running or interactive commands: the only options are execute-until-120s-timeout (false BLOCKER) or doc-verify:skip (unverified). A real doc-testing harness has a start/probe/kill pattern for servers and a way to feed canned stdin — quickstarts are dominated by exactly these commands.",
+          "No suite-level consistency pass: each document is verified in isolation, but nothing ever checks that README, user-guide, api-reference, and contributing agree with each other on terminology, versions, or duplicated quickstart steps — cross-doc contradiction is a staleness mode drift detection structurally cannot see (both docs cite unchanged sources yet disagree).",
+          "No readership or ownership loop despite 'a polished suite nobody opens' being the skill's own named top failure (SKILL.md Step 1): no doc owner recorded in frontmatter, no review-by date, no feedback mechanism, no way to ever validate the necessity gate's prediction that someone would read it.",
+          "Drift is measured only against HEAD (git diff recorded..HEAD): there is no released-version semantics, so a doc that is correct for the shipped tag reads 'drifted' the moment main moves, and a doc regenerated from main is wrong for every user on the release — no versioned-docs story at all.",
+          "No screenshot/image lifecycle: user guides are the type most dependent on UI captures, KNOWN_EXTS even recognizes png/jpg for path resolution, yet nothing captures, verifies, or staleness-tracks images — the fastest-rotting artifact in end-user documentation.",
+          "No partial-regeneration/merge strategy: regeneration is all-or-nothing over the whole file, with no 'regenerate only the sections whose sources drifted, preserve the rest' path — which is both what makes in-place regeneration dangerous (finding 2) and what claim-level drift detection naturally sets up but never cashes in.",
+          "No deterministic prose gate: the suite prizes 'a script, not model work' for checkable facts, yet ships no style/reading-level/terminology lint (vale-class) even though 02-survey conventions give it a ready terminology source — and security-posture's 'never restate a secret' rule is prompt-only, with no secret-pattern scan over emitted docs at D1 time."
+        ],
+        "summary": "grokbit-document's design instincts are well above typical LLM-workflow boilerplate: it correctly identifies verification and provenance as the actual product, is unusually honest about its own tooling limits (no sandbox, listed-is-not-verified, under-reporting section attribution), and its cross-skill derive_from data contract genuinely resolves against the sibling templates. But its enforcement layer contradicts itself exactly where everything hinges: Loop D1 is a deadlock-or-unsafe-flag dilemma on the primary audience's machine (no container means it can never validly pass, and cap behavior is 'never emit'), the regenerate-in-place rule silently destroys user hand-edits while check_drift's own output tells users to trigger it, and D1's mandatory execution of runbook rollback/migration commands — with CI env vars waiving the safety acknowledgment — is a destroy-user-data path dressed as verification. A second tier of defects is 'advertised but unimplemented' wiring: emit_at phase hooks and the extension picker/coverage preview exist in no other skill or shipped surface, authored_sections' promised drift treatment is absent from check_drift.py, the docs-manifest is promised and never written, the drift hook's default path points at a deleted install layout, and six of twelve seeded types fall below the registry's own declared verification floor. The scripts themselves are the strongest artifacts in the skill but diverge from what loops.md claims they enforce (path findings graded MAJOR not BLOCKER; bash blocks run under /bin/sh or cmd.exe). Net: a thoughtfully argued process whose written guarantees a careful reader cannot currently trust end-to-end — closer to world-class in philosophy than in enforcement."
+      }
+    },
+    "gaps": [
+      {
+        "source": "grokbit-explore",
+        "gap": "No use of the suite's own memory as an orientation source: grokbit-plan Step 0 reads .grokbit/handoff.md because \"a previous session may already have answered half of what you are about to ask\" (plan SKILL.md:34), and .grokbit/plans/** holds prior cited surveys/designs — the highest-value orientation material in a repo the suite has touched — yet Explore never mentions reading either. The orientation phase runs blind to the suite's own prior orientation."
+      },
+      {
+        "source": "grokbit-explore",
+        "gap": "No cross-session durability, in a host whose UX makes new sessions the norm: the map is chat-only and the Grokbit extension opens one session per tab, so an Explore map is unrecoverable the moment the user opens a fresh tab to plan. The skill forbids REQUIRING durable digests (correct) but never even offers an optional one-paragraph handoff note (e.g. appending to .grokbit/handoff.md, which Plan already reads), so the phase's entire output evaporates at the suite's most common session boundary."
+      },
+      {
+        "source": "grokbit-explore",
+        "gap": "No secrets hygiene: exploration naturally opens .env files, credential configs, and CI secrets, and nothing forbids quoting their values (or even flagging their paths) into the chat map — which persists in on-disk session history (chat_history.jsonl / Claude .jsonl). A world-class read-only phase has an explicit redaction rule: cite the path, never the content, of anything credential-shaped."
+      },
+      {
+        "source": "grokbit-explore",
+        "gap": "No use of version-control history as an orientation instrument: git log/blame for churn hot-spots, recent authorship, and commit messages around the charter area is standard world-class orientation practice (often faster and more reliable than reading cold source), is read-only by nature, and is never mentioned."
+      },
+      {
+        "source": "grokbit-explore",
+        "gap": "No guidance for degenerate repos: an empty/greenfield repo, a repo with no README/docs, or a non-code question (\"what does this product do?\") — the Cartographer's entry-point heuristic (README, module map, main packages) assumes a mature codebase and the skill defines no honest behavior when those don't exist."
+      },
+      {
+        "source": "grokbit-explore",
+        "gap": "No output-size bound or summary-first structure for the chat map: every loop is capped but the deliverable itself is not — nothing stops a 200-bullet 'Relevant areas' wall, which for a vibe-coder audience defeats the orientation purpose as surely as an uncited map. World-class practice: a hard bullet budget or a two-tier map (five-line summary, details below)."
+      },
+      {
+        "source": "grokbit-plan",
+        "gap": "No security or privacy thinking at design time: the design template's risk surface is the unhappy-path table (network failure, empty state, concurrent edit, permission denied) and a migration section — no threat consideration, authZ-change review, secrets handling, or input-validation requirement. The suite defers all security to grokbit-test's post-implementation pass, which is exactly when design-level security flaws are most expensive to fix. A world-class team does security review at the design gate."
+      },
+      {
+        "source": "grokbit-plan",
+        "gap": "No repo-state anchoring or staleness contract: 02-survey.md citations are not pinned to a git SHA and nothing detects the repository changing between survey, approval, and implement start. A plan approved Friday against Monday's very different tree presents the same confident citations. World-class: record HEAD at survey time and have implement's preflight diff against it."
+      },
+      {
+        "source": "grokbit-plan",
+        "gap": "No plan-time smoke-check that the verify harness itself exists: Loop 4 validates verify: commands purely by inspection against the survey's conventions section. One cheap dry-run (does package.json actually have a test script? does the named runner exist?) would catch the most common downstream deviation class ('a verify command that could not execute in this environment' is an enumerated I5 deviation type) before the gate instead of after three of them force a replan."
+      },
+      {
+        "source": "grokbit-plan",
+        "gap": "No quality bar on rollbacks for stateful changes: the checklist requires only 'Has a rollback', and the template's example is 'git revert <commit>' — which does not un-apply a database migration, un-send an email, or un-publish a package. The design template asks 'Reversible:' for migrations but nothing forces the corresponding task's rollback: field to be a real down-migration. A world-class plan distinguishes code rollback from state rollback per task."
+      },
+      {
+        "source": "grokbit-plan",
+        "gap": "No non-functional requirements capture: the intent template's done-criteria are purely functional/observable; there is no prompt for performance budgets, accessibility, i18n, or observability (logging/metrics for the new code path), so the Reviewer has no basis to flag their absence and the plan cannot fail for lacking them."
+      },
+      {
+        "source": "grokbit-plan",
+        "gap": "No rollout/exposure planning for risky changes: no concept of feature flags, staged enablement, or kill switches even when the design's own migration section admits a mixed-version window — the plan goes from approval to full deployment of behavior with no intermediate exposure state."
+      },
+      {
+        "source": "grokbit-plan",
+        "gap": "No post-approval integrity protection on plan.md: the human's approval checkbox (plan.template.md:85) is a mutable markdown line with no snapshot or hash of what was approved; nothing distinguishes the approved text from later agent edits, so 'the human approved this plan' is unverifiable after the fact."
+      },
+      {
+        "source": "grokbit-plan",
+        "gap": "No estimation or risk-ranking of tasks: blast radius is a single header line (N files, N deps, schema y/n); individual tasks carry no risk or size signal beyond the ~200-line guide, so the human at the gate cannot see which of twelve tasks is the dangerous one — a world-class gate presentation leads with it."
+      },
+      {
+        "source": "grokbit-implement",
+        "gap": "No code-quality review exists anywhere in the phase: the Code Reviewer is explicitly scope-only ('You are not reviewing code quality in general', roles.md:78), so logic errors, missing edge cases, and poor error handling that happen to pass the single verify command ship unreviewed — a world-class team reviews the change itself, not just its boundary."
+      },
+      {
+        "source": "grokbit-implement",
+        "gap": "No branch isolation or whole-plan abandonment procedure: every task commits directly to the user's current branch, so a DO NOT SHIP verdict or an abandoned session leaves N unshippable commits on (typically) main with no defined unwind beyond per-task `git revert` — a world-class team implements on a branch where abandonment is deleting it."
+      },
+      {
+        "source": "grokbit-implement",
+        "gap": "No safety screening of plan-authored verify commands before execution: Implement runs `verify:` verbatim up to three times; a destructive command (rm -rf, git clean, db reset) that survived plan approval by a non-expert executes unchecked — a world-class process lints or sandboxes commands it did not write."
+      },
+      {
+        "source": "grokbit-implement",
+        "gap": "Dependency-gate trigger coverage is a hardcoded three-command list ('Any npm install, pip install, cargo add', SKILL.md:75): yarn/pnpm/bun/poetry/uv/go get are ungated, and editing package.json directly followed by a bare `npm install` bypasses the gate entirely; the gate also never mandates --ignore-scripts or post-install lockfile pinning, so an approved package's install scripts still run arbitrary code."
+      },
+      {
+        "source": "grokbit-implement",
+        "gap": "The progress.md `Cost` column demands per-task dollar figures ($0.12, $0.48 in the template) that neither host CLI exposes to the agent — the skill's own ethos is 'record actual observed values rather than expectations,' yet this field can only be fabricated; a world-class process either wires real cost telemetry or drops the column."
+      },
+      {
+        "source": "grokbit-implement",
+        "gap": "No concurrency protocol for artifacts: two sessions on the same slug (or two slugs sharing the single-slot .grokbit/handoff.md, which Step 6 acknowledges is last-writer-wins) clobber each other's progress.md/deviations.md with no lock, lease, or even a 'check for a live session' step."
+      },
+      {
+        "source": "grokbit-implement",
+        "gap": "No replan-count ceiling: Loop I5 can fire repeatedly (replan-1, replan-2, ...) with no rule that after N failed replans the correct action is human takeover rather than another Survey pass — the human approval gate is the only brake, same weakness as the hand-back cycle."
+      },
+      {
+        "source": "grokbit-test",
+        "gap": "No flaky-test or quarantine policy anywhere: nothing distinguishes 'red because broken' from 'red because flaky' — no rerun rule, no stability check at baseline commit time, no quarantine list carried between sessions."
+      },
+      {
+        "source": "grokbit-test",
+        "gap": "No test-adequacy measure for NEW code: the phase checks stated done-criteria and old behavior (baseline replay), but new logic paths that have neither a criterion nor a pre-existing behavior are never required to be exercised — no changed-line coverage, branch coverage, or mutation check on the diff."
+      },
+      {
+        "source": "grokbit-test",
+        "gap": "No rollback rehearsal: grokbit-plan mandates a rollback per task and release-readiness.template.md asks 'Reversible: yes', but nothing ever executes a rollback or a down-migration to prove reversibility — a world-class release-readiness check exercises the escape hatch, not just asserts it."
+      },
+      {
+        "source": "grokbit-test",
+        "gap": "No performance regression check beyond bundle/image size delta: no latency, memory, query-count, or startup-time comparison against baseline, even though the baseline phase is the natural place to capture those numbers."
+      },
+      {
+        "source": "grokbit-test",
+        "gap": "No accessibility pass in visual QA: the Frontend QA checklist (render, clip, overlap, states) omits contrast, focus order, keyboard reachability, and ARIA — standard items on a world-class FE QA checklist and cheap to add headlessly (e.g., axe-core)."
+      },
+      {
+        "source": "grokbit-test",
+        "gap": "No global cap or escalation rule on test↔implement hand-back round trips: each round has a one-line human approval, but a vibe coder will rubber-stamp; a world-class process escalates to replan (grokbit-plan) after N failed verify rounds the way implement's own 3-deviation rule escalates."
+      },
+      {
+        "source": "grokbit-test",
+        "gap": "No test-data/fixture strategy for baseline capture: 'exercise the real code path' is silent on auth, seeded databases, and external services beyond the NOT CAPTURED escape hatch — a world-class characterization effort defines how to stand up representative state."
+      },
+      {
+        "source": "grokbit-test",
+        "gap": "No artifact-hygiene rule for the skill's own outputs: screenshots and verbatim 'observed output' captures can embed PII, tokens, or secrets rendered on screen into .grokbit/plans/<slug>/test/, which the Security step never scans because it scans the change diff, not the test artifacts."
+      },
+      {
+        "source": "grokbit-test",
+        "gap": "No cross-browser/device dimension in visual verification: one headless engine at two widths is assumed sufficient; no statement of the limit, so a vibe coder reads PASS as 'works everywhere'."
+      },
+      {
+        "source": "grokbit-test",
+        "gap": "No machine-readable verdict: the extension is named as the one consumer the team controls (host-adapters.md § The Grokbit extension), yet the verdict/severity/counts exist only as prose markdown — a world-class pipeline emits a small structured summary (JSON front-matter or a fixed table) so the UI cannot misparse SHIP WITH CAVEATS."
+      },
+      {
+        "source": "grokbit-document",
+        "gap": "No external-link checking at any tier: verify_doc.py skips http/https targets entirely (SKIP_PREFIX, check_links) and check_drift has no concept of them — dead external links are the single most common real-world doc-rot vector, and a world-class pipeline checks them at least in an opt-in networked mode."
+      },
+      {
+        "source": "grokbit-document",
+        "gap": "No handling of long-running or interactive commands: the only options are execute-until-120s-timeout (false BLOCKER) or doc-verify:skip (unverified). A real doc-testing harness has a start/probe/kill pattern for servers and a way to feed canned stdin — quickstarts are dominated by exactly these commands."
+      },
+      {
+        "source": "grokbit-document",
+        "gap": "No suite-level consistency pass: each document is verified in isolation, but nothing ever checks that README, user-guide, api-reference, and contributing agree with each other on terminology, versions, or duplicated quickstart steps — cross-doc contradiction is a staleness mode drift detection structurally cannot see (both docs cite unchanged sources yet disagree)."
+      },
+      {
+        "source": "grokbit-document",
+        "gap": "No readership or ownership loop despite 'a polished suite nobody opens' being the skill's own named top failure (SKILL.md Step 1): no doc owner recorded in frontmatter, no review-by date, no feedback mechanism, no way to ever validate the necessity gate's prediction that someone would read it."
+      },
+      {
+        "source": "grokbit-document",
+        "gap": "Drift is measured only against HEAD (git diff recorded..HEAD): there is no released-version semantics, so a doc that is correct for the shipped tag reads 'drifted' the moment main moves, and a doc regenerated from main is wrong for every user on the release — no versioned-docs story at all."
+      },
+      {
+        "source": "grokbit-document",
+        "gap": "No screenshot/image lifecycle: user guides are the type most dependent on UI captures, KNOWN_EXTS even recognizes png/jpg for path resolution, yet nothing captures, verifies, or staleness-tracks images — the fastest-rotting artifact in end-user documentation."
+      },
+      {
+        "source": "grokbit-document",
+        "gap": "No partial-regeneration/merge strategy: regeneration is all-or-nothing over the whole file, with no 'regenerate only the sections whose sources drifted, preserve the rest' path — which is both what makes in-place regeneration dangerous (finding 2) and what claim-level drift detection naturally sets up but never cashes in."
+      },
+      {
+        "source": "grokbit-document",
+        "gap": "No deterministic prose gate: the suite prizes 'a script, not model work' for checkable facts, yet ships no style/reading-level/terminology lint (vale-class) even though 02-survey conventions give it a ready terminology source — and security-posture's 'never restate a secret' rule is prompt-only, with no secret-pattern scan over emitted docs at D1 time."
+      },
+      {
+        "source": "cross-skill",
+        "gap": "No concurrency model for shared .grokbit state (handoff.md, plans directory, the repo's git index) even though the host extension's core design runs N simultaneous sessions per repo — no locking, no per-slug scoping, no last-writer detection, no guidance on two skills committing to the same branch at once."
+      },
+      {
+        "source": "cross-skill",
+        "gap": "No branch/worktree strategy anywhere: baseline commits, per-task commits, WIP snapshot commits, and retirement commits all land directly on whatever branch the user happens to be on, interleaved with the user's own commits, with no isolation policy (README's 'Verify before shipping' names worktrees only as an open question)."
+      },
+      {
+        "source": "cross-skill",
+        "gap": "No abandonment/abort protocol: a user who walks away after DO NOT SHIP, mid-plan, or mid-implement leaves an approved-pending fix task, a stale handoff, possibly a stash, and possibly a breaks-build state, and no skill defines what a terminal cleanup or 'park this effort' action looks like."
+      },
+      {
+        "source": "cross-skill",
+        "gap": "grokbit-test verify mode has no entry conditions of its own — behavior when invoked without implement/handoff.md or implement/preflight.md (a user running /grokbit-test directly) is undefined, in contrast to Implement's carefully specified four entry conditions."
+      },
+      {
+        "source": "cross-skill",
+        "gap": "No cycle/spend accounting surfaced to the human at decision points: the plan gate does not say 'this is replan #2', the hand-back approval does not say 'this is the 3rd fix cycle', and per-slug cumulative cost is tracked only per task in progress.md."
+      },
+      {
+        "source": "cross-skill",
+        "gap": "No automated contract test between grokbit-document's derive_from anchors and the other skills' template headings — registry.md:108 warns a mismatched anchor 'silently reports 0% coverage forever' but nothing validates the seeded types against the shipped templates, so a template heading rename breaks Document invisibly."
+      },
+      {
+        "source": "cross-skill",
+        "gap": "No human-approval record format: approval is a checkbox with a date, with no capture of who/what was actually said, which channel, or what plan version (hash) was approved — an audit hole a world-class process would close given approval gates are the suite's central control."
+      },
+      {
+        "source": "scripts+templates",
+        "gap": "Zero tests for the executable layer: verify_doc.py and check_drift.py — the suite's only actual enforcement machinery — ship with no fixture tests anywhere in the repo, in a codebase whose own culture is a 1336-test floor and which already has the exact precedent needed (scripts/verify_token_aggregator.py, a fixture-driven manual verifier for a dev-time Python script). Every parsing false-positive found in this review would have been caught by a ten-fixture corpus."
+      },
+      {
+        "source": "scripts+templates",
+        "gap": "No parser conformance contract for plan.md: plan.template.md warns 'The Grokbit extension and the Implement phase parse it. Keep the task block format exactly as below', but there is no format version marker in the artifact, no schema, and no test asserting the extension's parser and the template stay in step — a silent template edit breaks two downstream consumers with no signal."
+      },
+      {
+        "source": "scripts+templates",
+        "gap": "No CI exercises the Python scripts on any platform (repo CI is npm-only), and nothing exercises them on native Windows specifically — the platform where both the shell-selection bug and the console-encoding concerns live."
+      },
+      {
+        "source": "scripts+templates",
+        "gap": "check_drift tells the user to 're-verify and bump the commit' when a drifted claim is still accurate, but no tool performs the bump — the only mechanical remediation path is full regeneration, so the cheap common case (source changed, doc still true) has no supported workflow and will train users to ignore drift findings."
+      },
+      {
+        "source": "scripts+templates",
+        "gap": "verify_doc has a per-command timeout but no per-document or per-run budget: a doc with 50 fenced commands can legitimately consume 50 × 120 s under --execute, with no cap, no progress output, and no way to resume — a termination-discipline gap in a suite whose other four skills all carry explicit loop caps."
+      },
+      {
+        "source": "scripts+templates",
+        "gap": "No integrity/provenance marker on the provisioned scripts themselves: the suite that preaches derived_from provenance for user docs ships its own executables to ~/.claude/skills with no version stamp or checksum inside the files, so a user (or agent) editing the provisioned copy silently forks it until the next version-change overwrite clobbers their edit — both directions are silent."
+      }
+    ]
+  }
+}

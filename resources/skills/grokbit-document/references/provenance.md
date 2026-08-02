@@ -19,9 +19,13 @@ verified: 2026-07-30
 
 `derived_from` is `<path>@<commit>` — the commit the content was read at, not the commit the doc was written at. Those differ whenever a doc is generated from history.
 
+**Uncommitted sources:** if the source file is dirty or untracked, use `@WORKING` (or `@DIRTY`) instead of inventing a commit SHA. Drift tools must treat `@WORKING` as always needing re-check — never as a permanent green CI baseline. Prefer committing sources before emitting long-lived docs when the human allows it; if not, the document's provenance must still be honest so CI can flag `untracked`/`WORKING` rather than claiming a false anchor.
+
 `authored_sections` lists sections whose content came from a human. Drift detection must treat these differently: they cannot be regenerated, so a changed source means *review this*, not *rerun the generator*.
 
 `verified` is the last date `verify_doc.py` passed. A document that has never been verified should say so rather than omitting the field.
+
+`content_hash` (optional but recommended) is a stable hash of the emitted body (excluding volatile fields you intentionally refresh). Used with the living-docs regenerate rule in `registry.md` so a hand-tuned file with leftover `grokbit_type` frontmatter is not silently overwritten.
 
 ## Claim-level staleness
 

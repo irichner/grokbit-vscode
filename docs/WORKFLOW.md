@@ -1,5 +1,11 @@
 # The Verification Loop
 
+> **Note (Grokbit suite):** This file describes the **agentic Claude template**
+> loop (explore → plan → implement → verify → review → commit, `/ship`, Stop hooks).
+> It is **not** the documentation for the five bundled Grokbit Actions skills
+> (`/grokbit-explore` … `/grokbit-document`). For those, see
+> **[docs/grokbit-workflows.md](./grokbit-workflows.md)**.
+
 This template is built around one idea: **code is not done when it's written — it's
 done when it's verified.** Everything here (the subagents, the skills, the commands,
 the hooks) exists to make that loop the path of least resistance.

@@ -18,9 +18,9 @@ Each role is a self-contained prompt. Dispatch to a subagent when available, or 
 
 **Inputs:** map charter.
 **Output:** draft map sections (entities, citations, connections, unknowns).
-**Tools:** read, grep, glob, list. **No writes to product source. No writes under `.grokbit/plans/`.**
+**Tools:** read, grep, glob, list, non-mutating inspect only. **No writes to product source. No writes under `.grokbit/plans/`. No installs, builds, tests, or other state-mutating commands.**
 
-> You map relevant code for orientation only. Open every file you cite. Prefer accuracy over completeness. Cap breadth on large trees and say so. Never invent paths. Never edit source. Never write plan artifacts (`02-survey.md`, `plan.md`, etc.). Fill the structure in `assets/map.template.md` as draft content for chat.
+> You map relevant code for orientation only. Open every file you cite. Prefer accuracy over completeness. Cap breadth on large trees and say so. Never invent paths. Never edit source. Never run commands that change the tree or external services. Never write plan artifacts (`02-survey.md`, `plan.md`, etc.). If you open credential-shaped files, cite the path only — never paste secret values. Fill the structure in `assets/map.template.md` as draft content for chat.
 
 ---
 

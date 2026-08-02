@@ -5,7 +5,11 @@ import { CapabilityItem, dedupeByPriority } from "../src/capabilities";
 import {
   SUITE_SKILL_NAMES,
   applySuiteKind,
+  attachSuiteHowItWorks,
+  isSuiteSkillName,
+  resolveSuiteHowItWorksPath,
   shouldProvision,
+  suiteHowItWorksPath,
   suiteTargets,
 } from "../src/skill-suite";
 
@@ -153,5 +157,73 @@ describe("[R] applySuiteKind runs after dedupeByPriority, never before", () => {
     const wrong = dedupeByPriority(applySuiteKind(both, { managedDirs: MANAGED }));
     expect(wrong).toHaveLength(2);
     expect(wrong.map((i) => i.kind).sort()).toEqual(["grokbit", "skill"]);
+  });
+});
+
+describe("suite how-it-works paths", () => {
+  const EXT = path.join(path.sep === "\\" ? "C:\\ext" : "/ext", "grokbit");
+
+  it("suiteHowItWorksPath joins resources/skills/<name>/references/how-it-works.md", () => {
+    expect(suiteHowItWorksPath(EXT, "grokbit-plan")).toBe(
+      path.join(EXT, "resources", "skills", "grokbit-plan", "references", "how-it-works.md"),
+    );
+  });
+
+  it("isSuiteSkillName is case-insensitive; rejects outsiders", () => {
+    expect(isSuiteSkillName("grokbit-plan")).toBe(true);
+    expect(isSuiteSkillName("Grokbit-Plan")).toBe(true);
+    expect(isSuiteSkillName("evil")).toBe(false);
+  });
+
+  it("resolveSuiteHowItWorksPath allowlists suite names only", () => {
+    expect(resolveSuiteHowItWorksPath(EXT, "not-a-skill")).toEqual({
+      ok: false,
+      error: "not-a-suite-skill",
+    });
+    const ok = resolveSuiteHowItWorksPath(EXT, "grokbit-test");
+    expect(ok.ok).toBe(true);
+    if (ok.ok) {
+      expect(ok.name).toBe("grokbit-test");
+      expect(ok.path).toBe(suiteHowItWorksPath(EXT, "grokbit-test"));
+    }
+  });
+
+  it("attachSuiteHowItWorks stamps hasDetail only when the guide exists", () => {
+    const items: CapabilityItem[] = [
+      {
+        kind: "grokbit",
+        name: "grokbit-plan",
+        description: "plan",
+        source: "Grokbit",
+        origin: "disk",
+        invoke: "/grokbit-plan ",
+        path: suitePath("grokbit-plan"),
+      },
+      {
+        kind: "grokbit",
+        name: "grokbit-explore",
+        description: "explore",
+        source: "Grokbit",
+        origin: "disk",
+        invoke: "/grokbit-explore ",
+        path: suitePath("grokbit-explore"),
+      },
+      {
+        kind: "skill",
+        name: "other",
+        description: "",
+        source: "User",
+        origin: "disk",
+      },
+    ];
+    const planGuide = suiteHowItWorksPath(EXT, "grokbit-plan");
+    const out = attachSuiteHowItWorks(items, {
+      extensionRoot: EXT,
+      fileExists: (p) => p === planGuide,
+    });
+    expect(out[0].hasDetail).toBe(true);
+    expect(out[0].detailPath).toBe(planGuide);
+    expect(out[1].hasDetail).toBeUndefined();
+    expect(out[2].hasDetail).toBeUndefined();
   });
 });

@@ -70,11 +70,15 @@ Cap behavior differs by loop here, and the difference is deliberate. Most loops 
 |---|---|
 | **Trigger** | Verify mode |
 | **Runs** | Application Security Engineer |
-| **Cap** | **CRITICAL: none. HIGH and below: 2 rescan rounds.** |
+| **Cap** | **CRITICAL: none. HIGH and below: 2 rescan rounds after implement hand-back.** |
 
-**Body:** Scan, classify by severity, hand findings to Implement for repair, rescan after fixes land.
+**Body:**
+1. Scan and classify (`CRITICAL` / `HIGH` / `MEDIUM` / `LOW`) into `test/security.md`.
+2. **`CRITICAL`:** verdict path is `DO NOT SHIP`. Hand a triage package to `grokbit-implement` the same way Loop T3 does (repro, evidence, ranked hypotheses) — AppSec does **not** repair. After Implement lands a fix task, rescan (no round limit that allows a remaining CRITICAL through).
+3. **`HIGH` and below:** list them. Offer the human two paths in plain language: (a) hand back to Implement for repair (counts toward implement hand-back depth), or (b) **written acknowledgment** that they ship with these caveats. Record acknowledgments under `## Security acknowledgments` in `test/security.md` (who/when/which finding IDs). Without acknowledgment and without a fix, the Release Engineer may still emit `SHIP WITH CAVEATS` listing them, never plain `SHIP` for outstanding `HIGH`.
+4. After any Implement fix, rescan up to 2 times for non-CRITICAL findings.
 
-**Exit:** zero `CRITICAL` findings outstanding. `HIGH` and below may ship with explicit written acknowledgment from the human.
+**Exit:** zero `CRITICAL` outstanding. Every `HIGH` is either fixed+rescan-clean or explicitly acknowledged.
 
 **Cap behavior:** a `CRITICAL` finding blocks the release unconditionally. There is no iteration count, no time pressure, and no "record it and continue" path. If it cannot be fixed, the verdict is `DO NOT SHIP` and it stays that way until a human overrides it deliberately and in writing.
 

@@ -19,8 +19,9 @@ below — this is the overall verdict for the change, not only for the build.
 <One paragraph a non-engineer can act on.>
 
 ## Evidence
-- Done-criteria proven: N of N (unverified: <list>)
+- Done-criteria proven: N of N (unverified: <list>; failed: <list>)
 - Regressions: N (<list>)
+- UNKNOWN residuals: N (<list> — each blocks plain SHIP; list as caveats or resolve with human)
 - Security: N critical / N high / N medium
 - Build: pass/fail · Visual: N pass / N fail
 

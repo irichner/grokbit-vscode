@@ -117,7 +117,13 @@ import {
   buildCapabilityGroups,
   scanCapabilityRoots,
 } from "./capabilities";
-import { applySuiteKind, suiteTargets } from "./skill-suite";
+import {
+  applySuiteKind,
+  attachSuiteHowItWorks,
+  HOW_IT_WORKS_MAX_BYTES,
+  resolveSuiteHowItWorksPath,
+  suiteTargets,
+} from "./skill-suite";
 
 type WebviewMsg =
   | { type: "ready" }
@@ -166,6 +172,7 @@ type WebviewMsg =
   | { type: "voiceStop" }
   | { type: "listWorkspaceDocs" }
   | { type: "listCapabilities" }
+  | { type: "getCapabilityDetail"; name: string }
   | { type: "scrollState"; stickToBottom: boolean; scrollTop: number };
 
 const SESSION_META_KEY = "grok.sessionMeta";
@@ -3065,6 +3072,9 @@ See design doc for the full state machine diagram.`;
       case "listCapabilities":
         this.listCapabilities(session);
         break;
+      case "getCapabilityDetail":
+        this.getCapabilityDetail(session, typeof msg.name === "string" ? msg.name : "");
+        break;
       case "voiceStart":
         await this.handleVoiceStart(session);
         break;
@@ -3258,7 +3268,20 @@ See design doc for the full state machine diagram.`;
       const suiteItems = applySuiteKind(scan.items, {
         managedDirs: suiteTargets(homeDir).map((t) => t.dir),
       });
-      const groups = buildCapabilityGroups(suiteItems, session.client?.availableCommands ?? []);
+      // Product how-it-works guides ship under the extension bundle (not only
+      // the home provisioned copy). Stamp hasDetail/detailPath for Actions.
+      const extensionRoot = this.context.extensionPath;
+      const suiteWithDetail = attachSuiteHowItWorks(suiteItems, {
+        extensionRoot,
+        fileExists: (p) => {
+          try {
+            return fs.existsSync(p);
+          } catch {
+            return false;
+          }
+        },
+      });
+      const groups = buildCapabilityGroups(suiteWithDetail, session.client?.availableCommands ?? []);
       // Phase E: honest MCP count from grok-style TOML (no full browser).
       const homeDirForMcp = process.env.HOME || process.env.USERPROFILE || os.homedir();
       const mcp = countMcpServersFromFiles(
@@ -3293,6 +3316,39 @@ See design doc for the full state machine diagram.`;
         truncated: false,
         error: msg || "scan-failed",
       });
+    }
+  }
+
+  /**
+   * Lazy-load a suite how-it-works guide for the Actions Details panel.
+   * Path is allowlisted to {@link SUITE_SKILL_NAMES} under the extension bundle only.
+   */
+  private getCapabilityDetail(session: Session, name: string): void {
+    if (!this.showCapabilities()) return;
+    const resolved = resolveSuiteHowItWorksPath(this.context.extensionPath, name);
+    if (!resolved.ok) {
+      this.postTo(session, { type: "capabilityDetail", name, error: resolved.error });
+      return;
+    }
+    try {
+      const st = fs.statSync(resolved.path);
+      if (!st.isFile()) {
+        this.postTo(session, { type: "capabilityDetail", name: resolved.name, error: "not-found" });
+        return;
+      }
+      if (st.size > HOW_IT_WORKS_MAX_BYTES) {
+        this.postTo(session, { type: "capabilityDetail", name: resolved.name, error: "too-large" });
+        return;
+      }
+      const markdown = fs.readFileSync(resolved.path, "utf8");
+      this.postTo(session, {
+        type: "capabilityDetail",
+        name: resolved.name,
+        markdown,
+        path: resolved.path,
+      });
+    } catch {
+      this.postTo(session, { type: "capabilityDetail", name: resolved.name, error: "read-failed" });
     }
   }
 

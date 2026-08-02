@@ -1,6 +1,6 @@
 ---
 name: grokbit-test
-description: Verify a change actually works — behavioral regression against a pre-change baseline, done-criteria coverage, visual checks, security scanning, and production-parity build. Runs in two modes: baseline (capture behavior BEFORE implementing) and verify (check the change afterward). Use this skill whenever the user asks to test, verify, check, QA, or validate a change, asks "did that work" or "is this safe to ship", or finishes implementing anything. Use it proactively after grokbit-implement completes, and use baseline mode before implementation starts whenever a plan task declares a baseline. Do NOT use it to write a single unit test the user asked for by name — just write that test.
+description: Check that the change works and nothing else broke — so you know if it is safe to ship.
 ---
 
 # Grokbit — Test
@@ -19,6 +19,8 @@ Two facts shape this entire phase.
 | `verify` | After implementation | `test/baseline.md`, `implement/handoff.md`, `implement/preflight.md`, `plan.md`, `01-intent.md`, `03-design.md` | `test/results.md`, `test/security.md`, `test/release-readiness.md` |
 
 If asked to verify with no baseline on record, say so explicitly and proceed in reduced mode. You can still check done-criteria, security, and the build; you cannot make trustworthy claims about regressions. Do not paper over the gap — a confident "no regressions found" from a run that could not have found them is worse than an honest limitation. Enter **Loop T6** before Step 1 so this is on record in the artifact itself, not just in your own reasoning.
+
+**Standalone verify (no plan artifacts).** Vibe coders often invoke test after ad-hoc coding. If `.grokbit/plans/<slug>/` is missing `plan.md` / `01-intent.md`, still run: project suite (with honest “no preflight baseline of pre-existing failures” caveat), security scan of the current diff/`git status` change set, and production build if one exists. Write under `.grokbit/plans/ad-hoc-<date>/test/` or a user-named slug. Done-criteria coverage is `UNVERIFIED — no intent artifact`. Do not invent a plan after the fact to make the report look complete.
 
 ## Hard rules
 
@@ -113,9 +115,19 @@ Production build from clean. Detect the deployment target from repo config, in t
 
 If no CLI is authenticated locally, mark every row `UNVERIFIED — <tool> not authenticated`, never blank — a blank cell reads as checked-and-clean, and it was not checked. If no deployment target exists at all — the common case for a first ship — say so plainly: the build/env/migration sections below describe the local production build only, and `SHIP` here means that build is sound, not that anything is live.
 
-Start the real production command and hit a health endpoint. Report bundle or image size delta, migrations needing to run and their reversibility, and whether old and new code can run simultaneously during a rolling deploy — read this off the target's own rollout strategy where one exists (a Kubernetes Deployment's `strategy.type`, a documented PaaS deploy model); `UNVERIFIED`, for the same reason as above, where no target was detected.
+Start the real production command and hit a health endpoint **with a short timeout and teardown**: bound the process (e.g. 30–60s), hit health, then stop the process you started. Do not leave servers running. If start/health is impractical locally, mark `UNVERIFIED — production start not run` with why — never hang the phase. Report bundle or image size delta, migrations needing to run and their reversibility, and whether old and new code can run simultaneously during a rolling deploy — read this off the target's own rollout strategy where one exists (a Kubernetes Deployment's `strategy.type`, a documented PaaS deploy model); `UNVERIFIED`, for the same reason as above, where no target was detected.
 
 Then render the overall verdict — `SHIP`, `SHIP WITH CAVEATS` (list them), or `DO NOT SHIP` (list blockers) — folding in done-criteria coverage and regressions from `test/results.md` and findings from `test/security.md` alongside this step's own build/env/migration results. Written so someone who does not read code can act on it.
+
+**Classification → verdict (no silent drops):**
+
+| From `test/results.md` / security | Verdict effect |
+|---|---|
+| Any `REGRESSION` | `DO NOT SHIP` → hand back to `grokbit-implement` with Loop T3 triage |
+| Outstanding `CRITICAL` security | `DO NOT SHIP` → hand back (Loop T4 package) |
+| Any `UNKNOWN` residual (ambiguous plan) | At best `SHIP WITH CAVEATS` listing each UNKNOWN; never plain `SHIP`. Prefer asking the human once to reclassify each as intended vs bug; if they do not answer, the caveats stay on the verdict and Step 7 must not retire those tests |
+| Failed / `UNVERIFIED` done-criteria | `SHIP WITH CAVEATS` at best if non-blocking gaps; `DO NOT SHIP` if a done-criterion required for the change is failed (not merely unverified) |
+| Only `INTENDED` + green suite + clean security | `SHIP` possible |
 
 On any `REGRESSION` or an outstanding `CRITICAL`, the verdict is `DO NOT SHIP` and hands back to `grokbit-implement` with the failing check and Loop T3's triage output. Do not attempt the fix here — the role that verifies must not also be the role that repairs, or the verification stops meaning anything.
 
@@ -127,7 +139,7 @@ Runs only after Step 6's verdict, and only when it is `SHIP` or `SHIP WITH CAVEA
 
 Every `INTENDED` finding from Step 1 left its baseline characterization test red on purpose — that is the classification working, not a defect. Now that the change has actually shipped, go through every `INTENDED` finding and either **retire** the test (delete it, when the design says the old behavior is simply gone) or **regenerate** it (rewrite the assertion to the value already captured in Step 1's Regression table — never a freshly re-observed value, or this step quietly becomes a second, unaccountable regression check). Record what happened to each under `## Baseline retirement` in `test/results.md`, citing the same `03-design.md` line the classification already required.
 
-Never touch a test behind a `REGRESSION` or `UNKNOWN` finding here — those stay red, unedited, and belong to Step 6's hand-back instead. On `DO NOT SHIP`, skip this step entirely: nothing shipped, so the baseline should keep describing the only reality that is actually live.
+Never touch a test behind a `REGRESSION` or `UNKNOWN` finding here — those stay red and unedited. `REGRESSION` belongs to Step 6's hand-back to implement; `UNKNOWN` stays as a caveat on the verdict until a human reclassifies it (see Step 6 table) — it is not silently retired and not silently treated as `INTENDED`. On `DO NOT SHIP`, skip this step entirely: nothing shipped, so the baseline should keep describing the only reality that is actually live.
 
 This step is the fix for a specific rot: without it, the next session's preflight records these tests as pre-existing failures, and every future session inherits a baseline that quietly disagrees with the code it is supposed to be measuring.
 
@@ -146,6 +158,9 @@ This step is the fix for a specific rot: without it, the next session's prefligh
 - **Retroactive baselining.** Capturing "before" behavior after the change has landed produces a baseline that agrees with the change perfectly and proves nothing.
 - **Test editing.** The single most damaging action available in this phase. A test edited to pass is a regression converted into a silent one. Step 7's baseline retirement is not this — it runs only after the verdict, only on tests already classified `INTENDED`, and is itself recorded in `test/results.md`. Retiring a test to *reach* a verdict, rather than to reflect one already reached, is exactly this failure mode wearing the carve-out's clothes.
 - **`INTENDED` as a dumping ground.** Every `INTENDED` classification needs a citation into `03-design.md`. No citation means `UNKNOWN`.
+- **`UNKNOWN` vanishing at the verdict.** An ambiguous residual must appear on the verdict (at best as caveats) — never plain `SHIP` with those tests left unexplained.
 - **Green-suite complacency.** The project's tests passing says nothing about criteria the project never had tests for. Coverage of done-criteria is the measure here, not suite status.
 - **Fixing what you found.** Verification and repair must stay in different phases.
 - **A confident "no regressions" from a reduced-mode run.** No baseline means no regression detection happened, full stop — that is a limitation to state, not a result to report.
+- **Flakes as hard REGRESSIONs.** If a test fails once then passes on re-run without code change, classify as `FLAKE` (or `UNKNOWN` if unsure), re-run up to twice, and do not alone force `DO NOT SHIP` unless it remains red. Record the flake; prefer quarantine over silent ignore.
+- **Re-verify overwriting evidence.** On a second verify pass after hand-back, **append** a new dated section in `test/results.md` / `release-readiness.md` (or write `results-pass-2.md`) rather than erasing the first pass's evidence.

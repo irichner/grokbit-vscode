@@ -47,6 +47,8 @@ Explore caps exist so orientation finishes. Hitting a cap means **disclose and p
 | **Runs** | Citation Checker |
 | **Cap** | **2 rounds** |
 
-**Exit:** every remaining claim has a re-opened citation or is marked unknown.
+**Standard (one definition):** a claim about the repo is **kept** only if this role re-opened its `path:line` in this loop and the file still supports the claim. Otherwise **drop it** or move it to **Open unknowns** (worded as unknown, not as fact). There is no third grade such as “cite when possible.”
 
-**Cap behavior:** drop contested claims; present the rest.
+**Exit:** every bullet still in the presented map either (a) has a re-confirmed citation or (b) sits under Open unknowns. Zero uncited factual claims remain in Relevant areas / How it fits / Contracts.
+
+**Cap behavior:** after 2 rounds, drop every still-contested claim; present the shortened map. Do not invent softer language to keep unconfirmed bullets.
