@@ -85,6 +85,14 @@
     // true is the config default, kept here so the request-from-initialState
     // gate has a sane value even before the first initialState lands.
     showCapabilities: true,
+    // grok.actionsScope — workflow (default) vs all capability kinds (Phase B).
+    actionsScope: "workflow",
+    // Phase E: best-effort MCP server count from config.toml (honest, not a browser).
+    mcpServerCount: 0,
+    // @-mention autocomplete (Phase B).
+    atHits: [],
+    atQuery: null,
+    atActive: 0,
     // Start busy+locked: opening the view immediately spins up a session
     // (ready → startSession), so the send button shows the spinner from the
     // first paint until the host posts setBusy:false once the session is live.
@@ -112,9 +120,13 @@
     activeToolGroupEl: null,
     // Live activity-carousel block (one per turn segment): collects tool groups,
     // thinking, and step narration while grok works so the transcript stays one
-    // row; finalized into a one-line summary at the turn boundary. Null when no
-    // block is live (incl. classic mode — see state.compactActivity).
+    // row. Destroyed (not frozen) when the segment ends or the turn seals.
+    // Null when no block is live (incl. classic mode — see state.compactActivity).
     activeActivityEl: null,
+    // Active Q&A turn container (`.turn.active`). User prompts, live activity,
+    // interactive cards, and the final answer nest under it. Null when no turn
+    // is open (welcome, or content that arrived before any user bubble).
+    activeTurnEl: null,
     slashFiltered: [],
     slashActive: 0,
     pendingDiffByToolCallId: new Map(),
@@ -153,6 +165,15 @@
     sessionQuery: "",
     sessionNextOffset: 0,
     replaying: false,
+    // Panel reveal rebuild (hide→ready→replay), NOT session/load historyReplay.
+    // While true, auto-scroll and scrollState posts are suppressed so mid-scroll
+    // can be restored after buffer replay without yanking to the bottom.
+    panelReplaying: false,
+    // Stashed by beginPanelReplay; applied on endPanelReplay.
+    pendingRestore: null,
+    // Suppress host scrollState posts while applying restore (and through the
+    // authoritative end post) so apply-induced scroll events cannot corrupt host memory.
+    scrollStateSuppress: false,
     // Live ask_user_question tool calls (toolCallId → {questions, fromReplay}).
     // grok emits a tool_call alongside the live x.ai/ask_user_question request; we
     // stash it to suppress the generic tool chip (the interactive card from
@@ -194,12 +215,8 @@
     // shows a stop icon that the user can click to cancel grok mid-stream.
     // Starts true so the very first paint is the disabled spinner (see `busy`).
     busyLocked: true,
-    // grok CLI version from the ACP `initialized` handshake, plus a flag marking
-    // the session-start window: while startingPhase is true the welcome line
-    // shows "starting…"; it flips to "connected · v<cliVersion>" only when the
-    // priming spinner clears (setBusy:false). See the initialized/setBusy cases.
+    // grok CLI version from the ACP `initialized` handshake — shown in gear → About.
     cliVersion: "",
-    startingPhase: false,
     // Extension version (from initialState) — shown in the gear → About panel.
     extVersion: "",
     // Which gear-popover view is showing ("main"|"model"|"about"|"config"), so an
@@ -660,43 +677,6 @@
     if (sessionSettingsPopover && !sessionSettingsPopover.hidden) renderSessionSettingsPopover();
   }
 
-  // ---------- welcome-canvas guide strip ----------
-  // Three plain-language lines above #welcome-grid, built by the pure
-  // welcomeGuide() in webview-helpers.js — what you can ask, a mode- and
-  // backend-accurate line about file/command safety, and that the composer
-  // takes plain English (docs/plans/session-tab-ux-overhaul.md § Approach C).
-  // Wired to the SAME four lifecycle anchors as renderCapabilitiesPanel below
-  // (initialized / setBusy → render; showOnboarding's four branches /
-  // clearWelcome / resetForNewSession → hide), plus modeChanged/backendChanged
-  // so the copy never goes stale mid-session. No data dependency (state.backend
-  // and state.currentModeId always have sane defaults), so — unlike the
-  // capability panel — it never needs a "no payload yet" branch.
-
-  function hideWelcomeGuide() {
-    const el = $("welcome-guide");
-    if (el) { el.hidden = true; el.innerHTML = ""; }
-  }
-
-  function renderWelcomeGuide() {
-    const el = $("welcome-guide");
-    if (!el) return;
-    const onb = $("welcome-onboarding");
-    const onboardingActive = !!(onb && onb.innerHTML && onb.innerHTML.trim());
-    if (!state.welcomeVisible || onboardingActive) {
-      hideWelcomeGuide();
-      return;
-    }
-    const lines = welcomeGuide({ backend: state.backend, modeId: state.currentModeId });
-    el.innerHTML = "";
-    for (const line of lines) {
-      const row = document.createElement("p");
-      row.className = "welcome-guide-row";
-      row.textContent = line;
-      el.appendChild(row);
-    }
-    el.hidden = false;
-  }
-
   // ---------- capability browser (slash commands, skills, agents) ----------
   // Two mounts, one pure builder (capabilityGroupsView in webview-helpers.js) —
   // the new-tab welcome canvas (#capabilities-panel) and the top-bar Actions
@@ -785,14 +765,15 @@
       head.appendChild(cmd);
     }
     row.appendChild(head);
-    if (item.workspaceSource) {
+    if (item.workspaceSource || item.sourceBadge) {
       // Visible provenance for a workspace-tier item — dedupeByPriority is
       // workspace-first, so a repo-authored skill silently shadows a
       // same-named one under the user's home dir; the tooltip alone (above)
-      // isn't enough to tell them apart at a glance.
+      // isn't enough to tell them apart at a glance. Suite name forks also
+      // carry sourceBadge "Local override" (Phase B).
       const source = document.createElement("span");
       source.className = "capability-row-source";
-      source.textContent = item.source;
+      source.textContent = item.sourceBadge || item.source;
       row.appendChild(source);
     }
     if (item.description) {
@@ -970,7 +951,9 @@
       return;
     }
     const viewGroups = capabilityGroupsView({
-      groups: visibleCapabilityGroups(cap.groups),
+      groups: (markLocalSuiteOverrides || ((g) => g))(
+        visibleCapabilityGroups(cap.groups, { scope: state.actionsScope }),
+      ),
       backend: cap.backend,
     });
     if (!viewGroups.length) {
@@ -983,13 +966,23 @@
       // Agents/Commands would have been present.
       const p = document.createElement("p");
       p.className = "capabilities-empty muted";
-      p.textContent = "No workflows available yet — just describe what you want in the message box.";
+      p.textContent = state.actionsScope === "all"
+        ? "No skills or workflows available yet — just describe what you want in the message box."
+        : "No workflows available yet — just describe what you want in the message box.";
       el.appendChild(p);
       el.hidden = false;
       return;
     }
     appendCapabilitiesExplainer(el);
     appendCapabilityGroups(el, viewGroups, locked);
+    if (typeof state.mcpServerCount === "number" && state.mcpServerCount > 0) {
+      const mcp = document.createElement("p");
+      mcp.className = "capabilities-mcp muted";
+      mcp.textContent = state.mcpServerCount === 1
+        ? "1 MCP server configured (in CLI config — not browsable here)."
+        : state.mcpServerCount + " MCP servers configured (in CLI config — not browsable here).";
+      el.appendChild(mcp);
+    }
     el.hidden = false;
   }
 
@@ -1027,7 +1020,9 @@
         return;
       }
       const viewGroups = capabilityGroupsView({
-        groups: visibleCapabilityGroups(cap.groups),
+        groups: (markLocalSuiteOverrides || ((g) => g))(
+          visibleCapabilityGroups(cap.groups, { scope: state.actionsScope }),
+        ),
         backend: cap.backend,
       });
       if (!viewGroups.length) {
@@ -1038,6 +1033,12 @@
         return;
       }
       appendCapabilityGroups(body, viewGroups);
+      if (typeof state.mcpServerCount === "number" && state.mcpServerCount > 0) {
+        const mcp = document.createElement("p");
+        mcp.className = "studio-popover-empty muted";
+        mcp.textContent = state.mcpServerCount + " MCP server(s) in CLI config (not browsable here).";
+        body.appendChild(mcp);
+      }
     } finally {
       body.scrollTop = scrollTop;
     }
@@ -1109,7 +1110,7 @@
 
   // ---------- markdown ----------
 
-  const { looksLikeFileRef, formatRelativeTime, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext, backendBadgeLabel, capabilityGroupsView, visibleCapabilityGroups, sessionToggleGroup, welcomeGuide } = globalThis.GrokWebviewHelpers;
+  const { looksLikeFileRef, formatRelativeTime, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext, backendBadgeLabel, capabilityGroupsView, visibleCapabilityGroups, markLocalSuiteOverrides, sessionToggleGroup } = globalThis.GrokWebviewHelpers;
 
   function escapeAttr(s) {
     return String(s == null ? "" : s)
@@ -2471,7 +2472,183 @@
     state.welcomeVisible = false;
     hideSessionSetupCard();
     hideCapabilitiesPanel();
-    hideWelcomeGuide();
+  }
+
+  // ---------- turn containers (sticky prompt + collapsible Q&A stack) ----------
+  // Each user send opens a `.turn` that owns the prompt, ephemeral activity,
+  // interactive cards, and final answer. Prior turns collapse to a header;
+  // intermediate tool/thinking chrome is destroyed on seal (not frozen).
+
+  function turnBody(turn) {
+    return turn && turn.querySelector(".turn-body");
+  }
+
+  function turnActivityRegion(turn) {
+    return (turn && turn.querySelector(".turn-activity")) || null;
+  }
+
+  function turnAnswerRegion(turn) {
+    return (turn && turn.querySelector(".turn-answer")) || null;
+  }
+
+  function turnPromptRegion(turn) {
+    return (turn && turn.querySelector(".turn-prompt")) || null;
+  }
+
+  /** Parent for live tools/thinking/carousel — active turn's activity zone, else #messages. */
+  function activityParent() {
+    const reg = turnActivityRegion(state.activeTurnEl);
+    return reg || messagesEl;
+  }
+
+  /** Parent for final agent answer bubble. */
+  function answerParent() {
+    const reg = turnAnswerRegion(state.activeTurnEl);
+    return reg || messagesEl;
+  }
+
+  /**
+   * Parent for interactive cards / deliverables / errors that belong to the
+   * turn but must not sit inside ephemeral activity (insert before answer).
+   */
+  function turnSurfaceParent() {
+    const body = turnBody(state.activeTurnEl);
+    if (!body) return messagesEl;
+    return body;
+  }
+
+  function appendOnTurnSurface(el) {
+    // Prefer the answer region so cards interleave with agent bubbles in
+    // chronological order (plan/permission history drains between turns and
+    // must sit after the prior answer text but before any later agent reply).
+    const ans = turnAnswerRegion(state.activeTurnEl);
+    if (ans) {
+      ans.appendChild(el);
+      return;
+    }
+    const body = turnBody(state.activeTurnEl);
+    if (body) {
+      body.appendChild(el);
+      return;
+    }
+    messagesEl.appendChild(el);
+  }
+
+  function setTurnSummary(turn, text) {
+    const el = turn && turn.querySelector(".turn-summary");
+    if (!el) return;
+    const one = String(text || "").replace(/\s+/g, " ").trim();
+    el.textContent = one ? truncate(one, 80) : "Message";
+    el.title = one || "";
+  }
+
+  function expandTurn(turn) {
+    if (!turn || turn.classList.contains("active")) return;
+    turn.classList.remove("collapsed");
+    const body = turnBody(turn);
+    if (body) body.hidden = false;
+    const hdr = turn.querySelector(".turn-header");
+    if (hdr) hdr.setAttribute("aria-expanded", "true");
+  }
+
+  function collapseTurn(turn) {
+    if (!turn) return;
+    turn.classList.remove("active");
+    turn.classList.add("collapsed");
+    destroyTurnIntermediate(turn);
+    const body = turnBody(turn);
+    if (body) body.hidden = true;
+    const hdr = turn.querySelector(".turn-header");
+    if (hdr) hdr.setAttribute("aria-expanded", "false");
+  }
+
+  /** Drop tool-map entries whose DOM rows live under `root`. */
+  function clearToolMapsUnder(root) {
+    if (!root) return;
+    for (const [id, item] of [...state.toolItemsByToolCallId.entries()]) {
+      if (item && root.contains(item)) {
+        state.toolItemsByToolCallId.delete(id);
+        state.toolFailuresById.delete(id);
+        state.pendingDiffByToolCallId.delete(id);
+      }
+    }
+  }
+
+  /**
+   * Remove ephemeral intermediate chrome from a turn (activity, tools, thinking,
+   * grokking/thinking indicators). Keeps prompt + answer + interactive cards
+   * (resolved or not — collapsed permission/question lines are history) and
+   * deliverables (document/media).
+   */
+  function destroyTurnIntermediate(turn) {
+    if (!turn) return;
+    const act = turnActivityRegion(turn);
+    if (act) {
+      clearToolMapsUnder(act);
+      act.innerHTML = "";
+    }
+    // Stray tool/thinking rows that landed outside activity (classic mode / races).
+    // Never remove .card / deliverables — those are the durable turn surface.
+    for (const n of [...turn.querySelectorAll(".activity-carousel, .tool-group, .tool-flat, .msg.thinking, .thinking-indicator, .grokking")]) {
+      if (n.closest(".turn-answer") || n.closest(".turn-prompt")) continue;
+      if (n.closest(".card")) continue;
+      clearToolMapsUnder(n);
+      n.remove();
+    }
+  }
+
+  function openTurn(promptText) {
+    if (state.activeTurnEl) {
+      // Seal any leftover intermediate before collapsing the prior turn.
+      if (state.activeActivityEl || state.activeToolGroupEl) {
+        closeToolGroup();
+        finalizeActivity();
+      }
+      destroyTurnIntermediate(state.activeTurnEl);
+      collapseTurn(state.activeTurnEl);
+      state.activeTurnEl = null;
+    }
+    clearWelcome();
+    const turn = document.createElement("div");
+    turn.className = "turn active";
+
+    const header = document.createElement("button");
+    header.type = "button";
+    header.className = "turn-header";
+    header.setAttribute("aria-expanded", "true");
+    header.innerHTML =
+      `<span class="turn-chevron" aria-hidden="true">›</span>` +
+      `<span class="turn-summary"></span>`;
+    header.addEventListener("click", () => {
+      // Active turn stays open (sticky working surface). Prior turns toggle.
+      if (turn.classList.contains("active")) return;
+      if (turn.classList.contains("collapsed")) expandTurn(turn);
+      else collapseTurn(turn);
+    });
+
+    const body = document.createElement("div");
+    body.className = "turn-body";
+    const prompt = document.createElement("div");
+    prompt.className = "turn-prompt";
+    const activity = document.createElement("div");
+    activity.className = "turn-activity";
+    const answer = document.createElement("div");
+    answer.className = "turn-answer";
+    body.appendChild(prompt);
+    body.appendChild(activity);
+    body.appendChild(answer);
+    turn.appendChild(header);
+    turn.appendChild(body);
+    messagesEl.appendChild(turn);
+    state.activeTurnEl = turn;
+    setTurnSummary(turn, promptText || "");
+    return turn;
+  }
+
+  /** Ensure an active turn exists (tests/tools may emit before a user bubble). */
+  function ensureActiveTurn(promptText) {
+    if (state.activeTurnEl) return state.activeTurnEl;
+    return openTurn(promptText || "");
   }
 
   /** Seed the composer with a ready-to-edit prompt and place the caret at the end. */
@@ -2496,11 +2673,8 @@
       welcome.hidden = false;
       const onb = $("welcome-onboarding");
       if (onb) onb.innerHTML = "";
-      const ver = $("welcome-version");
-      if (ver) { ver.hidden = false; ver.classList.add("loading-dots"); ver.textContent = "Starting"; }
       hideSessionSetupCard();
       hideCapabilitiesPanel();
-      hideWelcomeGuide();
     }
     state.welcomeVisible = true;
     state.pendingDiffByToolCallId.clear();
@@ -2517,13 +2691,18 @@
     state.thoughtBuffer = "";
     state.activeToolGroupEl = null;
     state.activeActivityEl = null;
+    state.activeTurnEl = null;
     state.replaying = false;
     state.planHistoryQueue = [];
     state.permissionHistoryQueue = [];
     state.userMsgCount = 0;
     state.suppressReplayTurn = false;
     state.skipUserBubble = false;
-    state.stickToBottom = true; // a fresh/loaded session starts pinned
+    // Reveal rebuild (panelReplaying) must not re-pin — endPanelReplay applies
+    // the host restore. Intentional clears (new session without begin) still pin.
+    if (!state.panelReplaying) {
+      state.stickToBottom = true; // a fresh/loaded session starts pinned
+    }
     updateScrollBtn();
     hidePlanProcessing();
     hideGrokking();
@@ -2540,13 +2719,10 @@
     if (welcome) welcome.hidden = false;
     state.welcomeVisible = true;
     const onb = $("welcome-onboarding");
-    const ver = $("welcome-version");
     if (!onb) return;
     if (mode === "missing-cli") {
       hideSessionSetupCard(); // install flow replaces the setup card
       hideCapabilitiesPanel();
-      hideWelcomeGuide();
-      if (ver) { ver.hidden = false; ver.classList.remove("loading-dots"); ver.textContent = "CLI not installed"; }
       const installCmd = info.platform === "win32"
         ? "irm https://x.ai/cli/install.ps1 | iex"
         : "curl -fsSL https://x.ai/cli/install.sh | bash";
@@ -2563,8 +2739,6 @@
     } else if (mode === "auth-required") {
       hideSessionSetupCard();
       hideCapabilitiesPanel();
-      hideWelcomeGuide();
-      if (ver) { ver.hidden = false; ver.classList.remove("loading-dots"); ver.textContent = "Authentication required"; }
       onb.innerHTML =
         `<div class="onb">` +
           `<p class="onb-heading">Sign in to continue</p>` +
@@ -2581,8 +2755,6 @@
     } else if (mode === "missing-claude-adapter") {
       hideSessionSetupCard();
       hideCapabilitiesPanel();
-      hideWelcomeGuide();
-      if (ver) { ver.hidden = false; ver.classList.remove("loading-dots"); ver.textContent = "Claude Code adapter not installed"; }
       onb.innerHTML =
         `<div class="onb">` +
           `<p class="onb-heading">Install the Claude Code adapter</p>` +
@@ -2596,8 +2768,6 @@
     } else if (mode === "claude-auth-required") {
       hideSessionSetupCard();
       hideCapabilitiesPanel();
-      hideWelcomeGuide();
-      if (ver) { ver.hidden = false; ver.classList.remove("loading-dots"); ver.textContent = "Claude sign-in required"; }
       onb.innerHTML =
         `<div class="onb">` +
           `<p class="onb-heading">Sign in to Claude Code</p>` +
@@ -2688,13 +2858,22 @@
       el.appendChild(actions);
     }
 
-    messagesEl.appendChild(el);
-    scrollToBottom();
-    if (role === "user" && text) {
-      requestAnimationFrame(() => {
-        if (body.scrollHeight > 56) makeCollapsible(el, contentParent);
-      });
+    if (role === "user") {
+      // One addMessage("user") per bubble (live userMessage or first replay chunk)
+      // → one turn container. Summary tracks the prompt text.
+      const turn = openTurn(text || "");
+      const promptReg = turnPromptRegion(turn);
+      (promptReg || messagesEl).appendChild(el);
+      if (text) setTurnSummary(turn, text);
+    } else if (role === "agent") {
+      answerParent().appendChild(el);
+    } else {
+      messagesEl.appendChild(el);
     }
+    scrollToBottom();
+    // Long prompt overflow: only inside an expanded prompt body — the turn
+    // header owns expand/collapse of prior Q&A, so we skip makeCollapsible when
+    // the prompt is already summarized in the turn header (always, for turns).
     return body;
   }
 
@@ -2906,21 +3085,14 @@
   }
 
   // ---------- activity carousel ----------
-  // One compact block per turn segment collects the tool groups, thinking, and
-  // step narration that each used to take their own transcript row — so a long
-  // agentic turn occupies a single line instead of scrolling the chat. Live, the
-  // strip shows the CURRENT action (label slides on change) + blinking dots + a
-  // step counter, with ‹ › to peek back through earlier steps and a chevron that
-  // expands the full detail in a bounded scroll area. At the turn boundary
-  // (finalizeActivity) the strip freezes into a one-line summary ("Explored 8
-  // items, edited 2 files · 14 steps"). A block whose body ended up holding
-  // exactly ONE item unwraps back to the bare element, so simple turns (one
-  // batch, or thinking-only) render exactly like the classic rows — including
-  // .msg.thinking staying hidden under body.thinking-hidden. Interactive cards
-  // and deliverables never enter the block; they finalize it (segment break) so
-  // the DOM stays append-only and chronological. Gated by grok.compactActivity
-  // (default on): when off, ensureActivityBlock returns null and finalizeActivity
-  // no-ops, leaving the classic scrolling stream bit-identical.
+  // One compact block per turn segment collects tool groups, thinking, and step
+  // narration into a single live strip under the active turn's `.turn-activity`.
+  // Live: CURRENT action + dots + step counter, ‹ › peek, chevron for detail.
+  // On segment break or turn seal (finalizeActivity) the block is DESTROYED —
+  // intermediate work is ephemeral; only the turn's prompt + final answer remain.
+  // Interactive cards / deliverables never enter the block; they call
+  // finalizeActivity first. Gated by grok.compactActivity (default on): when off,
+  // ensureActivityBlock returns null and tools render classic under activityParent.
 
   function activityBody(el) {
     return el.querySelector(".activity-body");
@@ -2930,6 +3102,12 @@
     if (!state.compactActivity) return null;
     if (state.activeActivityEl) return state.activeActivityEl;
     clearWelcome();
+    // Prefer nesting under an open turn; tools without a user bubble (tests /
+    // edge paths) still mount on #messages via activityParent().
+    if (!state.activeTurnEl) {
+      // Keep a lightweight turn so sticky/collapse still have a home when the
+      // first content is agent-side after a live userMessage race.
+    }
     const el = document.createElement("div");
     el.className = "activity-carousel live";
     el._steps = [];
@@ -2962,7 +3140,7 @@
     };
     strip.querySelector(".activity-prev").onclick = (e) => { e.stopPropagation(); stepActivityView(el, -1); };
     strip.querySelector(".activity-next").onclick = (e) => { e.stopPropagation(); stepActivityView(el, 1); };
-    messagesEl.appendChild(el);
+    activityParent().appendChild(el);
     state.activeActivityEl = el;
     renderActivityStrip(el, false);
     scrollToBottom();
@@ -3004,42 +3182,17 @@
     if (!body.hidden) body.scrollTop = body.scrollHeight; // follow while expanded
   }
 
-  // Freeze the live block at a boundary (turn end, interactive card, deliverable,
-  // error): close any open tool group inside it, then swap the strip to a summary
-  // row. No-op when no block is live — classic mode never passes the guard, so
-  // legacy call sites keep their exact behavior.
+  // Destroy the live activity block at a boundary (turn seal, interactive card,
+  // deliverable, error, classic-mode flip). Intermediate work is ephemeral —
+  // never freeze a permanent `.done` summary into the transcript. Classic mode
+  // has no carousel; closeToolGroup still runs so open groups don't leak.
   function finalizeActivity() {
     const el = state.activeActivityEl;
+    closeToolGroup(); // an open group can't outlive its block / segment
     if (!el) return;
-    closeToolGroup(); // an open group can't outlive its block
     state.activeActivityEl = null;
-    const body = activityBody(el);
-    const items = Array.from(body.children);
-    if (items.length === 0) { el.remove(); return; }
-    if (items.length === 1) {
-      // A single-item segment gains nothing from the wrapper — unwrap it so
-      // simple turns render exactly like the classic rows (a lone flat/group,
-      // or a thinking-only turn that thinking-hidden then hides entirely).
-      el.replaceWith(items[0]);
-      return;
-    }
-    el.classList.remove("live", "peeking");
-    el.classList.add("done");
-    el._view = -1;
-    const strip = el.querySelector(".activity-strip");
-    const dots = strip.querySelector(".tool-dots");
-    if (dots) dots.remove();
-    const nav = strip.querySelector(".activity-nav");
-    if (nav) nav.remove();
-    const labelEl = strip.querySelector(".activity-label");
-    labelEl.classList.remove("activity-label-anim");
-    const calls = el._allCalls || [];
-    const n = el._steps.length;
-    labelEl.textContent =
-      (calls.length ? summarizeTools(calls) : "Worked") + ` · ${n} step${n === 1 ? "" : "s"}`;
-    strip.querySelector(".activity-icon").innerHTML = calls.length ? toolIconFor(calls) : ICON.grok;
-    body.hidden = true;
-    el.classList.remove("expanded");
+    clearToolMapsUnder(el);
+    el.remove();
   }
 
   function closeToolGroup() {
@@ -3103,10 +3256,15 @@
       if (act && state.activeAgentEl) {
         const narration = (state.activeAgentEl.textContent || "").trim();
         const bubble = state.activeAgentEl.closest(".msg");
-        if (bubble && bubble.parentElement === messagesEl) {
+        // Narration may live under .turn-answer (or legacy #messages).
+        const bubbleParent = bubble && bubble.parentElement;
+        const inAnswer = bubbleParent && (
+          bubbleParent === messagesEl ||
+          bubbleParent.classList.contains("turn-answer")
+        );
+        if (bubble && inAnswer) {
           // A whitespace-only bubble is moved too (tucked away beats an empty
-          // transcript row) but records no step — the body then holds 2 items,
-          // so that turn keeps its summary block instead of unwrapping. Fine.
+          // transcript row) but records no step.
           activityBody(act).appendChild(bubble);
           if (narration) activityStep(truncate(narration, 60), ICON.grok);
         }
@@ -3123,7 +3281,7 @@
       body.hidden = true;
       el.appendChild(hdr);
       el.appendChild(body);
-      (act ? activityBody(act) : messagesEl).appendChild(el);
+      (act ? activityBody(act) : activityParent()).appendChild(el);
       state.activeToolGroupEl = el;
     }
 
@@ -3475,7 +3633,7 @@
     const el = document.createElement("div");
     el.className = "msg error";
     el.textContent = text;
-    messagesEl.appendChild(el);
+    appendOnTurnSurface(el);
     scrollToBottom();
   }
 
@@ -3605,7 +3763,8 @@
     el.appendChild(kindEl);
     el.appendChild(nameEl);
     el.appendChild(actions);
-    messagesEl.appendChild(el);
+    // Deliverable — part of the final answer surface, not ephemeral activity.
+    answerParent().appendChild(el);
     scrollToBottom();
   }
 
@@ -3652,7 +3811,7 @@
       link.onclick = () => vscode.postMessage({ type: "openUrl", url: msg.url });
       el.appendChild(link);
     }
-    messagesEl.appendChild(el);
+    answerParent().appendChild(el);
     scrollToBottom();
   }
 
@@ -3671,7 +3830,7 @@
     el.innerHTML =
       `<span class="subagent-badge">${ICON.listTree || "🤖"}</span>` +
       `<span class="subagent-label">Subagent: ${label}</span>`;
-    messagesEl.appendChild(el);
+    appendOnTurnSurface(el);
     scrollToBottom();
   }
 
@@ -3682,7 +3841,7 @@
     const el = document.createElement("div");
     el.className = "plan-notice";
     el.innerHTML = `${ICON.listTree}<span>${escapeHtml(text)}</span>`;
-    messagesEl.appendChild(el);
+    appendOnTurnSurface(el);
     scrollToBottom();
   }
 
@@ -3717,7 +3876,7 @@
       el.appendChild(hdr);
       el.appendChild(body);
       const act = state.compactActivity ? ensureActivityBlock() : null;
-      (act ? activityBody(act) : messagesEl).appendChild(el);
+      (act ? activityBody(act) : activityParent()).appendChild(el);
       if (act) activityStep("Thinking", ICON.grok);
       state.activeThoughtEl = body;
       state.activeThoughtHdrEl = hdr;
@@ -3766,10 +3925,11 @@
     scrollToBottom();
   }
 
-  // Finalize the current agent turn (flush buffers, stamp the "Thought for Ns"
-  // label, close any open tool group) and clear the active-element handles so
-  // the next chunk starts a fresh bubble. Used on promptComplete and at the
-  // user-message boundary while replaying a loaded session.
+  // Finalize the current agent turn (flush buffers, destroy intermediate
+  // activity) and clear active-element handles so the next chunk starts a
+  // fresh bubble. Used on promptComplete and at the user-message boundary
+  // while replaying. Leaves the turn container open (prompt + answer); the
+  // next userMessage collapses it via openTurn.
   function commitAgentTurn() {
     flushAgent();
     flushThought();
@@ -3787,8 +3947,24 @@
       state.thoughtStartTime = null;
     }
     closeToolGroup();
-    finalizeActivity(); // freeze the carousel block at the turn boundary
+    // Classic mode: tools sit under activityParent without a carousel — strip them.
+    if (!state.compactActivity) {
+      const actReg = turnActivityRegion(state.activeTurnEl);
+      if (actReg) {
+        clearToolMapsUnder(actReg);
+        actReg.innerHTML = "";
+      } else {
+        // No turn open (edge/tests): drop classic tool rows from the root stream.
+        for (const n of [...messagesEl.querySelectorAll(":scope > .tool-group, :scope > .tool-flat, :scope > .msg.thinking, :scope > .thinking-indicator")]) {
+          clearToolMapsUnder(n);
+          n.remove();
+        }
+      }
+    }
+    finalizeActivity(); // destroy live carousel / intermediate
+    if (state.activeTurnEl) destroyTurnIntermediate(state.activeTurnEl);
     hideThinkingIndicator();
+    hideGrokking();
     state.activeAgentEl = null;
     state.activeAgentRaw = "";
     state.activeThoughtEl = null;
@@ -3868,6 +4044,7 @@
       for (const f of parsed.files) chipsRow.appendChild(makeMsgChipTag(f));
       state.activeUserEl.appendChild(chipsRow);
     }
+    if (state.activeTurnEl) setTurnSummary(state.activeTurnEl, parsed.body);
     scrollToBottom();
   }
 
@@ -3897,7 +4074,7 @@
     clearWelcome();
     const el = document.createElement("div");
     collapsePermissionCard(el, outcome === "rejected" ? "reject_once" : "allow_once", title);
-    messagesEl.appendChild(el);
+    appendOnTurnSurface(el);
     scrollToBottom();
   }
 
@@ -3917,7 +4094,9 @@
     const matched = new Set(matches);
     state.permissionHistoryQueue = state.permissionHistoryQueue.filter((p) => !matched.has(p));
     closeToolGroup();
-    finalizeActivity(); // the restored card lands below the block it gated
+    // Do not destroy the activity strip here — the restored card should sit
+    // next to the tool it gated mid-replay. commitAgentTurn still seals and
+    // removes intermediate tools when the turn ends.
     for (const p of matches) addRestoredPermissionCard(p.title, p.outcome);
   }
 
@@ -3977,7 +4156,7 @@
     // (Thinking / tools use the dots for discrete progress instead).
     el.innerHTML = `<span class="grokking-icon">${ICON.orbit}</span><span class="grokking-label">Grokking</span>`;
     el.setAttribute("aria-label", "Grok is working");
-    messagesEl.appendChild(el);
+    activityParent().appendChild(el);
     state.grokkingEl = el;
     scrollToBottom();
   }
@@ -4005,7 +4184,7 @@
     el.className = "thinking-indicator";
     el.innerHTML = `<span class="thinking-indicator-icon">${ICON.grok}</span><span class="thinking-indicator-label">Thinking</span>${BLINK_DOTS}`;
     el.setAttribute("aria-label", "Grok is thinking");
-    messagesEl.appendChild(el);
+    activityParent().appendChild(el);
     state.thinkingIndicatorEl = el;
     scrollToBottom();
   }
@@ -4054,10 +4233,43 @@
     showGrokking();
   }
 
+  const clampScrollTop = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.clampScrollTop)
+    || function (scrollTop, scrollHeight, clientHeight) {
+      const max = Math.max(0, (Number(scrollHeight) || 0) - (Number(clientHeight) || 0));
+      const n = typeof scrollTop === "number" ? scrollTop : Number(scrollTop);
+      if (!Number.isFinite(n) || n < 0) return 0;
+      return n > max ? max : n;
+    };
+
+  // Report #messages pin + offset to the host so hide→reveal can restore.
+  // Debounced while live; immediate flush on hide / force pin.
+  let scrollStateTimer = null;
+  function postScrollState(immediate) {
+    if (state.panelReplaying || state.scrollStateSuppress) return;
+    const send = () => {
+      scrollStateTimer = null;
+      if (state.panelReplaying || state.scrollStateSuppress) return;
+      vscode.postMessage({
+        type: "scrollState",
+        stickToBottom: !!state.stickToBottom,
+        scrollTop: messagesEl.scrollTop || 0,
+      });
+    };
+    if (immediate) {
+      if (scrollStateTimer) { clearTimeout(scrollStateTimer); scrollStateTimer = null; }
+      send();
+      return;
+    }
+    if (scrollStateTimer) clearTimeout(scrollStateTimer);
+    scrollStateTimer = setTimeout(send, 80);
+  }
+
   // Follow streaming output only while the user is pinned to the bottom. Once
   // they scroll up (the listener below clears state.stickToBottom) this becomes
   // a no-op, so they can read history while grok keeps thinking (#16).
+  // Also a no-op during panel reveal rebuild so buffer replay cannot yank mid-scroll.
   function scrollToBottom() {
+    if (state.panelReplaying) return;
     if (state.stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
@@ -4072,11 +4284,14 @@
 
   // Always pull the view to the bottom and re-pin. For interactive activity the
   // user needs to see regardless of where they've scrolled: permission/question
-  // cards and their own just-sent message.
+  // cards and their own just-sent message. Suppressed during panel rebuild —
+  // buffered userMessage/permission cards must not re-pin before end restore.
   function forceScrollToBottom() {
+    if (state.panelReplaying) return;
     state.stickToBottom = true;
     messagesEl.scrollTop = messagesEl.scrollHeight;
     updateScrollBtn();
+    postScrollState(true);
   }
 
   // While a click-triggered smooth scroll is animating, the intermediate scroll
@@ -4090,9 +4305,11 @@
         return;
       }
     }
+    if (state.panelReplaying || state.scrollStateSuppress) return;
     state.stickToBottom = shouldStickToBottom(
       messagesEl.scrollTop, messagesEl.scrollHeight, messagesEl.clientHeight);
     updateScrollBtn();
+    postScrollState(false);
   });
 
   scrollBottomBtn.onclick = () => {
@@ -4100,7 +4317,42 @@
     state.stickToBottom = true;
     updateScrollBtn();
     messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: "smooth" });
+    postScrollState(true);
   };
+
+  function beginPanelReplay(restore) {
+    state.panelReplaying = true;
+    state.pendingRestore = restore === undefined ? null : restore;
+    state.scrollStateSuppress = true;
+  }
+
+  function endPanelReplay() {
+    const restore = state.pendingRestore;
+    state.pendingRestore = null;
+    // Apply restore while still panelReplaying so force/scroll paths stay gated.
+    state.scrollStateSuppress = true;
+    try {
+      if (restore == null || restore.stickToBottom === true) {
+        state.stickToBottom = true;
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      } else {
+        const top = clampScrollTop(
+          restore.scrollTop,
+          messagesEl.scrollHeight,
+          messagesEl.clientHeight,
+        );
+        messagesEl.scrollTop = top;
+        state.stickToBottom = shouldStickToBottom(
+          messagesEl.scrollTop, messagesEl.scrollHeight, messagesEl.clientHeight);
+      }
+      updateScrollBtn();
+    } finally {
+      state.panelReplaying = false;
+      // One authoritative host update after apply; then allow live posts again.
+      state.scrollStateSuppress = false;
+      postScrollState(true);
+    }
+  }
 
   // ---------- permission card ----------
 
@@ -4176,7 +4428,9 @@
     // arrives); Claude's real diff hunks land on the COMPLETED update, which is
     // AFTER approval — so at this point there's usually nothing there for it.
     // Synthesize a preview from rawInput instead so the card isn't diff-less.
-    const diff = state.pendingDiffByToolCallId.get(toolCallId) || permissionDiffFromRawInput(req.toolCall?.rawInput, kind);
+    const structuredDiff = toolCallId ? state.pendingDiffByToolCallId.get(toolCallId) : null;
+    const syntheticDiff = structuredDiff ? null : permissionDiffFromRawInput(req.toolCall?.rawInput, kind);
+    const diff = structuredDiff || syntheticDiff;
     if (diff) {
       const subtitle = document.createElement("div");
       subtitle.className = "card-subtitle";
@@ -4184,6 +4438,14 @@
       const newLines = (diff.newText || "").split("\n").length;
       subtitle.textContent = `${diff.path} — ${oldLines} → ${newLines} lines`;
       el.appendChild(subtitle);
+      // Phase A: label synthesized previews so users know this is agent input,
+      // not a structured ACP diff (source-of-truth is synth path, not backend).
+      if (syntheticDiff && !structuredDiff) {
+        const note = document.createElement("div");
+        note.className = "card-subtitle perm-preview-note";
+        note.textContent = "Preview from agent input";
+        el.appendChild(note);
+      }
 
       // The diff renders inline in the card — reviewing an edit is one glance +
       // one click on the decision (#21) — and stays in this tab: an editor-tab
@@ -4216,7 +4478,7 @@
       actions.appendChild(btn);
     }
     el.appendChild(actions);
-    messagesEl.appendChild(el);
+    appendOnTurnSurface(el);
     forceScrollToBottom(); // a pending permission must be visible (#16)
   }
 
@@ -4352,7 +4614,7 @@
     };
     el.appendChild(skip);
 
-    messagesEl.appendChild(el);
+    appendOnTurnSurface(el);
     forceScrollToBottom(); // a pending question must be visible (#16)
   }
 
@@ -4458,7 +4720,7 @@
       block.appendChild(qText);
       el.appendChild(block);
     });
-    messagesEl.appendChild(el);
+    appendOnTurnSurface(el);
     if (answerText) fillRestoredAnswer(el, answerText);
     scrollToBottom();
     return el;
@@ -4575,7 +4837,7 @@
     actions.appendChild(mk("Reject", "", "rejected", true));
     actions.appendChild(mk("Cancel", "secondary", "abandoned", true));
     el.appendChild(actions);
-    messagesEl.appendChild(el);
+    appendOnTurnSurface(el);
     scrollToBottom();
   }
 
@@ -4628,7 +4890,7 @@
       el.appendChild(status);
     }
 
-    messagesEl.appendChild(el);
+    appendOnTurnSurface(el);
     scrollToBottom();
   }
 
@@ -4666,9 +4928,12 @@
       }
       const el = document.createElement("div");
       el.className = "chip" + (chip.hidden ? " chip-hidden" : "");
-      el.title = chip.path;
+      const isImplicit = chip.id.startsWith("implicit:");
+      // Phase B: make attached vs currently-open context obvious.
+      el.title = (isImplicit ? "Open in editor: " : "Attached: ") + chip.path;
+      const prefix = isImplicit ? "Open · " : "";
       el.innerHTML = (chip.hidden ? ICON.eyeOff : ICON.file) +
-        `<span>${truncate(fileName, 10)}</span>`;
+        `<span>${prefix}${truncate(fileName, isImplicit ? 8 : 10)}</span>`;
       el.onclick = () => vscode.postMessage({ type: "toggleChip", id: chip.id });
       chipsEl.appendChild(el);
     }
@@ -4698,13 +4963,70 @@
 
   function updateSlash() {
     const m = (input.value.slice(0, input.selectionStart || 0)).match(/(?:^|\n)\/(\S*)$/);
-    if (!m) { slashPopover.hidden = true; state.slashFiltered = []; return; }
+    if (!m) {
+      state.slashFiltered = [];
+      updateAtMention();
+      return;
+    }
+    state.atQuery = null;
+    state.atHits = [];
     const q = m[1].toLowerCase();
     state.slashFiltered = state.commands.filter((c) => c.name.toLowerCase().startsWith(q));
     if (!state.slashFiltered.length) { slashPopover.hidden = true; return; }
     state.slashActive = 0;
     renderSlash();
     slashPopover.hidden = false;
+  }
+
+  /** Composer @-mention → file chip (Phase B). Host ranks workspace paths. */
+  function updateAtMention() {
+    if (state.slashFiltered.length) return;
+    const before = input.value.slice(0, input.selectionStart || 0);
+    const m = before.match(/(?:^|[\s\n])@([^\s@]*)$/);
+    if (!m) {
+      state.atQuery = null;
+      state.atHits = [];
+      if (!state.slashFiltered.length) slashPopover.hidden = true;
+      return;
+    }
+    state.atQuery = m[1];
+    state.atActive = 0;
+    vscode.postMessage({ type: "searchWorkspaceFiles", query: m[1] });
+  }
+
+  function renderAtHits() {
+    slashPopover.innerHTML = "";
+    if (!state.atHits.length) {
+      slashPopover.hidden = true;
+      return;
+    }
+    let activeEl = null;
+    state.atHits.forEach((file, i) => {
+      const el = document.createElement("div");
+      el.className = `slash-item${i === state.atActive ? " active" : ""}`;
+      if (i === state.atActive) activeEl = el;
+      const name = document.createElement("div");
+      name.className = "slash-name";
+      name.textContent = file;
+      el.appendChild(name);
+      el.onclick = () => pickAtFile(file);
+      slashPopover.appendChild(el);
+    });
+    slashPopover.hidden = false;
+    if (activeEl) activeEl.scrollIntoView({ block: "nearest" });
+  }
+
+  function pickAtFile(relPath) {
+    // Strip the @query token from the composer; file becomes a chip, never @path.
+    input.value = input.value.replace(/(?:^|[\s\n])@([^\s@]*)$/, (full) =>
+      full.startsWith("\n") ? "\n" : (full.startsWith(" ") || full.startsWith("\t") ? full[0] : ""),
+    );
+    state.atQuery = null;
+    state.atHits = [];
+    slashPopover.hidden = true;
+    // Host resolves relative → absolute under workspace and adds explicit chip.
+    vscode.postMessage({ type: "attachWorkspaceFile", path: relPath });
+    input.focus();
   }
 
   function renderSlash() {
@@ -4990,6 +5312,9 @@
             if (capabilitiesPopover) capabilitiesPopover.hidden = true;
           }
         }
+        if (msg.actionsScope === "all" || msg.actionsScope === "workflow") {
+          state.actionsScope = msg.actionsScope;
+        }
         break;
       case "seedComposer":
         // Host-driven seed (activity-bar document-type icon). Applied after
@@ -5018,8 +5343,20 @@
           truncated: !!msg.truncated,
           error: msg.error || null,
         };
+        if (typeof msg.mcpServerCount === "number") state.mcpServerCount = msg.mcpServerCount;
+        if (msg.actionsScope === "all" || msg.actionsScope === "workflow") {
+          state.actionsScope = msg.actionsScope;
+        }
         renderCapabilitiesPanel();
         if (capabilitiesPopover && !capabilitiesPopover.hidden) renderCapabilitiesPopoverBody();
+        break;
+      case "workspaceFileHits":
+        // @-mention autocomplete results (Phase B). Ignore stale replies.
+        if (state.atQuery == null) break;
+        if (typeof msg.query === "string" && msg.query !== state.atQuery) break;
+        state.atHits = Array.isArray(msg.files) ? msg.files : [];
+        state.atActive = 0;
+        renderAtHits();
         break;
       case "showCapabilities":
         // Live toggle (grok.showCapabilities). Off hides both mounts (and the
@@ -5069,31 +5406,21 @@
         if (!gearPopover.hidden && state.gearView === "about") renderAboutPanel(false);
         break;
       case "initialized": {
-        // The ACP handshake is done, but grok isn't ready for the user until the
-        // hidden primer turn lands. Stash the version and keep showing "starting…";
-        // the line flips to "connected · v…" only when the spinner hides (the
-        // setBusy:false at the end of priming). See the setBusy handler.
+        // The ACP handshake is done; the hidden primer may still be in flight.
+        // Stash the CLI version for gear → About. Canvas renders locked until
+        // setBusy:false (docs/plans/session-tab-ux-overhaul.md § Approach C).
         state.cliVersion = msg.info.version || "";
-        state.startingPhase = true;
-        const verEl = $("welcome-version");
-        if (verEl) { verEl.hidden = false; verEl.classList.add("loading-dots"); verEl.textContent = "Starting"; }
         const onb = $("welcome-onboarding");
         if (onb) onb.innerHTML = "";
         // Render locked, not hidden — the canvas is populated from the first
-        // frame instead of blank for the whole spawn+primer window (docs/plans/
-        // session-tab-ux-overhaul.md § Approach C). Both renders key their own
-        // lock state off state.busy, which is already true here.
+        // frame instead of blank for the whole spawn+primer window.
         renderSessionSetupCard();
         renderCapabilitiesPanel();
-        renderWelcomeGuide();
         break;
       }
       case "cliUpdating": {
-        // One-time hint while the silent `grok update` runs before the session
-        // spawns; overwritten by "starting…" once grok connects, then
-        // "connected · v<new version>" once the primer finishes.
-        const verEl = $("welcome-version");
-        if (verEl) { verEl.hidden = false; verEl.classList.add("loading-dots"); verEl.textContent = "Updating Grok Build CLI"; }
+        // Host may fire this while the silent `grok update` runs before spawn.
+        // Welcome chrome no longer shows a status line; composer busy remains.
         break;
       }
       case "session": {
@@ -5131,7 +5458,6 @@
         state.currentModeId = msg.modeId;
         updateModeBtn(msg.modeId);
         refreshSessionSettingsMounts();
-        renderWelcomeGuide(); // its plan-mode line is mode-accurate — must never go stale
         // The Actions popover's auto-accept switch reads state.currentModeId —
         // this is what flips it when the mode changes from any OTHER surface.
         if (capabilitiesPopover && !capabilitiesPopover.hidden) renderCapabilitiesPopoverBody();
@@ -5156,7 +5482,6 @@
         // Same reasoning for the setup card + quick-settings popover (WP7) —
         // the Thinking row must disappear/reappear immediately on a flip.
         refreshSessionSettingsMounts();
-        renderWelcomeGuide(); // its "Ask Grok…"/"Ask Claude…" line is backend-accurate
         break;
       case "openModePopover":
         openModePopover();
@@ -5413,7 +5738,9 @@
         addPlanNotice(
           msg.kind === "terminal"
             ? `Plan first blocked a command: ${msg.target}`
-            : `Plan first blocked a write to ${msg.target}`,
+            : msg.kind === "bind"
+              ? `Blocked: mutation did not match the approved permission (${msg.target})`
+              : `Plan first blocked a write to ${msg.target}`,
         );
         break;
       case "promptComplete":
@@ -5492,21 +5819,6 @@
           // When a non-turn busy window clears (e.g. session-start priming), send
           // anything dictated during it — priming has no agentEnd to flush on.
           flushVoiceQueue();
-          // Priming just finished: the first hidden message was sent and processed,
-          // so grok is finally ready. Reveal the version now — not at "initialized",
-          // which fires while the primer is still in flight (spinner still up).
-          if (state.startingPhase) {
-            state.startingPhase = false;
-            // Connected — the status line has nothing left to say, so it goes
-            // away entirely (the CLI version stays visible in gear → About).
-            // Transient states (Starting / Updating / onboarding) re-show it.
-            const verEl = $("welcome-version");
-            if (verEl) {
-              verEl.classList.remove("loading-dots");
-              verEl.textContent = "";
-              verEl.hidden = true;
-            }
-          }
         }
         // Refresh the gear popover's model/effort lock state if it's open.
         if (!gearPopover.hidden) renderGearMain();
@@ -5520,7 +5832,6 @@
         // already arrived, with no second listCapabilities request.
         renderCapabilitiesPanel();
         if (capabilitiesPopover && !capabilitiesPopover.hidden) renderCapabilitiesPopoverBody();
-        renderWelcomeGuide();
         break;
       case "summarizing": {
         clearWelcome();
@@ -5534,6 +5845,13 @@
       }
       case "sessionContext":
         addSessionContextBanner();
+        break;
+      case "beginPanelReplay":
+        // Host posts this BEFORE clearMessages on every ready-driven rebuild.
+        beginPanelReplay(msg.restore !== undefined ? msg.restore : null);
+        break;
+      case "endPanelReplay":
+        endPanelReplay();
         break;
       case "clearMessages":
         resetForNewSession();
@@ -5773,6 +6091,23 @@
       }
       if (e.key === "Escape") { slashPopover.hidden = true; return; }
     }
+    if (!slashPopover.hidden && state.atHits.length) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        state.atActive = (state.atActive + 1) % state.atHits.length;
+        renderAtHits(); return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        state.atActive = (state.atActive - 1 + state.atHits.length) % state.atHits.length;
+        renderAtHits(); return;
+      }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+        e.preventDefault();
+        pickAtFile(state.atHits[state.atActive]); return;
+      }
+      if (e.key === "Escape") { slashPopover.hidden = true; state.atHits = []; return; }
+    }
     const sendKey = state.useCtrlEnter
       ? e.key === "Enter" && (e.metaKey || e.ctrlKey)
       : e.key === "Enter" && !e.shiftKey;
@@ -5807,8 +6142,13 @@
   // where the webview gets no resize event and so can't re-measure. Close any open popover
   // when the view is hidden, so the history dropdown never reappears stale on refocus —
   // reopening it re-measures against the current panel width.
+  // Also flush scroll metrics immediately so a fast tab switch doesn't lose the last
+  // mid-scroll position to the debounce (host memory for restore on reveal).
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) closePopovers();
+    if (document.hidden) {
+      closePopovers();
+      postScrollState(true);
+    }
   });
 
   initMermaid();

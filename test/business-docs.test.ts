@@ -1,5 +1,5 @@
-// Pure helpers for business/office document result cards
-// (docs/plans/business-documents.md).
+// Pure helpers for business/office document classification + (disabled) cards
+// (docs/plans/business-documents.md; cards off: .grokbit/plans/markdown-document-cards/).
 import { describe, it, expect } from "vitest";
 import {
   businessDocKindForPath,
@@ -63,66 +63,48 @@ describe("isCompletedToolPayload", () => {
   });
 });
 
-describe("extractBusinessDocumentPaths", () => {
+describe("extractBusinessDocumentPaths (tool-result cards disabled)", () => {
   function withText(text: string) {
     return {
       content: [{ type: "content", content: { type: "text", text } }],
     };
   }
 
-  it("extracts JSON path for office files", () => {
+  it("returns no card refs for office JSON paths", () => {
     expect(extractBusinessDocumentPaths(withText(JSON.stringify({
       path: "/home/u/.grok/sessions/s/out/brief.docx",
-    })))).toEqual([{
-      kind: "word",
-      path: "/home/u/.grok/sessions/s/out/brief.docx",
-      name: "brief.docx",
-    }]);
+    })))).toEqual([]);
   });
 
-  it("accepts output/file/paths JSON keys", () => {
+  it("returns no card refs for output/file/paths JSON keys", () => {
     expect(extractBusinessDocumentPaths(withText(JSON.stringify({
       file: "C:\\Users\\me\\report.xlsx",
-    })))).toEqual([{
-      kind: "excel",
-      path: "C:\\Users\\me\\report.xlsx",
-      name: "report.xlsx",
-    }]);
+    })))).toEqual([]);
     expect(extractBusinessDocumentPaths(withText(JSON.stringify({
       paths: ["/tmp/a.pdf", "/tmp/b.md"],
-    }))).map((r) => r.path)).toEqual(["/tmp/a.pdf", "/tmp/b.md"]);
+    })))).toEqual([]);
   });
 
-  it("extracts absolute prose paths and strips \\\\?\\", () => {
+  it("returns no card refs for absolute prose office paths", () => {
     const prose = String.raw`Document saved to \\?\C:\Users\me\docs\q1.pptx.`;
-    expect(extractBusinessDocumentPaths(withText(prose))).toEqual([{
-      kind: "powerpoint",
-      path: String.raw`C:\Users\me\docs\q1.pptx`,
-      name: "q1.pptx",
-    }]);
+    expect(extractBusinessDocumentPaths(withText(prose))).toEqual([]);
   });
 
-  it("extracts POSIX absolute prose paths", () => {
+  it("returns no card refs for markdown prose paths", () => {
     expect(extractBusinessDocumentPaths(withText(
       "Wrote /tmp/workspace/summary.md successfully",
-    ))).toEqual([{
-      kind: "markdown",
-      path: "/tmp/workspace/summary.md",
-      name: "summary.md",
-    }]);
+    ))).toEqual([]);
   });
 
-  it("de-dupes the same path", () => {
-    const text = JSON.stringify({ path: "/tmp/a.csv" }) ;
-    // Two blocks same path — only one ref.
+  it("returns empty for multi-block payloads that formerly de-duped", () => {
+    const text = JSON.stringify({ path: "/tmp/a.csv" });
     const payload = {
       content: [
         { type: "content", content: { type: "text", text } },
         { type: "content", content: { type: "text", text: "also /tmp/a.csv" } },
       ],
     };
-    // second is prose with absolute path
-    expect(extractBusinessDocumentPaths(payload)).toHaveLength(1);
+    expect(extractBusinessDocumentPaths(payload)).toEqual([]);
   });
 
   it("ignores images, source code, and pathless JSON (negative)", () => {
@@ -133,9 +115,7 @@ describe("extractBusinessDocumentPaths", () => {
     expect(extractBusinessDocumentPaths(null)).toEqual([]);
   });
 
-  it("does not treat a bare filename without path separators as a match in prose", () => {
-    // Avoid false positives from "see README.md" without a path prefix —
-    // prose regex requires a path root (drive, /, \\, or ./).
+  it("returns empty for bare filename mentions", () => {
     expect(extractBusinessDocumentPaths(withText("I created README.md for you."))).toEqual([]);
   });
 });

@@ -37,8 +37,8 @@ describe("full-canvas layout — no ribbon left (source check)", () => {
     expect(ruleBlock(css, ".capabilities-panel {")).not.toContain("360px");
   });
 
-  it("[R] .welcome-tagline no longer carries the 320px cap", () => {
-    expect(ruleBlock(css, ".welcome-tagline {")).not.toContain("320px");
+  it("[R] .welcome-tagline is removed (welcome chrome simplify)", () => {
+    expect(css).not.toMatch(/\.welcome-tagline\s*\{/);
   });
 
   it("[R] .onb no longer carries the 320px cap", () => {

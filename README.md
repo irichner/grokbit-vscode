@@ -126,10 +126,11 @@ A new empty session shows a short value prop and a **Session setup** card: **Age
 
 **Grokbit Actions** is on the welcome canvas of every new session, and any time from the **Grokbit Actions** button in the top bar or "Browse Grokbit Actions…" beside the composer's **+** button.
 
-It leads with the **Grokbit workflow** — four skills that ship with the extension and work identically on Grok and Claude Code:
+It leads with the **Grokbit workflow** — five skills that ship with the extension and work identically on Grok and Claude Code:
 
 | | |
 |---|---|
+| `/grokbit-explore` | Map relevant code first — a compact, cited orientation in chat before you change anything. |
 | `/grokbit-plan` | Turn a vague request into a grounded, reviewed plan — every claim read from the repo, every task with a command that proves it worked. |
 | `/grokbit-implement` | Work the plan one task at a time. Each task passes its check or is reverted; there is no half-finished state. |
 | `/grokbit-test` | Record how things behaved *before* the change, then prove what did and didn't change afterward. |

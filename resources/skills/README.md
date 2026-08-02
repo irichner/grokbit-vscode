@@ -1,8 +1,9 @@
 # grokbit-skills
 
-Four portable skills for **Claude Code** and **Grok Build**. One skill format, one artifact directory, both CLIs.
+Five portable skills for **Claude Code** and **Grok Build**. One skill format, one artifact directory, both CLIs.
 
 ```
+grokbit-explore    Scope Setter · Cartographer · Citation Checker
 grokbit-plan       Business Analyst · Systems Analyst · Solutions Architect · Plan Reviewer
 grokbit-implement  Build Engineer · Software Engineer · Supply Chain Security Analyst · Code Reviewer
 grokbit-test       QA Automation · Frontend QA · AppSec · Release Engineer · Maintenance
@@ -12,12 +13,12 @@ grokbit-document   Information Architect · Documentation Engineer · Technical 
 ## Install
 
 These skills ship inside the **Grokbit VS Code extension**, not as a standalone
-install. On activation the extension provisions all four into the home tier
+install. On activation the extension provisions all five into the home tier
 of both CLIs — a plain file copy, re-copied whenever the extension updates:
 
 ```
-~/.grok/skills/grokbit-{plan,implement,test,document}/
-~/.claude/skills/grokbit-{plan,implement,test,document}/
+~/.grok/skills/grokbit-{explore,plan,implement,test,document}/
+~/.claude/skills/grokbit-{explore,plan,implement,test,document}/
 ```
 
 There is no symlink and nothing to keep in sync by hand. `grok.skills.provision`
@@ -34,6 +35,9 @@ so your fork shadows it without you editing the shared copy in place.
 ## The pipeline
 
 ```
+  grokbit-explore (optional orientation)
+           │
+           ▼
   grokbit-plan  ──▶  human approval  ──▶  grokbit-test (baseline)
                                                   │
                                                   ▼
@@ -43,6 +47,8 @@ so your fork shadows it without you editing the shared copy in place.
                                         │
                          3 deviations ──┴──▶ back to grokbit-plan
 ```
+
+**Explore** maps relevant code in chat (read-only, cited) before you commit to a plan. It does not write plan artifacts; Plan Survey still opens files when you run `/grokbit-plan`.
 
 **Testing runs twice, and the first run is the important one.** Baseline mode executes before implementation to record how the system behaves today. Without it, "the cart total is $0" after a change is just a number — you have nothing to compare it against. A baseline captured after the fact agrees with the change perfectly and detects nothing.
 

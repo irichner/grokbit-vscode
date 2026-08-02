@@ -45,11 +45,40 @@ describe("permission card inline diff (real chat.js in a DOM)", () => {
     const card = doc.querySelector(".card.permission");
     expect(card).not.toBeNull();
     expect(card!.querySelector(".card-subtitle")!.textContent).toContain("src/foo.ts");
+    // Structured ACP diff — no synthetic-preview label
+    expect(card!.querySelector(".perm-preview-note")).toBeNull();
 
     expect(diffRows(card!)).toEqual(["same:a", "del:b", "add:B", "add:c"]);
     // No host round-trip: an editor tab would cover the chat webview and the
     // reveal-replay would reopen it in a loop.
     expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(0);
+  });
+
+  it("labels a synthesized preview from rawInput as Preview from agent input", () => {
+    const { window, doc } = bootWebview();
+    // No prior toolCallUpdate → no structured diff in pendingDiffByToolCallId
+    dispatch(window, {
+      type: "permissionRequest",
+      req: {
+        id: 9,
+        toolCall: {
+          toolCallId: "tc-synth",
+          kind: "write",
+          title: "Write src/bar.ts",
+          rawInput: { file_path: "src/bar.ts", content: "hello\n" },
+        },
+        options: [
+          { optionId: "allow", name: "Allow once", kind: "allow_once" },
+          { optionId: "rej", name: "Reject", kind: "reject_once" },
+        ],
+      },
+    });
+    const card = doc.querySelector(".card.permission");
+    expect(card).not.toBeNull();
+    const note = card!.querySelector(".perm-preview-note");
+    expect(note).not.toBeNull();
+    expect(note!.textContent).toBe("Preview from agent input");
+    expect(card!.querySelector(".inline-diff")).not.toBeNull();
   });
 
   it("a replay (clearMessages + re-post, what every tab reveal does) re-renders the card without any host side effect", () => {

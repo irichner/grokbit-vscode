@@ -95,15 +95,27 @@ describe("restored permission cards (resumed session)", () => {
     dispatch(window, { type: "messageChunk", text: "ok" });
     dispatch(window, { type: "historyReplay", active: false });
 
-    const messages = doc.getElementById("messages")!;
-    const seq = (Array.from(messages.children) as HTMLElement[])
-      .filter((c) => c.id !== "welcome")
-      .map((c) => {
-        if (c.classList.contains("perm-resolved")) return "perm:" + c.querySelector(".perm-resolved-verb")!.textContent + ":" + c.querySelector(".perm-resolved-what")!.textContent;
-        if (c.classList.contains("user")) return "user:" + c.querySelector(".body")!.textContent;
-        if (c.classList.contains("agent")) return "agent:" + c.querySelector(".body")!.textContent;
-        return "other";
-      });
+    // Turn containers nest prompt/answer/cards — walk leaves, not top-level only.
+    const seq: string[] = [];
+    const walk = (root: Element) => {
+      for (const c of Array.from(root.children) as HTMLElement[]) {
+        if (c.id === "welcome" || c.classList.contains("turn-header")) continue;
+        if (c.classList.contains("turn") || c.classList.contains("turn-body") ||
+            c.classList.contains("turn-prompt") || c.classList.contains("turn-answer") ||
+            c.classList.contains("turn-activity")) {
+          walk(c);
+          continue;
+        }
+        if (c.classList.contains("perm-resolved") || (c.classList.contains("card") && c.classList.contains("permission"))) {
+          seq.push("perm:" + c.querySelector(".perm-resolved-verb")!.textContent + ":" + c.querySelector(".perm-resolved-what")!.textContent);
+        } else if (c.classList.contains("user")) {
+          seq.push("user:" + c.querySelector(".body")!.textContent);
+        } else if (c.classList.contains("agent")) {
+          seq.push("agent:" + c.querySelector(".body")!.textContent);
+        }
+      }
+    };
+    walk(doc.getElementById("messages")!);
     expect(seq).toEqual([
       "user:do the thing",
       "agent:working on it",
@@ -166,9 +178,9 @@ describe("restored permission cards (resumed session)", () => {
     dispatch(window, { type: "userMessageChunk", text: "only one" });
     dispatch(window, { type: "messageChunk", text: "done" });
     dispatch(window, { type: "historyReplay", active: false });
-    const last = [...doc.getElementById("messages")!.children].pop() as HTMLElement;
-    expect(last.classList.contains("perm-resolved")).toBe(true);
-    expect(last.querySelector(".perm-resolved-verb")!.textContent).toBe("Allowed");
+    const cards = doc.querySelectorAll(".card.permission.perm-resolved");
+    expect(cards.length).toBe(1);
+    expect(cards[0].querySelector(".perm-resolved-verb")!.textContent).toBe("Allowed");
   });
 });
 

@@ -33,6 +33,8 @@ Read `references/roles.md` for the full role prompts. Read `references/loops.md`
 
 Derive a kebab-case slug from the request. Create `.grokbit/plans/<slug>/`. If `.grokbit/handoff.md` exists, read it — a previous session may already have answered half of what you are about to ask.
 
+If the conversation just ran **`grokbit-explore`**, treat its chat map as a **hint list of paths to open**, not as Survey. You must still open files and write `02-survey.md` with fresh `path:line` citations. Explore never writes plan artifacts.
+
 If `.grokbit/plans/<slug>/02-survey.md` already exists, this slug is not new — `grokbit-implement` handed it back after hitting its 3-deviation cap (Loop I5) and you are re-running from Survey on corrected ground. Reuse the same slug directory; do not mint a new one, or the paper trail of what is already committed gets orphaned. Before Survey overwrites anything, archive the current `02-survey.md` and `03-design.md` into `replan-1/` (increment the number on a second replan) — see `grokbit-implement/references/loops.md` § Loop I5 for the full replan contract, including why `plan.md`'s completed task IDs must survive unchanged.
 
 Then detect host capability, because it changes how you run every subsequent step:

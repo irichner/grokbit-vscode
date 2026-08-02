@@ -171,6 +171,16 @@
     return distanceFromBottom <= t;
   }
 
+  // Clamp a desired scrollTop into [0, maxScroll] for the current viewport.
+  // Used when restoring a mid-history offset after a panel rebuild whose
+  // content height may no longer match the saved metrics.
+  function clampScrollTop(scrollTop, scrollHeight, clientHeight) {
+    const max = Math.max(0, (Number(scrollHeight) || 0) - (Number(clientHeight) || 0));
+    const n = typeof scrollTop === "number" ? scrollTop : Number(scrollTop);
+    if (!Number.isFinite(n) || n < 0) return 0;
+    return n > max ? max : n;
+  }
+
   // Split a string into text/math segments so the markdown renderer can pull
   // LaTeX out before HTML-escaping (math is full of \ { } & < > * _, which the
   // inline-markdown pass would otherwise mangle). grok emits TeX with backslash
@@ -658,8 +668,8 @@
   // reorders matched items into THIS array's order, which is the only thing
   // that sorts that group, so the two arrays must stay in the same order.
   // Listing every member also means featuredCount === items.length, so the
-  // group renders no "Show all" expander: a four-item pipeline that hides its
-  // last two steps behind a link would be teaching the workflow wrong.
+  // group renders no "Show all" expander: a five-item pipeline that hides its
+  // last steps behind a link would be teaching the workflow wrong.
   //
   // The old agentic-team `plan`/`implement` skills are deliberately NOT
   // featured here any more — they were this repo's own `.grok/skills` suite,
@@ -667,7 +677,7 @@
   // grokbit-actions-and-bundled-skill-suite.md § D4). A user who still has
   // them installed keeps them; they just no longer outrank their own skills.
   const CAPABILITY_FEATURED = {
-    grokbit: ["grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document"],
+    grokbit: ["grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document"],
     skill: [
       "cold-review", "init-repo", "docx", "pptx", "pdf", "create-workflow",
       "workflow", "deep-research", "always-approve", "alawys-approve",
@@ -682,23 +692,55 @@
     ],
   };
 
-  // Data, not logic — which CapabilityKind groups Grokbit Actions actually
-  // renders. Applied by each mount *before* capabilityGroupsView so the
-  // builder stays generic (its unit tests construct skill/agent/command groups
-  // and must keep working) and so viewGroups.length empty-state checks see the
-  // post-filter count. Restoring a kind is one array entry — the one-entry
-  // revert path if product later wants Skills/Agents/Commands back in the UI.
+  // Default allowlist for Grokbit Actions (workflow tiles only). When the host
+  // posts actionsScope "all", visibleCapabilityGroups shows every kind.
   const CAPABILITY_VISIBLE_KINDS = ["grokbit"];
+  /** Suite skill basenames that may appear as workspace forks (local overrides). */
+  const SUITE_SKILL_NAMES_LC = [
+    "grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document",
+  ];
 
   /**
-   * Pure filter: keep only groups whose `kind` is in CAPABILITY_VISIBLE_KINDS.
-   * Returns a fresh array (never the caller's). Non-array / missing input → [].
-   * Unknown kinds and non-visible kinds are dropped. Does not mutate groups.
+   * Pure filter for Actions mounts.
+   * @param {unknown} groups
+   * @param {{ scope?: "workflow" | "all" }} [opts]
+   *   scope "workflow" (default) → CAPABILITY_VISIBLE_KINDS only
+   *   scope "all" → every group with items (skills/agents/commands too)
    */
-  function visibleCapabilityGroups(groups) {
+  function visibleCapabilityGroups(groups, opts) {
     if (!Array.isArray(groups)) return [];
+    const scope = opts && opts.scope === "all" ? "all" : "workflow";
+    if (scope === "all") {
+      return groups.filter((g) => g).slice();
+    }
     const allow = new Set(CAPABILITY_VISIBLE_KINDS);
     return groups.filter((g) => g && allow.has(g.kind));
+  }
+
+  /**
+   * Tag workspace-tier suite name collisions as local overrides (not Grokbit-badged).
+   * Returns a new groups array; does not mutate input.
+   */
+  function markLocalSuiteOverrides(groups) {
+    if (!Array.isArray(groups)) return [];
+    const suite = new Set(SUITE_SKILL_NAMES_LC);
+    return groups.map((g) => {
+      if (!g || !Array.isArray(g.items)) return g;
+      const items = g.items.map((item) => {
+        if (!item) return item;
+        const name = (item.name || "").toLowerCase();
+        if (!suite.has(name)) return item;
+        if (item.kind === "grokbit") return item;
+        const src = String(item.source || "");
+        if (!/^project/i.test(src) && !/workspace/i.test(src)) return item;
+        return {
+          ...item,
+          sourceBadge: "Local override",
+          source: item.source || "Project",
+        };
+      });
+      return { ...g, items };
+    });
   }
 
   // No configured list for a kind, or none of its named items are installed
@@ -793,6 +835,9 @@
         const action = invoke ? "invoke" : (path ? "open" : "inert");
         const source = raw.source || "";
         const hint = typeof raw.hint === "string" && raw.hint.trim() ? truncateCapabilityDescription(raw.hint) : undefined;
+        const sourceBadge = typeof raw.sourceBadge === "string" && raw.sourceBadge.trim()
+          ? raw.sourceBadge.trim()
+          : undefined;
         return {
           kind: raw.kind,
           name: raw.name || "",
@@ -803,7 +848,8 @@
           invoke,
           path,
           source,
-          workspaceSource: source.startsWith("Project"),
+          sourceBadge,
+          workspaceSource: source.startsWith("Project") || !!sourceBadge,
           action,
           inert: action === "inert",
         };
@@ -820,39 +866,6 @@
       });
     }
     return out;
-  }
-
-  /**
-   * Pure three-line guide strip for the new-tab welcome canvas (#welcome-guide) —
-   * plain-English orientation for a user who will never type `/`
-   * (docs/plans/session-tab-ux-overhaul.md § Approach C). Unlike the removed
-   * welcomeStarters/taskQuickActions catalogues below, this is prose describing
-   * SHIPPED behaviour, not a set of invented clickable prompts — the renderer
-   * turns each returned line into a plain, non-interactive row.
-   *
-   * Mode- and backend-accurate so it never states something false: the middle
-   * line is the one that matters most. Plan mode drafts before touching
-   * anything and Agent mode may still ask before editing files or running
-   * commands — both true today — but Auto-accept applies edits and runs
-   * commands WITHOUT asking first, and that line must never be softened into
-   * something that reads as "your files are still protected," which would be
-   * a materially false safety claim to exactly the non-technical user this
-   * strip exists for.
-   */
-  function welcomeGuide(opts) {
-    opts = opts || {};
-    const agentName = opts.backend === "claude" ? "Claude" : "Grok";
-    const modeId = opts.modeId === "plan" || opts.modeId === "yolo" ? opts.modeId : "agent";
-    const modeLine = modeId === "plan"
-      ? `Plan mode is on — ${agentName} drafts a plan first; nothing changes until you approve it.`
-      : modeId === "yolo"
-        ? `Auto accept is on — ${agentName} edits files and runs commands without asking first.`
-        : `${agentName} may ask before editing files or running commands.`;
-    return [
-      `Ask ${agentName} to explain code, write or fix something, or answer a question about this workspace.`,
-      modeLine,
-      `Type in plain English below — no slash commands required.`,
-    ];
   }
 
   // Starter action cards for the empty-session welcome screen. Pure so unit tests
@@ -1199,7 +1212,7 @@
   const api = {
     FILE_EXTS, looksLikeFileRef, formatRelativeTime, modelDisplayName,
     MIC_STATES, nextMicState, trailingSendPhrase, buildQuestionAnswers,
-    isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath,
+    isSubagentToolCall, subagentLabel, shouldStickToBottom, clampScrollTop, splitMath,
     stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext,
     MODE_DISPLAY, modeDisplayMeta, permissionButtonLabel, welcomeStarters,
     businessDocTypeStarters, docTypeIcons, formatTokenCount, formatLauncherMeta,
@@ -1211,8 +1224,8 @@
     inferPermissionKind, permissionDiffFromRawInput,
     sessionSetupModel,
     CAPABILITY_KIND_LABELS, capabilityGroupsView, sessionToggleGroup,
-    welcomeGuide, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK,
-    CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups,
+    CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK,
+    CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups, markLocalSuiteOverrides,
     CAPABILITY_ROW_DESCRIPTION_MAX, truncateCapabilityDescription,
   };
   if (typeof module !== "undefined" && module.exports) {

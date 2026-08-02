@@ -119,6 +119,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("grok.insertAtMention", () =>
       sidebar.insertActiveMention(),
     ),
+    vscode.commands.registerCommand("grok.newWorktreeSession", () =>
+      sidebar.newWorktreeSession(),
+    ),
     vscode.commands.registerCommand("grok.showLogs", () => output.show()),
     vscode.commands.registerCommand("grok.logout", () => sidebar.logout()),
     // Internal debug helper for manually exercising the plan-review card UI

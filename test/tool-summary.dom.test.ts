@@ -213,28 +213,29 @@ describe("narration interleaves with tool groups (inside the activity block)", (
       });
   }
 
-  it("narration + tool batches collapse into one block, interleaved in order inside it", () => {
+  it("narration + tool batches collapse into one live block, then seal keeps only the answer", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "messageChunk", text: "First, reading the files." } as any);
     dispatch(window, tc({ toolCallId: "1", kind: "read", rawInput: { path: "/a.ts" } }));
     dispatch(window, tc({ toolCallId: "2", kind: "read", rawInput: { path: "/b.ts" } }));
+    // While live: one activity block holds narration + tools.
+    expect(doc.querySelectorAll(".activity-carousel.live").length).toBe(1);
+    expect(doc.querySelectorAll(".activity-carousel .tool-item").length).toBe(2);
     dispatch(window, { type: "messageChunk", text: "Now running the build." } as any);
     dispatch(window, tc({ toolCallId: "3", kind: "execute", rawInput: { command: "npm run build" } }));
     dispatch(window, tc({ toolCallId: "4", kind: "execute", rawInput: { command: "npm test" } }));
-    dispatch(window, { type: "messageChunk", text: "Done." } as any); // closes the 2nd group
-    dispatch(window, { type: "promptComplete" } as any); // flushes the bubble + freezes the block
-
-    // Transcript: ONE activity block + the trailing (answer) bubble — no scroll spam.
-    expect(seqOf(doc.getElementById("messages")!)).toEqual(["activity", "agent:Done."]);
-    // Inside the block the interleave order survives exactly: each narration
-    // directly above the group it introduced, never coalesced.
-    const body = doc.querySelector(".activity-carousel .activity-body")!;
-    expect(seqOf(body)).toEqual([
+    dispatch(window, { type: "messageChunk", text: "Done." } as any);
+    // Before seal the interleave is inside the live block (closed groups summarized).
+    expect(seqOf(doc.querySelector(".activity-carousel .activity-body")!)).toEqual([
       "agent:First, reading the files.",
       "tools:Explored 2 items",
       "agent:Now running the build.",
       "tools:Ran 2 commands",
     ]);
+    dispatch(window, { type: "promptComplete" } as any);
+    // Seal destroys intermediate activity — only the final answer remains.
+    expect(doc.querySelector(".activity-carousel")).toBeNull();
+    expect(doc.querySelector(".msg.agent .body")!.textContent).toBe("Done.");
   });
 
   it("classic mode (compactActivity off) keeps the original interleaved transcript", () => {
@@ -355,24 +356,8 @@ describe("failed tool calls surface the reason", () => {
   });
 });
 
-describe("plan / permission cards sit below the frozen activity block", () => {
-  function cardSeq(container: Element): string[] {
-    return (Array.from(container.children) as HTMLElement[])
-      .filter((c) => c.id !== "welcome")
-      .map((c) => {
-        if (c.classList.contains("thinking")) return "thinking";
-        if (c.classList.contains("card") && c.classList.contains("plan")) return "PLAN-CARD";
-        if (c.classList.contains("card") && c.classList.contains("permission")) return "PERM-CARD";
-        if (c.classList.contains("agent")) return "agent:" + (c.querySelector(".body")?.textContent ?? "");
-        if (c.classList.contains("tool-group")) return "tools:" + (c.querySelector(".tool-group-label")?.textContent ?? "");
-        if (c.classList.contains("tool-flat")) return "tool:" + c.textContent;
-        if (c.classList.contains("activity-carousel"))
-          return "activity:" + (c.querySelector(".activity-label")?.textContent ?? "");
-        return c.className;
-      });
-  }
-
-  it("a plan turn: the lead-up freezes into one summary block, then the plan card at the bottom", () => {
+describe("plan / permission cards sit below destroyed intermediate activity", () => {
+  it("a plan turn: lead-up activity is destroyed; plan intro + card remain", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "thoughtChunk", text: "Planning the approach." } as any);
     dispatch(window, { type: "messageChunk", text: "Let me explore the code." } as any);
@@ -381,23 +366,13 @@ describe("plan / permission cards sit below the frozen activity block", () => {
     dispatch(window, { type: "messageChunk", text: "Here's my plan." } as any);
     dispatch(window, { type: "exitPlanRequest", req: { id: 7, plan: "1. do X\n2. do Y" } } as any);
 
-    // Transcript: one frozen block (thinking + narration + tools · 4 steps), the
-    // plan intro bubble, then the card at the bottom — nothing above scrolls away.
-    expect(cardSeq(doc.getElementById("messages")!)).toEqual([
-      "activity:Explored 2 items · 4 steps",
-      "agent:Here's my plan.",
-      "PLAN-CARD",
-    ]);
-    // The lead-up detail survives, in order, inside the block.
-    const body = doc.querySelector(".activity-carousel .activity-body")!;
-    expect(cardSeq(body)).toEqual([
-      "thinking",
-      "agent:Let me explore the code.",
-      "tools:Explored 2 items",
-    ]);
+    // Segment break destroys the live activity strip; plan intro + card stay.
+    expect(doc.querySelector(".activity-carousel")).toBeNull();
+    expect(doc.querySelector(".msg.agent .body")!.textContent).toContain("Here's my plan.");
+    expect(doc.querySelector(".card.plan")).not.toBeNull();
   });
 
-  it("a permission card lands below the frozen block that led to it", () => {
+  it("a permission card lands after intermediate activity is destroyed", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "messageChunk", text: "I'll remove the stale files." } as any);
     dispatch(window, tc({ toolCallId: "1", kind: "execute", rawInput: { command: "rm /a.tmp" } }));
@@ -407,14 +382,7 @@ describe("plan / permission cards sit below the frozen activity block", () => {
       req: { id: 9, toolCall: { toolCallId: "x", kind: "execute", title: "Run rm" }, options: [{ optionId: "a", kind: "allow_once", name: "Allow" }, { optionId: "r", kind: "reject_once", name: "Reject" }] },
     } as any);
 
-    expect(cardSeq(doc.getElementById("messages")!)).toEqual([
-      "activity:Ran 2 commands · 3 steps",
-      "PERM-CARD",
-    ]);
-    const body = doc.querySelector(".activity-carousel .activity-body")!;
-    expect(cardSeq(body)).toEqual([
-      "agent:I'll remove the stale files.",
-      "tools:Ran 2 commands",
-    ]);
+    expect(doc.querySelector(".activity-carousel")).toBeNull();
+    expect(doc.querySelector(".card.permission")).not.toBeNull();
   });
 });

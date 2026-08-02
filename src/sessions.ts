@@ -151,8 +151,9 @@ const UNNAMED_SETTINGS_TITLE = "New";
 
 /** Total title budget for {@link composeTabTitle}. Wider than the bare
  *  {@link tabTitleFor} default (24) to make room for the settings prefix
- *  while still keeping the name's own share close to that same 24. */
-const DEFAULT_SETTINGS_TITLE_MAX = 34;
+ *  and an optional leading status/progress head while still keeping the
+ *  name's own share close to that same 24. */
+const DEFAULT_SETTINGS_TITLE_MAX = 40;
 
 /** However long the model·effort prefix gets, the name still gets at least
  *  this many characters — a pathological model id must not crowd it out
@@ -163,6 +164,66 @@ const MIN_NAME_BUDGET = 10;
  *  reason: bound the case a wild model id blows up {@link shortModelName}'s
  *  output (it has no length cap of its own). */
 const MAX_PREFIX_LEN = 14;
+
+/** Leading status/progress head hard cap (design: ≤6 so settings still fit). */
+const MAX_STATUS_HEAD_LEN = 6;
+
+/**
+ * Pure view-model status for editor-tab titles — deliberately not
+ * `SessionStatus`, so this module never imports the Session class.
+ * Computed by {@link tabTitleStatusFrom} from live status + unread meta.
+ */
+export type TabTitleStatus = "none" | "working" | "needs-you" | "done-away" | "error-away";
+
+/**
+ * Map live session status + unread badges to a tab-title status.
+ * Precedence mirrors {@link computeDot}: working → needs-you → finished-while-away.
+ * Pure — no vscode / Session imports.
+ */
+export function tabTitleStatusFrom(opts: {
+  liveStatus?: string;
+  unread?: boolean;
+  unreadError?: boolean;
+}): TabTitleStatus {
+  if (opts.liveStatus === "working") return "working";
+  if (opts.liveStatus === "needs-you") return "needs-you";
+  if (opts.liveStatus === "error" && opts.unread) return "error-away";
+  if (opts.liveStatus === "done" && opts.unread) return "done-away";
+  // Cold / post-process: unread still means "finished while you were away".
+  if (opts.unread && opts.unreadError) return "error-away";
+  if (opts.unread) return "done-away";
+  return "none";
+}
+
+/**
+ * Build the leading status/progress head for a tab title.
+ * Markers (ASCII-first, design-locked): working `…`, needs-you `?`,
+ * done-away `*`, error-away `!`. Progress digits only when working and
+ * current ≥ 1 (`…7` or `…3/12`). Pure.
+ */
+export function tabStatusHead(
+  tabStatus?: TabTitleStatus,
+  progressCurrent?: number,
+  progressTotal?: number,
+): string {
+  if (!tabStatus || tabStatus === "none") return "";
+  if (tabStatus === "needs-you") return "?";
+  if (tabStatus === "done-away") return "*";
+  if (tabStatus === "error-away") return "!";
+  // working
+  let head = "…";
+  if (typeof progressCurrent === "number" && progressCurrent >= 1) {
+    const cur = Math.min(Math.floor(progressCurrent), 999);
+    if (typeof progressTotal === "number" && progressTotal >= 1) {
+      const tot = Math.min(Math.floor(progressTotal), 99);
+      head = `…${cur}/${tot}`;
+    } else {
+      head = `…${cur}`;
+    }
+  }
+  if (head.length > MAX_STATUS_HEAD_LEN) head = head.slice(0, MAX_STATUS_HEAD_LEN);
+  return head;
+}
 
 export interface TabTitleParts {
   /** Session name (customName / latest prompt / disk displayName) — same
@@ -176,26 +237,52 @@ export interface TabTitleParts {
    *  when `model` isn't known yet (a fresh/resumed Claude tab, before its first
    *  `modelChanged`). Defaults to "grok" for existing callers. */
   backend?: BackendId;
-  /** Total title budget, prefix + separator + name. */
+  /** Total title budget, status head + prefix + separator + name. */
   maxLen?: number;
+  /**
+   * Pure tab status view-model. Omitted / `"none"` → no leading status segment
+   * (idle titles stay byte-compatible with pre-status callers for short names).
+   */
+  tabStatus?: TabTitleStatus;
+  /** In-turn step count; only rendered when `tabStatus === "working"` and ≥ 1. */
+  progressCurrent?: number;
+  /** Optional known total; omit when unknown (never invent a total). */
+  progressTotal?: number;
 }
 
 /**
- * Editor-tab title with a `Model·effort — Name` settings prefix, e.g.
- * `Sonnet·hig — Fix login bug` / unnamed: `Grok·med — New`. VS Code truncates
- * tab titles from the end, so the prefix (the settings) survives a narrow tab
- * and the name is what degrades — the opposite of the bare {@link tabTitleFor}.
- * Reuses `tabTitleFor` for the name's own truncation. Pure.
+ * Editor-tab title with optional leading status/progress + a `Model·effort — Name`
+ * settings prefix, e.g. `…7 Sonnet·hig — Fix login bug` / idle: `Grok·med — New`.
+ * VS Code truncates tab titles from the end, so status + settings survive a
+ * narrow tab and the name is what degrades. Pure.
  */
-export function composeTabTitle({ name, model, effort, backend = "grok", maxLen = DEFAULT_SETTINGS_TITLE_MAX }: TabTitleParts): string {
+export function composeTabTitle({
+  name,
+  model,
+  effort,
+  backend = "grok",
+  maxLen = DEFAULT_SETTINGS_TITLE_MAX,
+  tabStatus,
+  progressCurrent,
+  progressTotal,
+}: TabTitleParts): string {
+  const statusHead = tabStatusHead(tabStatus, progressCurrent, progressTotal);
+  // Over budget: drop progress digits first (recompute bare marker for working).
+  let head = statusHead;
+  if (head.length > MAX_STATUS_HEAD_LEN) head = head.slice(0, MAX_STATUS_HEAD_LEN);
+
   const eff = shortEffort(effort);
   let prefix = eff ? `${shortModelName(model, backend)}·${eff}` : shortModelName(model, backend);
   if (prefix.length > MAX_PREFIX_LEN) prefix = prefix.slice(0, MAX_PREFIX_LEN - 1) + "…";
   const sep = " — ";
+  const statusPart = head ? `${head} ` : "";
+  // Never drop needs-you / away markers to free name budget — they are the signal.
+  // Progress may already have been truncated by MAX_STATUS_HEAD_LEN.
   const collapsed = (name ?? "").replace(/\s+/g, " ").trim();
-  const nameBudget = Math.max(MIN_NAME_BUDGET, maxLen - prefix.length - sep.length);
+  const fixedLen = statusPart.length + prefix.length + sep.length;
+  const nameBudget = Math.max(MIN_NAME_BUDGET, maxLen - fixedLen);
   const namePart = collapsed ? tabTitleFor(collapsed, nameBudget) : UNNAMED_SETTINGS_TITLE;
-  return `${prefix}${sep}${namePart}`;
+  return `${statusPart}${prefix}${sep}${namePart}`;
 }
 
 /** Default friendly name when no `customName` or `session_summary` is available. */

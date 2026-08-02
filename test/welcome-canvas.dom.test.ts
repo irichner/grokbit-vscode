@@ -1,71 +1,46 @@
-// New-tab welcome canvas — WP3 of docs/plans/session-tab-ux-overhaul.md:
-// - the #welcome-guide three-line strip (built by the pure welcomeGuide() in
-//   media/webview-helpers.js, unit-tested in test/webview-helpers.test.ts)
-// - the "render locked, not hidden" lifecycle inversion for the setup card /
-//   capabilities panel is covered where those mounts already live
-//   (test/session-setup.dom.test.ts, test/capabilities.dom.test.ts) — this
-//   file owns the guide strip's own mount + its four lifecycle anchors.
-// Drives the REAL shipped media/chat.js + media/webview-helpers.js in a
-// happy-dom window via test/webview-harness.ts.
+// New-tab welcome canvas — simplified chrome (plan: welcome-chrome-simplify).
+// Only "Grokbit" above Session Setup / Grokbit Actions; no logo, tagline,
+// version line, or guide strip. Setup card + capabilities lifecycle still
+// live in session-setup.dom.test.ts / capabilities.dom.test.ts.
+// Drives the REAL shipped media/chat.js + media/webview-helpers.js via harness.
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { bootWebview, dispatch } from "./webview-harness";
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
-const guide = (doc: Document) => doc.getElementById("welcome-guide") as HTMLElement;
-const guideLines = (doc: Document) =>
-  [...guide(doc).querySelectorAll(".welcome-guide-row")].map((r) => r.textContent || "");
 
-describe("welcome-guide strip", () => {
-  it("renders three rows on a ready session, above #welcome-grid", () => {
+describe("welcome canvas chrome (simplified)", () => {
+  it("has only Grokbit above #welcome-grid — no logo, tagline, version, or guide", () => {
     const { doc } = bootWebview();
-    const el = guide(doc);
-    expect(el.hidden).toBe(false);
-    expect(guideLines(doc)).toHaveLength(3);
+    const welcome = doc.getElementById("welcome") as HTMLElement;
+    expect(welcome).toBeTruthy();
+    expect(doc.querySelector(".welcome-mark")).toBeNull();
+    expect(doc.querySelector(".welcome-tagline")).toBeNull();
+    expect(doc.getElementById("welcome-version")).toBeNull();
+    expect(doc.getElementById("welcome-guide")).toBeNull();
+
+    const h2 = welcome.querySelector("h2");
+    expect(h2?.textContent).toBe("Grokbit");
     const grid = doc.getElementById("welcome-grid");
-    const DOCUMENT_POSITION_FOLLOWING = 4; // standard DOM constant (happy-dom has no global Node here)
-    expect(el.compareDocumentPosition(grid!) & DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(grid).toBeTruthy();
+    const DOCUMENT_POSITION_FOLLOWING = 4;
+    expect(h2!.compareDocumentPosition(grid!) & DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("the plan-mode line differs between agent, plan and yolo", () => {
-    const { window, doc } = bootWebview();
-    const agentLines = guideLines(doc);
-
-    dispatch(window, { type: "modeChanged", modeId: "plan" });
-    const planLines = guideLines(doc);
-    expect(planLines).not.toEqual(agentLines);
-    expect(planLines.join(" ")).toMatch(/plan/i);
-
-    dispatch(window, { type: "modeChanged", modeId: "yolo" });
-    const yoloLines = guideLines(doc);
-    expect(yoloLines).not.toEqual(agentLines);
-    expect(yoloLines).not.toEqual(planLines);
-
-    // [R] The Auto-accept variant must not claim files are protected — a
-    // materially false safety statement to exactly the non-technical user
-    // this strip exists for.
-    const yoloText = yoloLines.join(" ").toLowerCase();
-    expect(yoloText).toMatch(/without asking/);
-    expect(yoloText).not.toMatch(/protect|safe|nothing changes/);
+  it("still mounts session-setup and capabilities under #welcome-grid", () => {
+    const { doc } = bootWebview();
+    const grid = doc.getElementById("welcome-grid")!;
+    expect(grid.querySelector("#session-setup-card")).toBeTruthy();
+    expect(grid.querySelector("#capabilities-panel")).toBeTruthy();
   });
 
-  it("is backend-accurate: names the tab's own agent", () => {
-    const { window, doc } = bootWebview();
-    const grokText = guideLines(doc).join(" ");
-    expect(grokText).toMatch(/\bGrok\b/);
-
-    dispatch(window, { type: "backendChanged", backend: "claude", label: "Claude Code" });
-    const claudeText = guideLines(doc).join(" ");
-    expect(claudeText).toMatch(/\bClaude\b/);
-    expect(claudeText).not.toBe(grokText);
+  it("keeps About byline below the cards", () => {
+    const { doc } = bootWebview();
+    expect(doc.getElementById("welcome-about-link")).toBeTruthy();
   });
 
-  // The 74e923a removal of the starter cards / task chips stays removed —
-  // this is UI copy describing shipped behaviour, not a resurrected prompt
-  // catalogue (docs/plans/session-tab-ux-overhaul.md § Non-goals). Asserted
-  // directly here too, alongside the guide strip's own code, not only in
-  // test/friendly-ui.dom.test.ts (which must stay green unmodified).
+  // The 74e923a removal of the starter cards / task chips stays removed.
   it("[R] uses neither #welcome-starters nor .welcome-starter/.welcome-task-chip", () => {
     const { doc } = bootWebview();
     expect(doc.getElementById("welcome-starters")).toBeNull();
@@ -73,51 +48,54 @@ describe("welcome-guide strip", () => {
     expect(doc.querySelectorAll(".welcome-task-chip")).toHaveLength(0);
   });
 
-  it("[R] .welcome-guide is an auto-fit grid clamped with min(100%, …) inside minmax() (source check)", () => {
+  it("[R] CSS no longer defines .welcome-mark, .welcome-tagline, or .welcome-guide", () => {
     const css = read("../media/chat.css");
-    const idx = css.indexOf("\n.welcome-guide {");
-    expect(idx, 'expected to find ".welcome-guide {" starting a line in chat.css').toBeGreaterThan(-1);
-    const open = css.indexOf("{", idx);
-    const close = css.indexOf("}", open);
-    const rule = css.slice(idx, close + 1);
-    expect(rule).toContain("repeat(auto-fit, minmax(min(100%, 240px), 1fr))");
+    expect(css).not.toMatch(/\.welcome-mark\s*\{/);
+    expect(css).not.toMatch(/\.welcome-tagline\s*\{/);
+    expect(css).not.toMatch(/\.welcome-guide\s*\{/);
+    expect(css).not.toMatch(/\.welcome-guide-row\s*\{/);
   });
 
-  it("hides on first send (clearWelcome) and does not resurrect on a later capabilities message", () => {
-    const { window, doc } = bootWebview();
-    expect(guide(doc).hidden).toBe(false);
-    dispatch(window, { type: "userMessage", text: "let's start", chips: [] });
-    expect(guide(doc).hidden).toBe(true);
-    expect(guide(doc).innerHTML).toBe("");
-    dispatch(window, { type: "capabilities", backend: "grok", groups: [], scannedRoots: 0, truncated: false });
-    expect(guide(doc).hidden).toBe(true);
-  });
-
-  it("hides on resetForNewSession (clearMessages) so a stale strip never lingers", () => {
-    const { window, doc } = bootWebview();
-    dispatch(window, { type: "userMessage", text: "go", chips: [] });
-    expect(guide(doc).hidden).toBe(true);
-    dispatch(window, { type: "clearMessages" });
-    expect(guide(doc).hidden).toBe(true); // hidden again until the new session goes ready
-    expect(guide(doc).innerHTML).toBe("");
-  });
-
-  for (const onboardingState of ["missing-cli", "auth-required", "missing-claude-adapter", "claude-auth-required"]) {
-    it(`hides during onboarding (${onboardingState})`, () => {
-      const { window, doc } = bootWebview();
-      expect(guide(doc).hidden).toBe(false);
-      dispatch(window, { type: "onboarding", state: onboardingState, platform: "linux", backend: "claude" });
-      expect(guide(doc).hidden).toBe(true);
-      expect(guide(doc).innerHTML).toBe("");
-    });
-  }
-
-  it("restores once onboarding clears", () => {
+  it("onboarding still hides setup/capabilities and shows a card", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "onboarding", state: "auth-required" });
-    expect(guide(doc).hidden).toBe(true);
-    dispatch(window, { type: "onboarding", state: "" });
-    dispatch(window, { type: "setBusy", value: false });
-    expect(guide(doc).hidden).toBe(false);
+    const onb = doc.getElementById("welcome-onboarding")!;
+    expect(onb.textContent).toMatch(/Sign in/i);
+    const setup = doc.getElementById("session-setup-card") as HTMLElement;
+    const caps = doc.getElementById("capabilities-panel") as HTMLElement;
+    expect(setup.hidden || !setup.innerHTML).toBeTruthy();
+    expect(caps.hidden || !caps.innerHTML).toBeTruthy();
+  });
+
+  // plan: remove-about-after-prompt — author display:flex must not beat [hidden]
+  it("[R] CSS defines .welcome[hidden] { display: none }", () => {
+    const css = read("../media/chat.css");
+    expect(css).toMatch(/\.welcome\[hidden\]\s*\{\s*display:\s*none\s*;?\s*\}/);
+  });
+
+  it("hides the whole welcome (About + title) on first user message", () => {
+    // happy-dom does not load media/chat.css (see chat-turn-containers /
+    // chat-layout); shipped paint hide is proven by the CSS source rule above.
+    // This case proves clearWelcome still sets the hidden attribute that rule keys off.
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "session",
+      sessionId: "s1",
+      currentModelId: "grok-build",
+      models: [{ modelId: "grok-build", name: "Grok Build" }],
+      backend: "grok",
+    });
+
+    const welcome = doc.getElementById("welcome") as HTMLElement;
+    expect(welcome.hidden).toBe(false);
+    expect(doc.getElementById("welcome-about-link")).toBeTruthy();
+    expect(welcome.querySelector("h2")?.textContent).toBe("Grokbit");
+
+    dispatch(window, { type: "userMessage", text: "hello", chips: [] });
+
+    expect(welcome.hidden).toBe(true);
+    // About + title remain under #welcome — they must not paint when [hidden] is set.
+    expect(welcome.contains(doc.getElementById("welcome-about-link")!)).toBe(true);
+    expect(welcome.querySelector("h2")?.textContent).toBe("Grokbit");
   });
 });

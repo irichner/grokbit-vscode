@@ -29,7 +29,8 @@ describe("command output expander", () => {
     dispatch(window, { type: "toolCall", call: CMD_CALL });
     dispatch(window, { type: "toolCall", call: { toolCallId: "c2", kind: "execute", title: "Shell ls" } });
     dispatch(window, { type: "toolCallUpdate", call: outUpdate("c1", "PASS 42 tests\nDone") });
-    dispatch(window, { type: "promptComplete", meta: {} });
+    // Close group without sealing the turn (seal destroys intermediate tools).
+    dispatch(window, { type: "messageChunk", text: "done" } as any);
 
     const item = doc.querySelector('.tool-item[data-tool-category="command"]') as HTMLElement;
     expect(item).not.toBeNull();
@@ -56,7 +57,7 @@ describe("command output expander", () => {
 
     dispatch(window, { type: "toolCall", call: CMD_CALL });
     dispatch(window, { type: "toolCallUpdate", call: outUpdate("c1", "hello from stdout") });
-    dispatch(window, { type: "promptComplete", meta: {} }); // closeToolGroup
+    dispatch(window, { type: "messageChunk", text: "done" } as any); // closeToolGroup, keep tools
 
     // A group survives (chevron + body), not a bare .tool-flat that drops the item.
     expect(doc.querySelector(".tool-group")).not.toBeNull();
@@ -71,7 +72,7 @@ describe("command output expander", () => {
     const { window, doc } = bootWebview();
 
     dispatch(window, { type: "toolCall", call: CMD_CALL });
-    dispatch(window, { type: "promptComplete", meta: {} });
+    dispatch(window, { type: "messageChunk", text: "done" } as any);
 
     expect(doc.querySelector(".tool-flat")).not.toBeNull();
     expect(doc.querySelector(".tool-output-toggle")).toBeNull();
@@ -84,7 +85,7 @@ describe("command output expander", () => {
     dispatch(window, { type: "toolCall", call: { toolCallId: "r2", kind: "read", title: "Read src/bar.ts" } });
     // A completion update with file content but no kind — must not be treated as command output.
     dispatch(window, { type: "toolCallUpdate", call: outUpdate("r1", "export const x = 1;") });
-    dispatch(window, { type: "promptComplete", meta: {} });
+    dispatch(window, { type: "messageChunk", text: "done" } as any);
 
     expect(doc.querySelector(".tool-output-toggle")).toBeNull();
   });
@@ -100,7 +101,7 @@ describe("command output expander", () => {
     dispatch(window, { type: "toolCall", call: CMD_CALL });
     dispatch(window, { type: "toolCall", call: { toolCallId: "c2", kind: "execute", title: "Shell ls" } });
     dispatch(window, { type: "toolCallUpdate", call: outUpdate("c1", "line one\nline two") });
-    dispatch(window, { type: "promptComplete", meta: {} });
+    dispatch(window, { type: "messageChunk", text: "done" } as any);
 
     const item = doc.querySelector('.tool-item[data-tool-category="command"]') as HTMLElement;
     click(window, outputToggle(item)!); // reveal → copy button appears
@@ -118,12 +119,13 @@ describe("command output expander", () => {
       call: { ...CMD_CALL, status: "completed", content: [{ type: "content", content: { type: "text", text: "restored stdout" } }] },
     });
     dispatch(window, { type: "toolCall", call: { toolCallId: "c2", kind: "execute", title: "Shell ls" } });
-    dispatch(window, { type: "historyReplay", active: false });
-
+    // Assert mid-replay — seal at historyReplay:false destroys intermediate tools.
     const item = doc.querySelector('.tool-item[data-tool-category="command"]') as HTMLElement;
     const toggle = outputToggle(item)!;
     expect(toggle).not.toBeNull();
     click(window, toggle);
     expect(item.querySelector(".tool-output")!.textContent).toContain("restored stdout");
+    dispatch(window, { type: "historyReplay", active: false });
+    expect(doc.querySelector(".tool-group")).toBeNull();
   });
 });

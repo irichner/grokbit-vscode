@@ -21,7 +21,9 @@ import {
   sessionsDirFor,
   shortEffort,
   shortModelName,
+  tabStatusHead,
   tabTitleFor,
+  tabTitleStatusFrom,
   NEW_TAB_TITLE,
 } from "../src/sessions";
 
@@ -759,7 +761,8 @@ describe("composeTabTitle", () => {
     const title = composeTabTitle({ name: long, model: "grok-build", effort: "medium" });
     expect(title.startsWith("Grok·med — ")).toBe(true);
     expect(title).toContain("…");
-    expect(title.length).toBeLessThanOrEqual(34);
+    // DEFAULT_SETTINGS_TITLE_MAX raised 34→40 to leave room for a status head.
+    expect(title.length).toBeLessThanOrEqual(40);
   });
 
   it("bounds a pathologically long model id instead of letting it crowd out the name", () => {
@@ -803,6 +806,91 @@ describe("composeTabTitle", () => {
     expect(title.startsWith("Sonnet·med — ")).toBe(true);
     // Even with a tight budget the name keeps its minimum share.
     expect(title.length).toBeGreaterThan("Sonnet·med — ".length);
+  });
+
+  it("idle / omitted tabStatus keeps the pre-status title for short names", () => {
+    expect(composeTabTitle({ name: "Fix login bug", model: "sonnet", effort: "high" }))
+      .toBe("Sonnet·hig — Fix login bug");
+    expect(composeTabTitle({ name: "Fix login bug", model: "sonnet", effort: "high", tabStatus: "none" }))
+      .toBe("Sonnet·hig — Fix login bug");
+  });
+
+  it("prefixes working / needs-you / done-away / error-away markers", () => {
+    expect(composeTabTitle({ name: "Fix login bug", model: "sonnet", effort: "high", tabStatus: "working" }))
+      .toBe("… Sonnet·hig — Fix login bug");
+    expect(composeTabTitle({ name: "Fix login bug", model: "sonnet", effort: "high", tabStatus: "needs-you" }))
+      .toBe("? Sonnet·hig — Fix login bug");
+    expect(composeTabTitle({ name: "Fix login bug", model: "sonnet", effort: "high", tabStatus: "done-away" }))
+      .toBe("* Sonnet·hig — Fix login bug");
+    expect(composeTabTitle({ name: "Fix login bug", model: "sonnet", effort: "high", tabStatus: "error-away" }))
+      .toBe("! Sonnet·hig — Fix login bug");
+  });
+
+  it("fuses step progress into the working marker when current ≥ 1", () => {
+    expect(composeTabTitle({
+      name: "Fix login bug", model: "sonnet", effort: "high",
+      tabStatus: "working", progressCurrent: 7,
+    })).toBe("…7 Sonnet·hig — Fix login bug");
+    expect(composeTabTitle({
+      name: "Fix login bug", model: "sonnet", effort: "high",
+      tabStatus: "working", progressCurrent: 3, progressTotal: 12,
+    })).toBe("…3/12 Sonnet·hig — Fix login bug");
+  });
+
+  it("does not show progress digits when current is 0 or for non-working status", () => {
+    expect(composeTabTitle({
+      name: "Fix login bug", model: "sonnet", effort: "high",
+      tabStatus: "working", progressCurrent: 0,
+    })).toBe("… Sonnet·hig — Fix login bug");
+    expect(composeTabTitle({
+      name: "Fix login bug", model: "sonnet", effort: "high",
+      tabStatus: "needs-you", progressCurrent: 5,
+    })).toBe("? Sonnet·hig — Fix login bug");
+  });
+
+  it("keeps the status marker when the name is long (status survives end-truncation)", () => {
+    const long = "refactor the authentication helper across the whole API layer";
+    const title = composeTabTitle({
+      name: long, model: "grok-build", effort: "medium", tabStatus: "needs-you",
+    });
+    expect(title.startsWith("? Grok·med — ")).toBe(true);
+    expect(title.length).toBeLessThanOrEqual(40);
+  });
+});
+
+describe("tabTitleStatusFrom", () => {
+  it("maps live working / needs-you first", () => {
+    expect(tabTitleStatusFrom({ liveStatus: "working" })).toBe("working");
+    expect(tabTitleStatusFrom({ liveStatus: "needs-you", unread: true })).toBe("needs-you");
+  });
+
+  it("maps finished-while-away from done/error + unread", () => {
+    expect(tabTitleStatusFrom({ liveStatus: "done", unread: true })).toBe("done-away");
+    expect(tabTitleStatusFrom({ liveStatus: "error", unread: true })).toBe("error-away");
+  });
+
+  it("collapses idle / read done to none", () => {
+    expect(tabTitleStatusFrom({})).toBe("none");
+    expect(tabTitleStatusFrom({ liveStatus: "idle" })).toBe("none");
+    expect(tabTitleStatusFrom({ liveStatus: "done" })).toBe("none");
+    expect(tabTitleStatusFrom({ liveStatus: "error" })).toBe("none");
+  });
+});
+
+describe("tabStatusHead", () => {
+  it("returns empty for none / omitted", () => {
+    expect(tabStatusHead()).toBe("");
+    expect(tabStatusHead("none")).toBe("");
+  });
+
+  it("locks the design markers and progress fusion", () => {
+    expect(tabStatusHead("working")).toBe("…");
+    expect(tabStatusHead("working", 0)).toBe("…");
+    expect(tabStatusHead("working", 7)).toBe("…7");
+    expect(tabStatusHead("working", 3, 12)).toBe("…3/12");
+    expect(tabStatusHead("needs-you", 9)).toBe("?");
+    expect(tabStatusHead("done-away")).toBe("*");
+    expect(tabStatusHead("error-away")).toBe("!");
   });
 });
 

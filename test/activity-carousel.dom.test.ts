@@ -105,64 +105,49 @@ describe("‹ › peek navigation", () => {
 });
 
 describe("finalize at the turn boundary", () => {
-  it("promptComplete freezes a multi-batch turn into one summary row", () => {
+  it("promptComplete destroys intermediate activity — only the final answer remains", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "messageChunk", text: "Exploring." } as any);
     dispatch(window, read("1", "/a.ts"));
     dispatch(window, read("2", "/b.ts"));
     dispatch(window, { type: "messageChunk", text: "Now the build." } as any);
     dispatch(window, run("3", "npm run build"));
+    dispatch(window, { type: "messageChunk", text: "All done." } as any);
     dispatch(window, { type: "promptComplete" } as any);
 
-    const block = doc.querySelector(".activity-carousel")!;
-    expect(block.classList.contains("done")).toBe(true);
-    expect(block.classList.contains("live")).toBe(false);
-    // Narrations (2) + calls (3) = 5 steps; tools roll up by category.
-    expect(label(doc)).toBe("Explored 2 items, ran 1 command · 5 steps");
-    // Live chrome is gone from the strip (groups in the body keep their own,
-    // CSS-hidden, dots); the summary is still expandable.
-    expect(strip(doc)!.querySelector(".tool-dots")).toBeNull();
-    expect(strip(doc)!.querySelector(".activity-nav")).toBeNull();
-    expect(body(doc)!.hidden).toBe(true);
-    click(window, strip(doc)!);
-    expect(body(doc)!.hidden).toBe(false);
+    expect(doc.querySelector(".activity-carousel")).toBeNull();
+    expect(doc.querySelector(".tool-group")).toBeNull();
+    // Final agent answer survives (last bubble not folded into destroyed activity).
+    expect(doc.querySelector(".msg.agent .body")!.textContent).toContain("All done.");
   });
 
-  it("a single-batch turn unwraps — simple turns look exactly like the classic row", () => {
+  it("a single-batch turn destroys tools on seal — no permanent tool row", () => {
     const { window, doc } = bootWebview();
     dispatch(window, read("1", "/a.ts"));
     dispatch(window, read("2", "/b.ts"));
     dispatch(window, { type: "promptComplete" } as any);
     expect(doc.querySelector(".activity-carousel")).toBeNull();
-    const rows = transcript(doc);
-    expect(rows.length).toBe(1);
-    expect(rows[0].classList.contains("tool-group")).toBe(true);
-    expect(rows[0].querySelector(".tool-group-label")!.textContent).toBe("Explored 2 items");
+    expect(doc.querySelector(".tool-group")).toBeNull();
   });
 
-  it("a thinking-only turn unwraps to the bare .msg.thinking (hidden as before by default)", () => {
+  it("thinking is destroyed on seal; the final answer bubble remains", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "thoughtChunk", text: "hmm" } as any);
     dispatch(window, { type: "messageChunk", text: "Answer." } as any);
     dispatch(window, { type: "promptComplete" } as any);
     expect(doc.querySelector(".activity-carousel")).toBeNull();
-    const rows = transcript(doc);
-    expect(rows[0].classList.contains("thinking")).toBe(true); // .msg.thinking
-    expect(rows[1].classList.contains("agent")).toBe(true); // the answer bubble stays
+    expect(doc.querySelector(".msg.thinking")).toBeNull();
+    expect(doc.querySelector(".msg.agent .body")!.textContent).toBe("Answer.");
   });
 
-  // On session/load (and slow tools) the diff/output/failure can land AFTER the
-  // turn's block froze or unwrapped. finalizeActivity re-parents the row DOM but
-  // never drops it from toolItemsByToolCallId, so late updates must still attach.
-  it("a late toolCallUpdate still reaches its row inside a frozen block", () => {
+  // Intermediate rows are gone after seal — late tool updates must no-op safely.
+  it("a late toolCallUpdate after seal is a no-op", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "messageChunk", text: "Running the tests." } as any);
-    // Two commands so the group survives closeToolGroup (a lone no-output
-    // command flattens and drops its item row — pre-existing classic behavior).
     dispatch(window, run("c1", "npm test"));
     dispatch(window, run("c2", "npm run lint"));
-    dispatch(window, { type: "promptComplete" } as any); // narration + group → frozen block
-    expect(doc.querySelector(".activity-carousel.done")).not.toBeNull();
+    dispatch(window, { type: "promptComplete" } as any);
+    expect(doc.querySelector(".activity-carousel")).toBeNull();
     dispatch(window, {
       type: "toolCallUpdate",
       call: {
@@ -170,14 +155,13 @@ describe("finalize at the turn boundary", () => {
         content: [{ type: "content", content: { type: "text", text: "47 passing" } }],
       },
     } as any);
-    // The command row inside the frozen body gained its "show output" toggle.
-    expect(body(doc)!.querySelector(".tool-output-toggle")).not.toBeNull();
+    expect(doc.querySelector(".tool-output-toggle")).toBeNull();
   });
 
-  it("a late diff still reaches its row after a single-item unwrap", () => {
+  it("a late diff after seal is a no-op", () => {
     const { window, doc } = bootWebview();
     dispatch(window, tc({ toolCallId: "e1", kind: "edit", rawInput: { path: "/a.ts" } }));
-    dispatch(window, { type: "promptComplete" } as any); // lone edit → unwrapped bare group
+    dispatch(window, { type: "promptComplete" } as any);
     expect(doc.querySelector(".activity-carousel")).toBeNull();
     dispatch(window, {
       type: "toolCallUpdate",
@@ -186,15 +170,15 @@ describe("finalize at the turn boundary", () => {
         content: [{ type: "diff", path: "/a.ts", oldText: "a\n", newText: "b\n" }],
       },
     } as any);
-    const group = doc.querySelector("#messages > .tool-group")!;
-    expect(group.querySelector(".preview-link")!.textContent).toBe("view diff");
+    expect(doc.querySelector(".tool-group")).toBeNull();
+    expect(doc.querySelector(".preview-link")).toBeNull();
   });
 
-  it("a late failure still tints a frozen block", () => {
+  it("a late failure after seal is a no-op", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "messageChunk", text: "Cleaning up." } as any);
     dispatch(window, run("x1", "rm /tmp/a"));
-    dispatch(window, run("x2", "rm /tmp/b")); // keep the group (see above)
+    dispatch(window, run("x2", "rm /tmp/b"));
     dispatch(window, { type: "promptComplete" } as any);
     dispatch(window, {
       type: "toolCallUpdate",
@@ -204,11 +188,11 @@ describe("finalize at the turn boundary", () => {
         rawOutput: { error: "tool_execution_failed", message: "permission denied" },
       },
     } as any);
-    expect(body(doc)!.querySelector(".tool-item.tool-failed")).not.toBeNull();
-    expect(doc.querySelector(".activity-carousel.done")!.classList.contains("has-error")).toBe(true);
+    expect(doc.querySelector(".tool-item.tool-failed")).toBeNull();
+    expect(doc.querySelector(".activity-carousel")).toBeNull();
   });
 
-  it("a failed tool tints the block, live and after finalize", () => {
+  it("a failed tool tints the live block; seal removes the block entirely", () => {
     const { window, doc } = bootWebview();
     dispatch(window, read("1", "/a.ts"));
     dispatch(window, run("2", "bad-cmd"));
@@ -221,34 +205,32 @@ describe("finalize at the turn boundary", () => {
       },
     } as any);
     expect(doc.querySelector(".activity-carousel")!.classList.contains("has-error")).toBe(true);
-    dispatch(window, { type: "messageChunk", text: "step 2" } as any); // 2nd item keeps the block wrapped
+    dispatch(window, { type: "messageChunk", text: "step 2" } as any);
     dispatch(window, read("3", "/c.ts"));
     dispatch(window, { type: "promptComplete" } as any);
-    expect(doc.querySelector(".activity-carousel.done")!.classList.contains("has-error")).toBe(true);
+    expect(doc.querySelector(".activity-carousel")).toBeNull();
   });
 });
 
 describe("segment breaks", () => {
-  it("a deliverable (document card) freezes the block; later work starts fresh below it", () => {
+  it("a deliverable destroys the live block; later work starts a fresh live strip", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "messageChunk", text: "Building the report." } as any);
     dispatch(window, read("1", "/a.ts"));
     dispatch(window, { type: "document", kind: "word", path: "/out/report.docx", name: "report.docx" } as any);
+    // First block is gone after the deliverable segment break.
+    expect(doc.querySelector(".activity-carousel.live")).toBeNull();
+    expect(doc.querySelector(".document-card")).not.toBeNull();
     dispatch(window, { type: "messageChunk", text: "Verifying." } as any);
     dispatch(window, read("2", "/b.ts"));
+    expect(doc.querySelector(".activity-carousel.live")).not.toBeNull();
     dispatch(window, { type: "promptComplete" } as any);
-
-    const kinds = transcript(doc).map((c) =>
-      c.classList.contains("document-card") ? "doc" :
-      c.classList.contains("activity-carousel") ? "activity" :
-      c.classList.contains("tool-group") || c.classList.contains("tool-flat") ? "tool" : c.className);
-    // Block 1 (narration + read), the card, block 2 (narration + read).
-    expect(kinds).toEqual(["activity", "doc", "activity"]);
-    // Chronology is append-only: the card sits between the two frozen blocks.
-    expect(doc.querySelectorAll(".activity-carousel.done").length).toBe(2);
+    // Seal destroys the second live strip; document card remains.
+    expect(doc.querySelector(".activity-carousel")).toBeNull();
+    expect(doc.querySelector(".document-card")).not.toBeNull();
   });
 
-  it("agentReset freezes the live block (suppressed turn leaves no live strip)", () => {
+  it("agentReset destroys the live block (suppressed turn leaves no live strip)", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "messageChunk", text: "working" } as any);
     dispatch(window, read("1", "/a.ts"));
@@ -257,8 +239,8 @@ describe("segment breaks", () => {
   });
 });
 
-describe("replay renders one summary per turn", () => {
-  it("finalizes each replayed turn's block at the user-message boundary", () => {
+describe("replay destroys intermediate activity per turn", () => {
+  it("finalizes each replayed turn without leaving permanent activity rows", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "historyReplay", active: true } as any);
     dispatch(window, { type: "userMessageChunk", text: "first ask" } as any);
@@ -269,22 +251,22 @@ describe("replay renders one summary per turn", () => {
     dispatch(window, run("2", "npm test"));
     dispatch(window, { type: "historyReplay", active: false } as any);
 
-    // No live block survives replay; both turns froze into summaries.
     expect(doc.querySelector(".activity-carousel.live")).toBeNull();
-    expect(doc.querySelectorAll(".activity-carousel.done").length).toBe(2);
+    expect(doc.querySelector(".activity-carousel.done")).toBeNull();
+    expect(doc.querySelectorAll("#messages > .turn").length).toBe(2);
   });
 });
 
 describe("classic mode (grok.compactActivity off)", () => {
-  it("initialState can turn the carousel off — tools render as direct transcript rows", () => {
+  it("initialState can turn the carousel off — tools render as direct rows", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "initialState", useCtrlEnter: false, compactActivity: false } as any);
     dispatch(window, read("1", "/a.ts"));
     expect(doc.querySelector(".activity-carousel")).toBeNull();
-    expect(doc.querySelector("#messages > .tool-group")).not.toBeNull();
+    expect(doc.querySelector(".tool-group")).not.toBeNull();
   });
 
-  it("flipping it off mid-turn freezes the live block", () => {
+  it("flipping it off mid-turn destroys the live block; next tools are classic", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "messageChunk", text: "working" } as any);
     dispatch(window, read("1", "/a.ts"));
@@ -292,7 +274,7 @@ describe("classic mode (grok.compactActivity off)", () => {
     dispatch(window, { type: "compactActivity", value: false } as any);
     expect(doc.querySelector(".activity-carousel.live")).toBeNull();
     dispatch(window, read("2", "/b.ts")); // next batch renders classic
-    expect(doc.querySelector("#messages > .tool-group")).not.toBeNull();
+    expect(doc.querySelector(".tool-group")).not.toBeNull();
   });
 
   it("the gear → Config & debug switch posts setCompactActivity", () => {

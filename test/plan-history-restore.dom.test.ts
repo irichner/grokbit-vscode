@@ -19,25 +19,35 @@
 import { describe, it, expect } from "vitest";
 import { bootWebview, dispatch, click } from "./webview-harness";
 
-// All visible message children in DOM order, mapped to a compact label so
-// assertions read like a transcript instead of a DOM dump.
+// All visible message leaves in DOM order (walks .turn containers), mapped to a
+// compact label so assertions read like a transcript instead of a DOM dump.
 function transcript(doc: Document): string[] {
-  const messages = doc.getElementById("messages")!;
   const out: string[] = [];
-  for (const child of Array.from(messages.children) as HTMLElement[]) {
-    if (child.id === "welcome") continue;
-    if (child.classList.contains("plan-history")) {
-      const label = child.querySelector(".plan-verdict-label")?.textContent ?? "(no-verdict)";
-      const body = child.querySelector(".plan-body")?.textContent?.trim() ?? "";
-      out.push(`plan[${label}]: ${body}`);
-    } else if (child.classList.contains("user")) {
-      out.push(`user: ${child.querySelector(".body")?.textContent ?? ""}`);
-    } else if (child.classList.contains("agent")) {
-      out.push(`agent: ${child.querySelector(".body")?.textContent ?? ""}`);
-    } else {
-      out.push(`other: ${child.className}`);
+  const walk = (root: Element) => {
+    for (const child of Array.from(root.children) as HTMLElement[]) {
+      if (child.id === "welcome" || child.classList.contains("turn-header")) continue;
+      if (
+        child.classList.contains("turn") ||
+        child.classList.contains("turn-body") ||
+        child.classList.contains("turn-prompt") ||
+        child.classList.contains("turn-answer") ||
+        child.classList.contains("turn-activity")
+      ) {
+        walk(child);
+        continue;
+      }
+      if (child.classList.contains("plan-history") || (child.classList.contains("card") && child.classList.contains("plan"))) {
+        const label = child.querySelector(".plan-verdict-label")?.textContent ?? "(no-verdict)";
+        const body = child.querySelector(".plan-body")?.textContent?.trim() ?? "";
+        out.push(`plan[${label}]: ${body}`);
+      } else if (child.classList.contains("user")) {
+        out.push(`user: ${child.querySelector(".body")?.textContent ?? ""}`);
+      } else if (child.classList.contains("agent")) {
+        out.push(`agent: ${child.querySelector(".body")?.textContent ?? ""}`);
+      }
     }
-  }
+  };
+  walk(doc.getElementById("messages")!);
   return out;
 }
 
@@ -271,7 +281,7 @@ describe("plan-history queue (restore-flow rendering)", () => {
     click(window, cards[0].querySelector(".plan-file-link")!);
     click(window, cards[1].querySelector(".plan-file-link")!);
 
-    expect(posted).toEqual([
+    expect(posted.filter((p) => p.type !== "scrollState")).toEqual([
       { type: "openFile", path: "/tmp/grok/first-plan.md" },
       { type: "openFile", path: "/tmp/grok/second-plan.md" },
     ]);

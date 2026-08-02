@@ -328,7 +328,8 @@ the steady-state fix.
   commands — so it's safe for the `grok-build` and `cursor` (composer) agents alike.
 - **Grokbit Actions: two mounts, one pure builder, host-side discovery.** A new
   session's welcome canvas and a top-bar **Grokbit Actions** popover both show
-  the bundled Grokbit workflow (`src/skill-suite.ts` — four skills that ship in
+  the bundled Grokbit workflow (`src/skill-suite.ts` — five skills,
+  `grokbit-explore` → plan → implement → test → document, that ship in
   the vsix and are provisioned onto both CLIs' home-tier skill paths at
   activation, so the group is present and identical on either backend) followed
   by what the selected CLI already had — its skills (including model-only ones

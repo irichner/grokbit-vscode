@@ -166,24 +166,115 @@ code {
   gap: 10px;
 }
 
+/* ---- turn containers (Q&A stack) ---- */
+/* Active turn: sticky prompt at top of the messages scroller. Prior turns
+   collapse to a one-line header; expand reveals prompt + final answer only. */
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.turn-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-editorWidget-border);
+  border-radius: var(--radius);
+  background: var(--vscode-editorWidget-background, var(--vscode-input-background));
+  color: var(--vscode-foreground);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.turn-header:hover {
+  background: var(--vscode-list-hoverBackground, var(--vscode-editorWidget-background));
+}
+/* Active turn: full sticky .turn-prompt is the only prompt surface. The
+   header stays in the DOM (summary text for collapse) but must not paint a
+   second card with the same prompt. Reappears when .active is removed. */
+.turn.active .turn-header {
+  display: none;
+}
+.turn-chevron {
+  flex: 0 0 auto;
+  opacity: 0.7;
+  transition: transform 0.12s ease;
+  display: inline-block;
+}
+.turn:not(.collapsed) .turn-chevron {
+  transform: rotate(90deg);
+}
+.turn-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.turn-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.turn.collapsed .turn-body {
+  display: none;
+}
+/* Sticky only while this turn is the live working surface. */
+.turn.active .turn-prompt {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  padding-bottom: 4px;
+}
+.turn-prompt {
+  min-width: 0;
+}
+.turn-prompt .msg.user {
+  align-self: stretch;
+  max-width: 100%;
+  min-width: 0;
+}
+.turn-activity {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.turn-activity:empty {
+  display: none;
+}
+.turn-answer {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.turn-answer:empty {
+  display: none;
+}
+
 .welcome {
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: 28px 12px 20px;
-  gap: 8px;
+  padding: 20px 12px 16px;
+  gap: 10px;
 }
-.welcome-mark {
-  width: 56px; height: 56px; opacity: 0.9;
-  display: inline-block;
-  /* The mask shapes whatever paints it, so the gradient tints the black hole
-     itself; the drop-shadow follows the masked alpha for a soft neon halo. */
-  background: linear-gradient(135deg, var(--neon-cyan-ink), var(--neon-magenta-ink));
-  -webkit-mask: var(--welcome-mark) center / contain no-repeat;
-  mask: var(--welcome-mark) center / contain no-repeat;
-  filter: drop-shadow(0 0 12px var(--neon-cyan-soft));
-}
+/* .welcome sets display:flex, which would otherwise beat the UA
+   [hidden]{display:none} rule (author styles win) — same gotcha as
+   .toolbar-popover[hidden]. Without this, clearWelcome() left the
+   Grokbit title + About link painted after the first send. */
+.welcome[hidden] { display: none; }
 .welcome h2 {
   margin: 0;
   font-weight: 600;
@@ -191,13 +282,6 @@ code {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-}
-.welcome-tagline {
-  margin: 0;
-  max-width: min(100%, 60ch);
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--vscode-descriptionForeground);
 }
 .welcome-byline { margin: 4px 0 0; font-size: 11px; }
 .muted-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
@@ -1771,31 +1855,6 @@ textarea#input {
 .mode-popover-item.disabled:hover { background: transparent; }
 .mode-item-disabled-note { display: block; font-size: 10px; color: var(--vscode-descriptionForeground); opacity: 0.85; margin-top: 3px; line-height: 1.3; white-space: normal; }
 
-/* Three-line guide strip above #welcome-grid (docs/plans/
-   session-tab-ux-overhaul.md § Approach C) — plain-English orientation for a
-   user who won't type `/`, built from the pure welcomeGuide() in
-   media/webview-helpers.js. Its own intrinsic grid, same auto-fit/
-   min(100%, …) pattern as .welcome-grid just below, so the three lines sit
-   side by side on a wide canvas instead of stacking into a tall left margin —
-   deliberately no media-query breakpoint (see the .welcome-grid comment for
-   why one would lie under grok.chatFontScale's zoom). Rows are plain text,
-   never interactive. */
-.welcome-guide {
-  width: 100%;
-  text-align: left; /* .welcome sets text-align: center */
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
-  gap: 4px 14px;
-  margin-bottom: 4px;
-}
-.welcome-guide[hidden] { display: none; }
-.welcome-guide-row {
-  margin: 0;
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--vscode-descriptionForeground);
-}
-
 /* ---- welcome canvas: full-tab-width flex row ----
    docs/plans/session-tab-ux-overhaul.md § Approach A1/A2 +
    docs/plans/actions-panel-layout-and-dynamic-capabilities.md (WP1). The tab
@@ -2426,6 +2485,15 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   color: var(--vscode-descriptionForeground);
   font-size: 11px;
 }
+.card .perm-preview-note {
+  font-style: italic;
+  opacity: 0.9;
+}
+.capabilities-mcp {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
 .card .card-actions {
   display: flex;
   flex-direction: column;
@@ -2505,6 +2573,7 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   font-weight: 600;
   line-height: 1.35;
   font-family: var(--vscode-font-family);
+  color: var(--vscode-charts-purple, #b180d7);
 }
 /* The chosen answer, shown once the card is answered — kept bright (the card
    isn't dimmed) so it's an unmistakable "grok got this" signal. */
@@ -3137,6 +3206,33 @@ mjx-container[display="true"] {
 }
 /* Muted notice at the bottom of the Recent list once LAUNCHER_MAX_ROWS is hit —
    mirrors .history-more's quiet, centered styling. */
+.launcher-attention {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-editorWidget-border);
+  border-radius: 6px;
+  background: var(--vscode-inputValidation-warningBackground, transparent);
+}
+.launcher-attention-head {
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--vscode-foreground);
+}
+.launcher-attention-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.launcher-attention-item:hover {
+  text-decoration: underline;
+}
 .launcher-list-notice {
   padding: 8px;
   color: var(--vscode-descriptionForeground);

@@ -32,9 +32,6 @@ export const BODY = `
   <main id="messages" class="messages">
     <div class="welcome" id="welcome">
       <h2>Grokbit</h2>
-      <p class="welcome-tagline">Your AI coding partner in the editor</p>
-      <p id="welcome-version" class="loading-dots">Starting</p>
-      <div id="welcome-guide" class="welcome-guide" hidden></div>
       <div id="welcome-grid" class="welcome-grid">
         <div id="session-setup-card" class="session-setup-card" hidden></div>
         <div id="capabilities-panel" class="capabilities-panel" hidden></div>

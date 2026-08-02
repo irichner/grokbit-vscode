@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain JS module, no types
-import { looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, formatLauncherMetaTooltip, activityPeek, activityPosText, backendBadgeLabel, inferPermissionKind, permissionDiffFromRawInput, sessionSetupModel, capabilityGroupsView, sessionToggleGroup, welcomeGuide, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK, CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups, CAPABILITY_ROW_DESCRIPTION_MAX } from "../media/webview-helpers.js";
+import { looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, clampScrollTop, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, formatLauncherMetaTooltip, activityPeek, activityPosText, backendBadgeLabel, inferPermissionKind, permissionDiffFromRawInput, sessionSetupModel, capabilityGroupsView, sessionToggleGroup, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK, CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups, CAPABILITY_ROW_DESCRIPTION_MAX } from "../media/webview-helpers.js";
 import { buildPrompt } from "../src/prompt-builder";
 import { makeExplicitChip, makeImplicitChip } from "../src/chips";
 
@@ -387,6 +387,29 @@ describe("shouldStickToBottom", () => {
     // 150px from bottom: pinned only with a generous threshold
     expect(shouldStickToBottom(750, 1000, 100, 200)).toBe(true);
     expect(shouldStickToBottom(750, 1000, 100, 50)).toBe(false);
+  });
+});
+
+describe("clampScrollTop", () => {
+  it("clamps below 0 and non-finite to 0", () => {
+    expect(clampScrollTop(-10, 1000, 200)).toBe(0);
+    expect(clampScrollTop(NaN, 1000, 200)).toBe(0);
+  });
+
+  it("clamps above maxScroll", () => {
+    // max = 1000 - 200 = 800
+    expect(clampScrollTop(9999, 1000, 200)).toBe(800);
+  });
+
+  it("passes through an in-range value", () => {
+    expect(clampScrollTop(400, 1000, 200)).toBe(400);
+  });
+
+  it("restore decision reuses shouldStickToBottom (no second predicate)", () => {
+    const top = clampScrollTop(700, 1000, 100);
+    expect(shouldStickToBottom(top, 1000, 100)).toBe(false);
+    const pinTop = clampScrollTop(900, 1000, 100);
+    expect(shouldStickToBottom(pinTop, 1000, 100)).toBe(true);
   });
 });
 
@@ -931,6 +954,15 @@ describe("visibleCapabilityGroups", () => {
   it("exposes CAPABILITY_VISIBLE_KINDS as the allowlist (one-entry revert path)", () => {
     expect(CAPABILITY_VISIBLE_KINDS).toEqual(["grokbit"]);
   });
+
+  it("scope all keeps non-workflow groups", () => {
+    const input = [
+      { kind: "grokbit", items: [{ name: "a" }] },
+      { kind: "skill", items: [{ name: "b" }] },
+    ];
+    const out = visibleCapabilityGroups(input, { scope: "all" });
+    expect(out.map((g: { kind: string }) => g.kind)).toEqual(["grokbit", "skill"]);
+  });
 });
 
 describe("capabilityGroupsView", () => {
@@ -1205,21 +1237,22 @@ describe("capabilityGroupsView — featured partition", () => {
   // steps of the workflow silently hide behind a "Show all" link.
   it("[R] every bundled suite skill is featured, in SUITE_SKILL_NAMES pipeline order", () => {
     expect(CAPABILITY_FEATURED.grokbit).toEqual([
-      "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document",
+      "grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document",
     ]);
     const v = capabilityGroupsView({
       groups: [{
-        kind: "grokbit", title: "Grokbit workflow", total: 4,
+        kind: "grokbit", title: "Grokbit workflow", total: 5,
         items: [
           { kind: "grokbit", name: "grokbit-test", invoke: "/grokbit-test " },
           { kind: "grokbit", name: "grokbit-document", invoke: "/grokbit-document " },
           { kind: "grokbit", name: "grokbit-plan", invoke: "/grokbit-plan " },
           { kind: "grokbit", name: "grokbit-implement", invoke: "/grokbit-implement " },
+          { kind: "grokbit", name: "grokbit-explore", invoke: "/grokbit-explore " },
         ],
       }],
     });
     expect(v[0].items.map((i) => i.name)).toEqual([
-      "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document",
+      "grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document",
     ]);
     expect(v[0].featuredCount).toBe(v[0].items.length);
   });
@@ -1281,53 +1314,3 @@ describe("capabilityGroupsView — featured partition", () => {
   });
 });
 
-// Pure three-line guide strip for the new-tab welcome canvas — see
-// docs/plans/session-tab-ux-overhaul.md § Approach C and
-// test/welcome-canvas.dom.test.ts for the DOM mount + lifecycle.
-describe("welcomeGuide", () => {
-  it("returns exactly three lines", () => {
-    expect(welcomeGuide({ backend: "grok", modeId: "agent" })).toHaveLength(3);
-  });
-
-  it("is backend-accurate: names Grok or Claude in the first line", () => {
-    const grokLines = welcomeGuide({ backend: "grok", modeId: "agent" });
-    const claudeLines = welcomeGuide({ backend: "claude", modeId: "agent" });
-    expect(grokLines[0]).toMatch(/\bGrok\b/);
-    expect(claudeLines[0]).toMatch(/\bClaude\b/);
-    expect(grokLines[0]).not.toBe(claudeLines[0]);
-  });
-
-  it("defaults to the agent-mode line for an unknown/missing modeId", () => {
-    const agent = welcomeGuide({ backend: "grok", modeId: "agent" });
-    expect(welcomeGuide({ backend: "grok" })).toEqual(agent);
-    expect(welcomeGuide({ backend: "grok", modeId: "nope" })).toEqual(agent);
-  });
-
-  it("the plan-mode line states a plan is drafted before anything changes", () => {
-    const [, modeLine] = welcomeGuide({ backend: "grok", modeId: "plan" });
-    expect(modeLine).toMatch(/plan/i);
-    expect(modeLine).toMatch(/nothing changes until you approve/i);
-  });
-
-  // [R] The Auto-accept (yolo) variant must NEVER claim files are protected —
-  // that would be a materially false safety statement to exactly the
-  // non-technical user this strip exists for (docs/plans/
-  // session-tab-ux-overhaul.md § Approach C).
-  it("[R] the Auto-accept (yolo) line states edits apply without asking, and makes no protection claim", () => {
-    const [, modeLine] = welcomeGuide({ backend: "grok", modeId: "yolo" });
-    expect(modeLine.toLowerCase()).toMatch(/without asking/);
-    expect(modeLine.toLowerCase()).not.toMatch(/protect|safe|nothing changes/);
-  });
-
-  it("the three mode variants (agent/plan/yolo) are all distinct", () => {
-    const agent = welcomeGuide({ backend: "grok", modeId: "agent" })[1];
-    const plan = welcomeGuide({ backend: "grok", modeId: "plan" })[1];
-    const yolo = welcomeGuide({ backend: "grok", modeId: "yolo" })[1];
-    expect(new Set([agent, plan, yolo]).size).toBe(3);
-  });
-
-  it("tolerates being called with no opts at all", () => {
-    expect(() => welcomeGuide()).not.toThrow();
-    expect(welcomeGuide()).toHaveLength(3);
-  });
-});

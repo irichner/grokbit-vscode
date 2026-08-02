@@ -29,6 +29,13 @@ export class Session {
    */
   backend: BackendId = "grok";
 
+  /**
+   * Optional working directory override for worktree sessions (Phase D).
+   * When set, the agent process and session-store keys use this path instead
+   * of the VS Code workspace folder. Empty/undefined → workspace default.
+   */
+  cwdOverride?: string;
+
   /** The live ACP client (one spawned `grok agent stdio` process, or the Claude
    *  adapter process for a Claude-backed tab), once started. */
   client?: AcpClient;
@@ -153,8 +160,15 @@ export class Session {
 
   /** Live permission requests awaiting an answer, by request id. Set when the
    *  card is shown, read when the user answers so we can persist the resolved
-   *  card (title + outcome) for replay on a resumed session, then deleted. */
-  pendingPermissions = new Map<number | string, { title: string; toolCallId?: string; options: { optionId: string; kind: string }[] }>();
+   *  card (title + outcome) for replay on a resumed session, then deleted.
+   *  `rawInput` is kept so an allow can record a path/command grant for
+   *  permission-bind (see `src/permission-bind.ts`). */
+  pendingPermissions = new Map<number | string, {
+    title: string;
+    toolCallId?: string;
+    rawInput?: unknown;
+    options: { optionId: string; kind: string }[];
+  }>();
 
   /** Most recent plan text seen for this session (exit_plan_mode fallback). */
   lastPlanText = "";
@@ -208,6 +222,20 @@ export class Session {
   status: SessionStatus = "idle";
 
   /**
+   * Distinct ACP `toolCallId`s seen during the current `working` turn — drives
+   * the editor-tab progress step count (`…7` in composeTabTitle). Cleared when
+   * entering/leaving working (see sidebar setStatus). Not a known total; just
+   * a de-duped step counter for multi-tool implementation turns.
+   */
+  turnToolIds = new Set<string>();
+
+  /**
+   * Optional known total for tab progress (`…3/12`). Leave undefined unless a
+   * real total is known — never invent one. Usually unset in v1.
+   */
+  turnProgressTotal?: number;
+
+  /**
    * ms-epoch of the last time this session was made the focus, created, or put to
    * work — its "recency" for the pool's LRU/TTL reaping (see session-pool.ts).
    * 0 until the sidebar touches it (kept off the constructor so this stays a pure
@@ -222,6 +250,15 @@ export class Session {
    * to reconstruct the view losslessly — no grok reload, no process kill.
    */
   buffer: unknown[] = [];
+
+  /**
+   * Last known #messages pin + offset for this open panel (in-memory only —
+   * not disk, not buffer). Survives `retainContextWhenHidden:false` tear-down
+   * so reveal can restore mid-scroll instead of always pinning to the bottom.
+   * Reset in `startSession` via `resetSessionScrollMemory`.
+   */
+  scrollStickToBottom = true;
+  scrollTop = 0;
 
   /**
    * This session's composer attachments. Per-session (not host-global) so each

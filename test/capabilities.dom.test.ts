@@ -76,9 +76,10 @@ describe("Grokbit Actions — the bundled workflow group", () => {
   const SUITE_GROUP = {
     kind: "grokbit",
     title: "Grokbit workflow",
-    total: 4,
-    featuredCount: 4,
+    total: 5,
+    featuredCount: 5,
     items: [
+      { kind: "grokbit", name: "grokbit-explore", description: "Map first.", invoke: "/grokbit-explore ", path: "/home/u/.grok/skills/grokbit-explore/SKILL.md", source: "Grokbit", origin: "disk" },
       { kind: "grokbit", name: "grokbit-plan", description: "Plan first.", invoke: "/grokbit-plan ", path: "/home/u/.grok/skills/grokbit-plan/SKILL.md", source: "Grokbit", origin: "disk" },
       { kind: "grokbit", name: "grokbit-implement", description: "Verify or revert.", invoke: "/grokbit-implement ", path: "/home/u/.grok/skills/grokbit-implement/SKILL.md", source: "Grokbit", origin: "disk" },
       { kind: "grokbit", name: "grokbit-test", description: "Baseline, then verify.", invoke: "/grokbit-test ", path: "/home/u/.grok/skills/grokbit-test/SKILL.md", source: "Grokbit", origin: "disk" },
@@ -101,13 +102,13 @@ describe("Grokbit Actions — the bundled workflow group", () => {
   });
 
   // [R] Every member is featured, so the group must render whole. A "Show all"
-  // link here would hide the last steps of a four-step pipeline.
-  it("[R] renders all four steps with no expand link", () => {
+  // link here would hide the last steps of a five-step pipeline.
+  it("[R] renders all five steps with no expand link", () => {
     const { window, doc } = bootWebview();
     sendCapabilities(window, [SUITE_GROUP]);
     const panel = panelOf(doc);
     const names = [...panel.querySelectorAll(".capability-row-name")].map((el) => el.textContent);
-    expect(names).toEqual(["grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document"]);
+    expect(names).toEqual(["grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document"]);
     expect(panel.querySelector(".capability-expand")).toBeNull();
   });
 
@@ -116,7 +117,7 @@ describe("Grokbit Actions — the bundled workflow group", () => {
     sendCapabilities(window, [SUITE_GROUP]);
     posted.length = 0;
     click(window, panelOf(doc).querySelector(".capability-row") as HTMLElement);
-    expect((doc.getElementById("input") as HTMLTextAreaElement).value).toBe("/grokbit-plan ");
+    expect((doc.getElementById("input") as HTMLTextAreaElement).value).toBe("/grokbit-explore ");
     expect(posted.some((m) => m.type === "send")).toBe(false);
   });
 
@@ -802,8 +803,9 @@ describe("capability browser — featured partition + expand", () => {
   const MANY_WORKFLOWS = [{
     kind: "grokbit",
     title: "Grokbit workflow",
-    total: 5,
+    total: 6,
     items: [
+      { kind: "grokbit", name: "grokbit-explore", description: "Map first.", invoke: "/grokbit-explore ", source: "Grokbit", origin: "disk" },
       { kind: "grokbit", name: "grokbit-plan", description: "Plan first.", invoke: "/grokbit-plan ", source: "Grokbit", origin: "disk" },
       { kind: "grokbit", name: "grokbit-implement", description: "Verify or revert.", invoke: "/grokbit-implement ", source: "Grokbit", origin: "disk" },
       { kind: "grokbit", name: "grokbit-test", description: "Baseline, then verify.", invoke: "/grokbit-test ", source: "Grokbit", origin: "disk" },
@@ -811,8 +813,8 @@ describe("capability browser — featured partition + expand", () => {
       { kind: "grokbit", name: "alpha", description: "Extra workflow.", invoke: "/alpha ", source: "Grokbit", origin: "disk" },
     ],
   }];
-  const FEATURED_FOUR = ["grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document"];
-  const ALL_FIVE = [...FEATURED_FOUR, "alpha"];
+  const FEATURED_FIVE = ["grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document"];
+  const ALL_SIX = [...FEATURED_FIVE, "alpha"];
 
   // Excludes the session-toggle row's own .capability-row-name (it shares the
   // class but is not part of the discovered-groups list under test here).
@@ -825,11 +827,11 @@ describe("capability browser — featured partition + expand", () => {
     const { window, doc } = bootWebview();
     sendCapabilities(window, MANY_WORKFLOWS);
     const panel = panelOf(doc);
-    expect(rowNames(panel)).toEqual(FEATURED_FOUR);
+    expect(rowNames(panel)).toEqual(FEATURED_FIVE);
     expect(panel.textContent).not.toContain("alpha");
     const expandBtn = panel.querySelector(".capability-expand") as HTMLElement;
     expect(expandBtn).not.toBeNull();
-    expect(expandBtn.textContent).toBe("Show all 5");
+    expect(expandBtn.textContent).toBe("Show all 6");
   });
 
   it("a group no bigger than its featured/fallback count renders no expand link at all", () => {
@@ -843,12 +845,12 @@ describe("capability browser — featured partition + expand", () => {
     sendCapabilities(window, MANY_WORKFLOWS);
     const expandBtn = panelOf(doc).querySelector(".capability-expand") as HTMLElement;
     click(window, expandBtn);
-    expect(rowNames(panelOf(doc))).toEqual(ALL_FIVE);
+    expect(rowNames(panelOf(doc))).toEqual(ALL_SIX);
     const collapseBtn = panelOf(doc).querySelector(".capability-expand") as HTMLElement;
     expect(collapseBtn.textContent).toBe("Show less");
     click(window, collapseBtn);
-    expect(rowNames(panelOf(doc))).toEqual(FEATURED_FOUR);
-    expect((panelOf(doc).querySelector(".capability-expand") as HTMLElement).textContent).toBe("Show all 5");
+    expect(rowNames(panelOf(doc))).toEqual(FEATURED_FIVE);
+    expect((panelOf(doc).querySelector(".capability-expand") as HTMLElement).textContent).toBe("Show all 6");
   });
 
   // [R] Executable guard for the constraint that the expand link is appended
@@ -872,18 +874,18 @@ describe("capability browser — featured partition + expand", () => {
     click(window, panel.querySelector(".capability-expand") as HTMLElement);
     const more = panelOf(doc).querySelector(".capability-more");
     expect(more).not.toBeNull();
-    // total 43 − 5 rendered items = +38 more
-    expect(more!.textContent).toBe("+38 more");
+    // total 43 − 6 rendered items (full group) = +37 more
+    expect(more!.textContent).toBe("+37 more");
   });
 
   it("expansion state survives a setBusy re-render instead of silently re-collapsing", () => {
     const { window, doc } = bootWebview();
     sendCapabilities(window, MANY_WORKFLOWS);
     click(window, panelOf(doc).querySelector(".capability-expand") as HTMLElement);
-    expect(rowNames(panelOf(doc)).length).toBe(5);
+    expect(rowNames(panelOf(doc)).length).toBe(6);
     dispatch(window, { type: "setBusy", value: true });
     dispatch(window, { type: "setBusy", value: false });
-    expect(rowNames(panelOf(doc)).length).toBe(5);
+    expect(rowNames(panelOf(doc)).length).toBe(6);
   });
 
   // [R] The other half of the "survives a re-render" invariant: a NEW session
@@ -893,10 +895,10 @@ describe("capability browser — featured partition + expand", () => {
     const { window, doc } = bootWebview();
     sendCapabilities(window, MANY_WORKFLOWS);
     click(window, panelOf(doc).querySelector(".capability-expand") as HTMLElement);
-    expect(rowNames(panelOf(doc)).length).toBe(5);
+    expect(rowNames(panelOf(doc)).length).toBe(6);
     dispatch(window, { type: "clearMessages" });
     sendCapabilities(window, MANY_WORKFLOWS);
-    expect(rowNames(panelOf(doc))).toEqual(FEATURED_FOUR);
+    expect(rowNames(panelOf(doc))).toEqual(FEATURED_FIVE);
   });
 
   // [R] Unlike Refresh (a host round-trip) and row clicks (a composer seed),
@@ -908,11 +910,11 @@ describe("capability browser — featured partition + expand", () => {
     dispatch(window, { type: "initialized", info: { version: "1.0.0" } });
     sendCapabilities(window, MANY_WORKFLOWS);
     const panel = panelOf(doc);
-    expect(rowNames(panel)).toEqual(FEATURED_FOUR);
+    expect(rowNames(panel)).toEqual(FEATURED_FIVE);
     expect((panel.querySelector(".capability-row") as HTMLElement).classList.contains("locked")).toBe(true);
     posted.length = 0;
     click(window, panel.querySelector(".capability-expand") as HTMLElement);
-    expect(rowNames(panelOf(doc))).toEqual(ALL_FIVE);
+    expect(rowNames(panelOf(doc))).toEqual(ALL_SIX);
     expect(posted.length).toBe(0);
     for (const r of [...panelOf(doc).querySelectorAll(".capability-row")]) {
       expect(r.classList.contains("locked")).toBe(true);
@@ -938,12 +940,12 @@ describe("capability browser — featured partition + expand", () => {
     const { window, doc } = bootWebview();
     sendCapabilities(window, MANY_WORKFLOWS);
     click(window, doc.getElementById("capabilities-btn") as HTMLElement); // open the popover
-    expect(rowNames(panelOf(doc))).toEqual(FEATURED_FOUR);
-    expect(rowNames(popoverOf(doc))).toEqual(FEATURED_FOUR);
+    expect(rowNames(panelOf(doc))).toEqual(FEATURED_FIVE);
+    expect(rowNames(popoverOf(doc))).toEqual(FEATURED_FIVE);
 
     click(window, panelOf(doc).querySelector(".capability-expand") as HTMLElement);
-    expect(rowNames(panelOf(doc))).toEqual(ALL_FIVE);
-    expect(rowNames(popoverOf(doc))).toEqual(ALL_FIVE);
+    expect(rowNames(panelOf(doc))).toEqual(ALL_SIX);
+    expect(rowNames(popoverOf(doc))).toEqual(ALL_SIX);
   });
 
   // [R] Expanding from INSIDE the popover is the mount where a bubbling click
@@ -955,12 +957,12 @@ describe("capability browser — featured partition + expand", () => {
     click(window, doc.getElementById("capabilities-btn") as HTMLElement); // open the popover
     const pop = popoverOf(doc);
     const expandInPopover = [...pop.querySelectorAll(".capability-expand")]
-      .find((el) => el.textContent === "Show all 5") as HTMLElement;
+      .find((el) => el.textContent === "Show all 6") as HTMLElement;
     expect(expandInPopover).toBeDefined();
     click(window, expandInPopover);
     expect(popoverOf(doc).hidden).toBe(false);
-    expect(rowNames(popoverOf(doc))).toEqual(ALL_FIVE);
-    expect(rowNames(panelOf(doc))).toEqual(ALL_FIVE);
+    expect(rowNames(popoverOf(doc))).toEqual(ALL_SIX);
+    expect(rowNames(panelOf(doc))).toEqual(ALL_SIX);
   });
 
   // The popover is closed for this one — appendCapabilityGroups must not
@@ -970,7 +972,7 @@ describe("capability browser — featured partition + expand", () => {
     sendCapabilities(window, MANY_WORKFLOWS);
     expect(popoverOf(doc).hidden).toBe(true);
     expect(() => click(window, panelOf(doc).querySelector(".capability-expand") as HTMLElement)).not.toThrow();
-    expect(rowNames(panelOf(doc))).toEqual(ALL_FIVE);
+    expect(rowNames(panelOf(doc))).toEqual(ALL_SIX);
   });
 
   // [R] renderCapabilitiesPopoverBody clears body.innerHTML on every render;

@@ -10,7 +10,10 @@
 //   - multiple questions keep Submit disabled until every one is answered
 //   - "Skip" posts questionCancel
 import { describe, it, expect } from "vitest";
-import { bootWebview, dispatch, click } from "./webview-harness";
+import { bootWebview, dispatch, click, Posted } from "./webview-harness";
+
+/** Host scroll memory posts are ambient; assertions care about card answers. */
+const withoutScroll = (posted: Posted[]) => posted.filter((p) => p.type !== "scrollState");
 
 const SINGLE = {
   id: 3,
@@ -45,7 +48,7 @@ describe("question card (real chat.js in a DOM)", () => {
       .find((b) => b.textContent!.includes("Option B")) as HTMLButtonElement;
     click(window, optB);
 
-    expect(posted).toEqual([{
+    expect(withoutScroll(posted)).toEqual([{
       type: "questionAnswer",
       requestId: 3,
       answers: { "Pick one?": "Option B" },
@@ -83,7 +86,7 @@ describe("question card (real chat.js in a DOM)", () => {
     expect(opts[0].classList.contains("selected")).toBe(false);
 
     click(window, submit);
-    expect(posted).toEqual([{
+    expect(withoutScroll(posted)).toEqual([{
       type: "questionAnswer",
       requestId: 4,
       answers: { "Which?": "C" },
@@ -115,7 +118,7 @@ describe("question card (real chat.js in a DOM)", () => {
     expect(submit.disabled).toBe(false);
 
     click(window, submit);
-    expect(posted[0]).toEqual({
+    expect(withoutScroll(posted)[0]).toEqual({
       type: "questionAnswer",
       requestId: 5,
       answers: { Q1: "1a", Q2: "2b" },
@@ -130,7 +133,7 @@ describe("question card (real chat.js in a DOM)", () => {
     const skip = doc.querySelector(".card.question .question-skip") as HTMLButtonElement;
     click(window, skip);
 
-    expect(posted).toEqual([{ type: "questionCancel", requestId: 3 }]);
+    expect(withoutScroll(posted)).toEqual([{ type: "questionCancel", requestId: 3 }]);
     const card = doc.querySelector(".card.question")!;
     expect(card.classList.contains("resolved")).toBe(true);
     expect(card.querySelector(".card-title")!.textContent).toBe("Skipped");

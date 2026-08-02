@@ -32,7 +32,10 @@ describe("single-edit tool group stays expandable (#30)", () => {
 
     dispatch(window, { type: "toolCall", call: EDIT_CALL });
     dispatch(window, { type: "toolCallUpdate", call: { toolCallId: "tc1", content: [DIFF] } });
-    dispatch(window, { type: "promptComplete", meta: {} }); // turn boundary → closeToolGroup
+    // Close the open group without sealing the turn — intermediate tools are
+    // destroyed on promptComplete (turn-container model). Diff review is a
+    // mid-turn affordance.
+    dispatch(window, { type: "messageChunk", text: "done" } as any);
 
     const group = doc.querySelector(".tool-group");
     expect(group).not.toBeNull(); // NOT collapsed into a bare `.tool-flat`
@@ -64,7 +67,7 @@ describe("single-edit tool group stays expandable (#30)", () => {
 
     dispatch(window, { type: "toolCall", call: EDIT_CALL });
     dispatch(window, { type: "toolCallUpdate", call: { toolCallId: "tc1", content: [DIFF] } });
-    dispatch(window, { type: "promptComplete", meta: {} });
+    dispatch(window, { type: "messageChunk", text: "done" } as any);
 
     const group = doc.querySelector(".tool-group") as HTMLElement;
     const body = group.querySelector(".tool-group-body") as HTMLElement;
@@ -84,23 +87,18 @@ describe("single-edit tool group stays expandable (#30)", () => {
     const { window, doc } = bootWebview();
 
     dispatch(window, { type: "toolCall", call: { toolCallId: "r1", kind: "read", title: "Read src/foo.ts" } });
-    dispatch(window, { type: "promptComplete", meta: {} });
+    dispatch(window, { type: "messageChunk", text: "done" } as any);
 
     expect(doc.querySelector(".tool-flat")).not.toBeNull();
     expect(doc.querySelector(".tool-group")).toBeNull();
   });
 
-  it("survives restore: a completed edit that carries its own diff still shows 'view diff'", () => {
+  it("on restore, a completed edit attaches its diff mid-replay before seal destroys tools", () => {
     const { window, posted, doc } = bootWebview();
 
-    // grok's REAL session/load wire (captured from the live CLI, 0.2.82): a
-    // completed edit replays as a SINGLE `tool_call` — kind:"edit",
-    // status:"completed" — that carries the diff in its own `content`. There is
-    // NO follow-up `tool_call_update` (unlike live, where the tool_call is a bare
-    // "StrReplace" and the diff rides a later update). So the diff extraction must
-    // run on the `tool_call` itself; if it only ran on `tool_call_update` (the old
-    // bug), the restored edit kept its expandable group but had no diff inside —
-    // exactly the "diff disappears on restore" report (#30).
+    // grok's REAL session/load wire: a completed edit replays as a single
+    // tool_call carrying the diff. Mid-replay the expandable group + view-diff
+    // must work; after replay seal, intermediate tools are destroyed (turn model).
     const REPLAYED_EDIT = { ...EDIT_CALL, status: "completed", content: [DIFF] };
 
     dispatch(window, { type: "historyReplay", active: true });
@@ -109,7 +107,6 @@ describe("single-edit tool group stays expandable (#30)", () => {
       permissions: [{ toolCallId: "tc1", title: "Edit src/foo.ts", outcome: "allowed" }],
     });
     dispatch(window, { type: "toolCall", call: REPLAYED_EDIT }); // single message, diff included
-    dispatch(window, { type: "historyReplay", active: false });
 
     const group = doc.querySelector(".tool-group");
     expect(group).not.toBeNull();
@@ -122,6 +119,10 @@ describe("single-edit tool group stays expandable (#30)", () => {
     click(window, link);
     expect(posted.filter((m: any) => m.type === "openDiff")).toHaveLength(0);
     expect(diffRows(group!)).toEqual(["same:a", "del:b", "add:B", "add:c"]);
+
+    dispatch(window, { type: "historyReplay", active: false });
+    // Seal destroys intermediate tool rows; permission history line may remain.
+    expect(doc.querySelector(".tool-group")).toBeNull();
 
     // The answered permission card replays right at the tool it gated.
     expect(doc.querySelector(".card.permission.perm-resolved")).not.toBeNull();

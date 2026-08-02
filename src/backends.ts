@@ -48,10 +48,20 @@ export interface BackendQuirks {
   /** grok only — the hidden plan-mode primer (`src/grok-primer.ts`). */
   planPrimer: boolean;
   /**
-   * grok only — client-side plan-mode enforcement (`src/plan-gate.ts`).
-   * Claude enforces plan mode natively, so this must never engage for it.
+   * Client-side plan-mode enforcement of `fs/write_text_file` + `terminal/create`
+   * (`src/plan-gate.ts`). True for both backends: Grok needs it because
+   * `exit_plan_mode` is unreliable; Claude gets the same fs/terminal backstop
+   * for parity (Phase A). Does **not** control permission pre-reject or plan
+   * restore — those stay on `clientPlanPermissionReject`.
    */
   clientPlanGate: boolean;
+  /**
+   * grok only — auto-reject mutating `session/request_permission` while the
+   * plan gate is up, and the resume-time plan-mode override driven by saved
+   * plan verdicts. Off for Claude so native plan UX and genuine
+   * `current_mode_update` replay are not clobbered.
+   */
+  clientPlanPermissionReject: boolean;
   /** grok only — the Windows `agent stdio` broken-build version pin (#22). */
   windowsVersionPin: boolean;
   /** grok only — the empty-primer-session sweep (#24). */
@@ -94,6 +104,7 @@ export const GROK_BACKEND: BackendSpec = {
   quirks: {
     planPrimer: true,
     clientPlanGate: true,
+    clientPlanPermissionReject: true,
     windowsVersionPin: true,
     emptyPrimerSweep: true,
     mediaGen: true,
@@ -111,7 +122,10 @@ export const CLAUDE_BACKEND: BackendSpec = {
   modes: { agent: "default", plan: "plan" },
   quirks: {
     planPrimer: false,
-    clientPlanGate: false,
+    // Phase A: fs/terminal plan backstop on; permission pre-reject + grok
+    // plan-restore override stay off.
+    clientPlanGate: true,
+    clientPlanPermissionReject: false,
     windowsVersionPin: false,
     emptyPrimerSweep: false,
     mediaGen: false,

@@ -17,6 +17,7 @@ describe("GROK_BACKEND / CLAUDE_BACKEND descriptors", () => {
     const expected: BackendQuirks = {
       planPrimer: true,
       clientPlanGate: true,
+      clientPlanPermissionReject: true,
       windowsVersionPin: true,
       emptyPrimerSweep: true,
       mediaGen: true,
@@ -25,10 +26,13 @@ describe("GROK_BACKEND / CLAUDE_BACKEND descriptors", () => {
     expect(GROK_BACKEND.quirks).toEqual(expected);
   });
 
-  it("Claude's quirks are all false — every grok-only behaviour must be gated off for it", () => {
+  it("Claude keeps fs/terminal plan gate on but grok-only quirks off", () => {
     const expected: BackendQuirks = {
       planPrimer: false,
-      clientPlanGate: false,
+      // Phase A: client fs/terminal backstop on for Claude; permission
+      // pre-reject + plan-restore override stay off.
+      clientPlanGate: true,
+      clientPlanPermissionReject: false,
       windowsVersionPin: false,
       emptyPrimerSweep: false,
       mediaGen: false,

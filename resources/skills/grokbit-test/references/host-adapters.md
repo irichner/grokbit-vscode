@@ -41,7 +41,7 @@ Degradation is graceful for the first three. It is not graceful for the last thr
 
 ## Distribution
 
-`grokbit-test` ships inside the Grokbit VS Code extension, not as a standalone install. On activation the extension provisions this skill — and its siblings, `grokbit-plan`, `grokbit-implement`, and `grokbit-document` — into the home tier of both CLIs:
+`grokbit-test` ships inside the Grokbit VS Code extension, not as a standalone install. On activation the extension provisions this skill — and its siblings, `grokbit-explore`, `grokbit-plan`, `grokbit-implement`, and `grokbit-document` — into the home tier of both CLIs:
 
 ```
 ~/.grok/skills/grokbit-test/

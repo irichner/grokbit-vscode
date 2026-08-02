@@ -3,9 +3,7 @@ import { createInterface, Interface } from "node:readline";
 import { EventEmitter } from "node:events";
 import {
   collectToolImages,
-  extractBusinessDocumentPaths,
   extractGeneratedMediaPaths,
-  isCompletedToolPayload,
   isMediaGenToolCall,
   extractPromptMeta,
   makeAckResponse,
@@ -26,6 +24,15 @@ import {
   shouldBlockTerminal,
   shouldBlockWrite,
 } from "./plan-gate";
+import {
+  BIND_BLOCKED_CODE,
+  BIND_BLOCKED_TERMINAL_MSG,
+  BIND_BLOCKED_WRITE_MSG,
+  consumeTerminalGrant,
+  consumeWriteGrant,
+  pushGrant,
+  type PermissionGrant,
+} from "./permission-bind";
 import { resolveGrokHome } from "./sessions";
 import { BackendQuirks, buildGrokAgentArgs, EffortLevel } from "./backends";
 
@@ -46,11 +53,10 @@ export interface AcpClientOptions {
   env?: NodeJS.ProcessEnv;
   log: (msg: string) => void;
   /**
-   * The grok-specific client behaviours this class implements, gated by the
-   * caller's backend descriptor (`BackendSpec.quirks` — see `src/backends.ts`).
-   * When a flag is false the corresponding code path is inert regardless of
-   * what the host later sets (e.g. `planActive`) — Claude enforces plan mode
-   * natively and must never be gated client-side, and never sends `x.ai/*`.
+   * Backend behaviours this class implements, gated by the caller's
+   * `BackendSpec.quirks` (see `src/backends.ts`). `clientPlanGate` is the
+   * fs/terminal plan backstop (both backends). `mediaGen` / `xaiRequests`
+   * remain grok-only.
    */
   quirks: Pick<BackendQuirks, "clientPlanGate" | "mediaGen" | "xaiRequests">;
 }
@@ -163,18 +169,24 @@ export class AcpClient extends EventEmitter {
   private mediaGenCallIds = new Set<string>();
 
   /**
-   * Business-doc paths already emitted for a given toolCallId (completed tool
-   * updates can re-send the same content; de-dupe per call, not per session, so
-   * a second create of the same name later can still surface a card).
-   */
-  private emittedBusinessDocsByToolCall = new Map<string, Set<string>>();
-
-  /**
    * Client-enforced plan gate. While true, workspace file writes and mutating
    * shell commands are refused at the (mandatory) fs/terminal handlers — see
    * `plan-gate.ts`. The host toggles this; the CLI's own plan mode is advisory.
    */
   planActive = false;
+
+  /**
+   * Path/command grants from allowed permissions (user or autoApprove).
+   * Matched on subsequent fs/terminal mutations — see `permission-bind.ts`.
+   * Host pushes via `pushApprovedGrant`; this client consumes on match.
+   */
+  approvedGrants: PermissionGrant[] = [];
+
+  /** Record a grant from an allowed permission (no-op if null/undefined). */
+  pushApprovedGrant(grant: PermissionGrant | null | undefined): void {
+    if (!grant) return;
+    this.approvedGrants = pushGrant(this.approvedGrants, grant);
+  }
 
   /** Set by the host to satisfy server→client fs requests. */
   fsRead?: FsReadHandler;
@@ -556,24 +568,12 @@ export class AcpClient extends EventEmitter {
   }
 
   /**
-   * Surface business/office document paths found in completed tool results as
-   * `documentContent` events (host → webview document cards). Extension-based —
-   * not limited to a named media tool — so `/docx` / `/xlsx` / shell skill
-   * scripts all work. See docs/plans/business-documents.md.
+   * Tool-result document cards are disabled (thin coding client — see
+   * `.grokbit/plans/markdown-document-cards/`). Kept as a no-op so call sites
+   * and defense-in-depth stay obvious; extract also always returns [].
    */
-  private emitToolBusinessDocs(payload: any): void {
-    if (!isCompletedToolPayload(payload)) return;
-    const id = typeof payload?.toolCallId === "string" ? payload.toolCallId : "_";
-    let seen = this.emittedBusinessDocsByToolCall.get(id);
-    if (!seen) {
-      seen = new Set();
-      this.emittedBusinessDocsByToolCall.set(id, seen);
-    }
-    for (const ref of extractBusinessDocumentPaths(payload)) {
-      if (seen.has(ref.path)) continue;
-      seen.add(ref.path);
-      this.emit("documentContent", ref);
-    }
+  private emitToolBusinessDocs(_payload: any): void {
+    return;
   }
 
   private async handleServerRequest(msg: any): Promise<void> {
@@ -592,11 +592,9 @@ export class AcpClient extends EventEmitter {
         if (isPlanFileWrite(params.path)) {
           this.emit("planFileContent", params.content ?? "");
         }
-        // Client-side plan-mode enforcement is grok-only (`quirks.clientPlanGate`)
-        // — Claude enforces plan mode natively, so this whole check (including
-        // the grok-specific `resolveGrokHome` lookup) must stay inert for it,
-        // regardless of what `planActive` happens to be set to. See
-        // src/backends.ts § BackendQuirks.clientPlanGate.
+        // Client-side plan-mode fs gate (`quirks.clientPlanGate`) — both
+        // backends after Phase A. grokHome allowlist still needed so grok can
+        // write its own plan.md outside the workspace.
         if (this.opts.quirks.clientPlanGate && shouldBlockWrite(params.path, {
           active: this.planActive,
           workspaceRoot: this.opts.cwd,
@@ -606,17 +604,31 @@ export class AcpClient extends EventEmitter {
           this.respondError(id, PLAN_BLOCKED_CODE, PLAN_BLOCKED_WRITE_MSG);
           return;
         }
+        // Permission-bind: when scoped path grants exist, path must match.
+        const writeBind = consumeWriteGrant(params.path, this.approvedGrants);
+        this.approvedGrants = writeBind.grants;
+        if (!writeBind.ok) {
+          this.emit("mutationBlocked", { kind: "bind", target: params.path });
+          this.respondError(id, BIND_BLOCKED_CODE, BIND_BLOCKED_WRITE_MSG);
+          return;
+        }
         await this.fsWrite(params.path, params.content);
         this.respondOk(id, {});
         return;
       }
       if (method === "terminal/create") {
         if (!this.terminal) throw new Error("terminal handler not registered");
-        // See the matching comment on fs/write_text_file — gated on
-        // `quirks.clientPlanGate`, grok-only.
+        // Plan-mode terminal gate — same quirk as writes.
         if (this.opts.quirks.clientPlanGate && shouldBlockTerminal(params.command, { active: this.planActive, workspaceRoot: this.opts.cwd })) {
           this.emit("mutationBlocked", { kind: "terminal", target: params.command });
           this.respondError(id, PLAN_BLOCKED_CODE, PLAN_BLOCKED_TERMINAL_MSG);
+          return;
+        }
+        const termBind = consumeTerminalGrant(params.command, this.approvedGrants);
+        this.approvedGrants = termBind.grants;
+        if (!termBind.ok) {
+          this.emit("mutationBlocked", { kind: "bind", target: params.command });
+          this.respondError(id, BIND_BLOCKED_CODE, BIND_BLOCKED_TERMINAL_MSG);
           return;
         }
         this.respondOk(id, this.terminal.create(params));

@@ -20,6 +20,11 @@ import {
 } from "./claude-locator";
 import { filterDotEnv } from "./env-filter";
 import { Session, SessionStatus } from "./session";
+import {
+  applyScrollStateMessage,
+  buildPanelReplayEnvelope,
+  resetSessionScrollMemory,
+} from "./session-scroll";
 import { computeDot, Dot, shouldRecycleEmptySession } from "./session-pool";
 import { PanelRouter } from "./panel-router";
 import { resolveVoiceKey, parseVoiceCommand, DEFAULT_SEND_PHRASE } from "./voice";
@@ -67,6 +72,10 @@ import {
 import { buildPrompt } from "./prompt-builder";
 import { isUsableFilePath, parseFileRef, shouldReadFileInline } from "./file-ref";
 import { pickRejectOption, shouldRejectPermission } from "./plan-gate";
+import { extractGrant } from "./permission-bind";
+import { resolveSessionCwd } from "./session-cwd";
+import { rankWorkspaceFileHits } from "./workspace-file-search";
+import { countMcpServersFromFiles } from "./mcp-config";
 import {
   selectWorkspaceDocs,
   WORKSPACE_DOC_EXCLUDE,
@@ -88,6 +97,7 @@ import {
   readSessionTokenUsage,
   resolveGrokHome,
   sessionsDirFor,
+  tabTitleStatusFrom,
 } from "./sessions";
 import { DEV_TOKENS_GENERATED_AT, DEV_TOKENS_TOTAL } from "./token-metrics";
 import {
@@ -145,6 +155,8 @@ type WebviewMsg =
   | { type: "updateGrok" }
   | { type: "recheckConnection"; backend?: BackendId }
   | { type: "listSessions"; offset?: number; limit?: number; query?: string }
+  | { type: "searchWorkspaceFiles"; query?: string }
+  | { type: "attachWorkspaceFile"; path?: string }
   | { type: "resumeSession"; id: string; backend?: BackendId }
   | { type: "renameSession"; id: string; name: string }
   | { type: "deleteSession"; id: string; name?: string; backend?: BackendId }
@@ -153,7 +165,8 @@ type WebviewMsg =
   | { type: "voiceStart" }
   | { type: "voiceStop" }
   | { type: "listWorkspaceDocs" }
-  | { type: "listCapabilities" };
+  | { type: "listCapabilities" }
+  | { type: "scrollState"; stickToBottom: boolean; scrollTop: number };
 
 const SESSION_META_KEY = "grok.sessionMeta";
 /** globalState key for the anonymous per-install telemetry GUID (survives updates). */
@@ -341,6 +354,12 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
       }
       if (e.affectsConfiguration("grok.showCapabilities")) {
         this.postShowCapabilities();
+      }
+      if (e.affectsConfiguration("grok.actionsScope")) {
+        // Re-scan so Actions remounts with the new scope filter.
+        for (const s of this.panels) {
+          if (s.ready) this.listCapabilities(s);
+        }
       }
       if (e.affectsConfiguration("grok.launcherHistoryDays")) {
         // Re-push the launcher's window immediately — a settings edit shouldn't
@@ -1919,38 +1938,29 @@ See design doc for the full state machine diagram.`;
       return;
     }
     const updateArgs = policy.target ? ["update", "--version", policy.target] : ["update"];
-    // The update tears down the whole pool (the binary is locked while any session
-    // holds it open), so a session that's mid-turn or waiting on you would be
-    // interrupted. Warn first if any are — now that several can run at once, this
-    // is no longer a non-event. (The silent startup auto-update skips this: it runs
-    // before anything is in flight.)
-    const busy = [...this.pool].filter(
-      (s) => s.status === "working" || s.status === "needs-you",
+    // Only grok processes hold the grok binary open. Claude tabs use Node + the
+    // adapter and must stay live across a grok CLI update (Phase A).
+    const grokBusy = [...this.pool].filter(
+      (s) => s.backend === GROK_BACKEND.id && (s.status === "working" || s.status === "needs-you"),
     ).length;
-    if (busy > 0) {
+    if (grokBusy > 0) {
       const choice = await vscode.window.showWarningMessage(
-        `Updating the Grok Build CLI will stop ${busy} session${busy === 1 ? "" : "s"} currently in progress. Continue?`,
+        `Updating the Grok Build CLI will stop ${grokBusy} Grok session${grokBusy === 1 ? "" : "s"} currently in progress. Claude sessions stay open. Continue?`,
         { modal: true },
         "Update Anyway",
       );
       if (choice !== "Update Anyway") return;
     }
-    // Free the binary: every pooled session's process holds it open (a hard lock
-    // on Windows), so tear the whole pool down before the update replaces the
-    // executable. AWAIT the teardown: kill() only *signals*, and on Windows the
-    // OS releases the grok.exe lock a beat after the process actually exits —
-    // running the update before that loses the rename with "cannot rename locked
-    // executable". Every open panel shows the updating state (not just one).
-    this.broadcast({ type: "cliUpdating" });
-    await this.disposePool();
-    await this.runGrokUpdate(cliPath, updateArgs);
-    // Respawn per panel on the (possibly) updated binary: every VISIBLE (ready)
-    // panel resumes immediately — a visible split tab has no "next reveal", so
-    // lazy-starting it would orphan it with a dead process — while each hidden
-    // panel respawns LAZILY on its next reveal (its next `ready` consumes
-    // pendingStart). No tab is silently orphaned, and a hidden tab that's never
-    // revealed never spawns.
+    // Free the binary: dispose only grok pool members. AWAIT teardown so
+    // Windows releases grok.exe before rename. Claude panels are untouched.
     for (const s of this.panels) {
+      if (s.backend === GROK_BACKEND.id) this.postTo(s, { type: "cliUpdating" });
+    }
+    await this.disposePool(GROK_BACKEND.id);
+    await this.runGrokUpdate(cliPath, updateArgs);
+    // Respawn only grok panels (visible immediately, hidden on next ready).
+    for (const s of this.panels) {
+      if (s.backend !== GROK_BACKEND.id) continue;
       const resumeId = s.activeSessionId;
       if (s.ready) {
         void this.startSession(s, resumeId);
@@ -2072,6 +2082,9 @@ See design doc for the full state machine diagram.`;
     // so a backgrounded session's events stay bound to it even after focus moves.
     const gen = ++session.gen;
     session.buffer = [];
+    // Scroll memory is per live conversation view — wipe it with the buffer so
+    // effort/model/backend restarts never restore a previous thread's offset.
+    resetSessionScrollMemory(session);
     session.status = "idle";
     // Stop an in-progress voice capture owned by THIS session so listening never
     // carries across its restart (model/effort restarts, resume) — but never
@@ -2118,7 +2131,8 @@ See design doc for the full state machine diagram.`;
 
     const cfg = vscode.workspace.getConfiguration("grok");
     const spec = backendSpec(session.backend);
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    // Worktree sessions use session.cwdOverride (Phase D); default is workspace.
+    const cwd = this.sessionCwd(session);
 
     let command: string;
     let args: string[];
@@ -2229,6 +2243,8 @@ See design doc for the full state machine diagram.`;
         fs.mkdirSync(path.dirname(p), { recursive: true });
         fs.writeFileSync(p, content, "utf8");
       }
+      // Soft-refresh Actions if the agent wrote a skill/capability path (Phase B).
+      this.maybeRefreshCapabilitiesAfterWrite(session, p);
     };
     client.terminal = this.terminalManager;
 
@@ -2361,6 +2377,13 @@ See design doc for the full state machine diagram.`;
     client.on("toolCall", (u) => {
       if (gen !== session.gen) return;
       session.inUserMessage = false;
+      // Tab progress: count each distinct toolCallId once while working
+      // (design: toolCall start only — do not double-count toolCallUpdate).
+      const toolId = typeof u?.toolCallId === "string" ? u.toolCallId : undefined;
+      if (session.status === "working" && toolId && !session.turnToolIds.has(toolId)) {
+        session.turnToolIds.add(toolId);
+        this.updateTabTitle(session);
+      }
       this.emit(session, { type: "toolCall", call: u });
     });
     client.on("toolCallUpdate", (u) => {
@@ -2402,11 +2425,10 @@ See design doc for the full state machine diagram.`;
       // While planning, decline any mutating permission outright. Agent mode
       // skips this prompt for edits it deems safe — the fs/terminal gate is the
       // real backstop — but if the CLI *does* ask, we say no without bothering
-      // the user. clientPlanGate is grok-only (BackendQuirks.clientPlanGate) —
-      // Claude enforces plan mode natively, so this pre-emptive decline must
-      // never engage for it (it would block Claude's own legitimate plan-mode
-      // permission asks). See docs/plans/claude-code-backend.md § Non-goals.
-      if (spec.quirks.clientPlanGate && session.planActive && shouldRejectPermission(req.toolCall?.kind, {
+      // the user. Pre-reject is grok-only (`clientPlanPermissionReject`) — Claude
+      // keeps its own plan-mode permission prompts; both backends still share the
+      // fs/terminal plan gate via `clientPlanGate`.
+      if (spec.quirks.clientPlanPermissionReject && session.planActive && shouldRejectPermission(req.toolCall?.kind, {
         active: true,
         workspaceRoot: cwd,
       })) {
@@ -2424,12 +2446,17 @@ See design doc for the full state machine diagram.`;
       if (session.autoApprove) {
         const opt = req.options.find((o) => o.kind === "allow_always") ??
                     req.options.find((o) => o.kind === "allow_once");
-        if (opt) { client.respondPermission(req.id, opt.optionId); return; }
+        if (opt) {
+          client.pushApprovedGrant(extractGrant(req.toolCall, opt.kind));
+          client.respondPermission(req.id, opt.optionId);
+          return;
+        }
       }
       // Remember it so the answer can be persisted for replay on resume.
       session.pendingPermissions.set(req.id, {
         title: req.toolCall?.title || `permission: ${req.toolCall?.kind || "tool"}`,
         toolCallId: req.toolCall?.toolCallId,
+        rawInput: req.toolCall?.rawInput,
         options: (req.options ?? []).map((o) => ({ optionId: o.optionId, kind: o.kind })),
       });
       this.emit(session, { type: "permissionRequest", req });
@@ -2580,16 +2607,11 @@ See design doc for the full state machine diagram.`;
         // events during loadSession, which our modeChanged handler honors by
         // raising the gate. Override that here with the actual verdict-driven
         // decision (see plan-restore.ts) so a Cancelled or Approved session
-        // doesn't come back stuck in Plan mode. clientPlanGate-gated (grok
-        // only): this whole override exists because grok's own exit_plan_mode
-        // is unreliable, so its replayed mode can't be trusted — Claude has no
-        // such bug and enforces plan mode for real, so a resumed Claude session
-        // must keep whatever mode its own (genuine) replayed
-        // current_mode_update already restored via the modeChanged handler
-        // above, not get silently forced back to act mode here (`saved` is
-        // always empty for Claude anyway — nothing ever persists a grok-style
-        // plan verdict for it). See docs/plans/claude-code-backend.md § WP5.
-        if (spec.quirks.clientPlanGate) {
+        // doesn't come back stuck in Plan mode. Gated on
+        // clientPlanPermissionReject (grok only) — same reason as permission
+        // pre-reject: grok's exit_plan_mode is unreliable. Claude keeps its
+        // genuine replayed mode. See docs/plans/claude-code-backend.md § WP5.
+        if (spec.quirks.clientPlanPermissionReject) {
           const decision = decideRestoreState(saved);
           this.setPlanActive(session, decision.planActive);
           const targetMode = decision.cliMode === "plan" ? "plan" : ACT_MODE_ID;
@@ -2825,7 +2847,16 @@ See design doc for the full state machine diagram.`;
       case "dropFile":
         this.addDroppedFile(session, msg.path, msg.shift);
         break;
-      case "permissionAnswer":
+      case "permissionAnswer": {
+        // Record path/command grant before clearing pending (permission-bind).
+        const pendingForGrant = session.pendingPermissions.get(msg.requestId);
+        if (pendingForGrant && session.client) {
+          const opt = pendingForGrant.options.find((o) => o.optionId === msg.optionId);
+          session.client.pushApprovedGrant(extractGrant(
+            { toolCallId: pendingForGrant.toolCallId, rawInput: pendingForGrant.rawInput as any },
+            opt?.kind,
+          ));
+        }
         session.client?.respondPermission(msg.requestId, msg.optionId);
         // Record the resolution in the session buffer so re-focusing this session
         // replays the card collapsed instead of active (the live collapse is a
@@ -2836,6 +2867,7 @@ See design doc for the full state machine diagram.`;
         this.persistPermissionAnswer(session, msg.requestId, msg.optionId);
         this.setStatus(session, "working"); // turn resumes after the answer
         break;
+      }
       case "exitPlanAnswer":
         this.handleExitPlan(session, msg.requestId, msg.verdict, msg.comment);
         break;
@@ -2936,6 +2968,11 @@ See design doc for the full state machine diagram.`;
           .getConfiguration("grok")
           .update("compactActivity", !!msg.value, vscode.ConfigurationTarget.Global);
         break;
+      case "scrollState":
+        // Webview reports #messages pin + offset so hide→reveal can restore
+        // mid-scroll (see session-scroll.ts / beginPanelReplay).
+        applyScrollStateMessage(session, msg);
+        break;
       case "runInstallCmd": {
         const term = vscode.window.createTerminal("Install Grok");
         term.show();
@@ -2991,6 +3028,22 @@ See design doc for the full state machine diagram.`;
         // state is its own. Mutations broadcast separately.
         this.replySessionsList(session, { offset: msg.offset, limit: msg.limit, query: msg.query });
         break;
+      case "searchWorkspaceFiles":
+        await this.searchWorkspaceFiles(session, typeof msg.query === "string" ? msg.query : "");
+        break;
+      case "attachWorkspaceFile": {
+        const rel = typeof msg.path === "string" ? msg.path : "";
+        if (rel) {
+          const folder = vscode.workspace.workspaceFolders?.[0];
+          const abs = folder
+            ? path.join(folder.uri.fsPath, rel)
+            : path.isAbsolute(rel) ? rel : path.join(this.sessionCwd(session), rel);
+          const relPath = vscode.workspace.asRelativePath(abs);
+          session.chips.push(makeExplicitChip(abs, relPath));
+          this.postChips(session);
+        }
+        break;
+      }
       case "resumeSession":
         await this.openTabForId(msg.id, msg.backend);
         break;
@@ -3110,9 +3163,73 @@ See design doc for the full state machine diagram.`;
    * the user adds a skill). No cache in v1 — a scan is tens of small bounded
    * reads on an explicit user action or a tab reveal.
    */
+  /**
+   * Working directory for this session's agent process / on-disk store keys.
+   * Worktree sessions set `session.cwdOverride` (Phase D).
+   */
+  private sessionCwd(session?: Session): string {
+    const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    return resolveSessionCwd(session?.cwdOverride, ws, process.cwd());
+  }
+
+  /** @-mention autocomplete: fuzzy rank workspace relative paths (Phase B). */
+  private async searchWorkspaceFiles(session: Session, query: string): Promise<void> {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) {
+      this.postTo(session, { type: "workspaceFileHits", query, files: [] });
+      return;
+    }
+    try {
+      const uris = await vscode.workspace.findFiles(
+        new vscode.RelativePattern(folder, "**/*"),
+        "**/{node_modules,.git,out,dist,.vscode-test}/**",
+        400,
+      );
+      const rels = uris.map((u) => vscode.workspace.asRelativePath(u, false));
+      const files = rankWorkspaceFileHits(rels, query, 20);
+      this.postTo(session, { type: "workspaceFileHits", query, files });
+    } catch (e) {
+      this.output.appendLine(`[search] workspace files failed: ${(e as Error).message}`);
+      this.postTo(session, { type: "workspaceFileHits", query, files: [] });
+    }
+  }
+
+  /**
+   * Open a new session whose agent cwd is a chosen folder (git worktree or any
+   * directory). History for that tree is isolated by the store's cwd key.
+   */
+  async newWorktreeSession(backend?: BackendId): Promise<void> {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: "Use as session root",
+      title: "Grokbit: New worktree / folder session",
+    });
+    if (!picked?.[0]) return;
+    const session = new Session();
+    session.backend = backend === CLAUDE_BACKEND.id ? CLAUDE_BACKEND.id : this.defaultBackend();
+    session.cwdOverride = picked[0].fsPath;
+    this.seedSessionEffort(session);
+    if (vscode.workspace.getConfiguration("grok").get<boolean>("includeActiveFileByDefault", true)) {
+      this.addActiveEditorChip(session);
+    }
+    const base = path.basename(picked[0].fsPath) || "worktree";
+    const worktreeName = `Worktree: ${base}`;
+    this.openPanel(session, composeTabTitle({
+      backend: session.backend,
+      name: worktreeName,
+    }));
+    this.maybeWarnLiveCount();
+    await this.startSession(session);
+    // Persist display name once the CLI session id exists.
+    const sid = session.activeSessionId;
+    if (sid) this.renameSession(sid, worktreeName);
+  }
+
   private listCapabilities(session: Session): void {
     if (!this.showCapabilities()) return; // grok.showCapabilities: false — no scan, no payload
-    const workspaceDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    const workspaceDir = this.sessionCwd(session);
     // CAPABILITY_ROOTS' `dir` strings already carry the .grok/.claude/.cursor/
     // .agents prefix for BOTH tiers (see § Root spec — "~/.grok/…" means home
     // dir + .grok, not grokHome + .grok), so `homeDir` must be the raw home
@@ -3142,12 +3259,29 @@ See design doc for the full state machine diagram.`;
         managedDirs: suiteTargets(homeDir).map((t) => t.dir),
       });
       const groups = buildCapabilityGroups(suiteItems, session.client?.availableCommands ?? []);
+      // Phase E: honest MCP count from grok-style TOML (no full browser).
+      const homeDirForMcp = process.env.HOME || process.env.USERPROFILE || os.homedir();
+      const mcp = countMcpServersFromFiles(
+        [
+          path.join(workspaceDir, ".grok", "config.toml"),
+          path.join(homeDirForMcp, ".grok", "config.toml"),
+        ],
+        (p) => {
+          try {
+            return fs.readFileSync(p, "utf8");
+          } catch {
+            return null;
+          }
+        },
+      );
       this.postTo(session, {
         type: "capabilities",
         backend: session.backend,
         groups,
         scannedRoots: scan.scannedRoots,
         truncated: scan.truncated,
+        mcpServerCount: mcp.count,
+        actionsScope: this.actionsScope(),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -4209,7 +4343,7 @@ See design doc for the full state machine diagram.`;
    *  creation drives startSession; ready only configures and replays. */
   private postPanelConfig(session: Session): void {
     const cfg = vscode.workspace.getConfiguration("grok");
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    const cwd = this.sessionCwd(session);
     this.postTo(session, {
       type: "initialState",
       effort: session.effort ?? "",
@@ -4219,19 +4353,53 @@ See design doc for the full state machine diagram.`;
       showThinking: cfg.get("showThinking", false),
       compactActivity: cfg.get("compactActivity", true),
       showCapabilities: cfg.get("showCapabilities", true),
+      actionsScope: this.actionsScope(),
     });
     this.postTo(session, this.voiceConfiguredMessage());
   }
 
+  /** grok.actionsScope — workflow tiles only vs all capability kinds (Phase B). */
+  private actionsScope(): "workflow" | "all" {
+    const v = vscode.workspace.getConfiguration("grok").get<string>("actionsScope", "workflow");
+    return v === "all" ? "all" : "workflow";
+  }
+
+  private capabilityRefreshTimer?: ReturnType<typeof setTimeout>;
+
+  /** Debounced re-scan of capabilities when a skill-like path is written. */
+  private maybeRefreshCapabilitiesAfterWrite(session: Session, filePath: string): void {
+    if (!this.showCapabilities()) return;
+    const n = filePath.replace(/\\/g, "/").toLowerCase();
+    if (!/(^|\/)\.grok\/(skills|agents|commands)\//.test(n)
+      && !/(^|\/)\.claude\/(skills|agents|commands)\//.test(n)
+      && !/\/skill\.md$/i.test(n)) {
+      return;
+    }
+    if (this.capabilityRefreshTimer) clearTimeout(this.capabilityRefreshTimer);
+    this.capabilityRefreshTimer = setTimeout(() => {
+      this.capabilityRefreshTimer = undefined;
+      if (session.panel) this.listCapabilities(session);
+    }, 400);
+  }
+
   /** Rebuild a panel's view: clear + buffer replay, then the DERIVED per-session
    *  transients last (mode, chips, backend — not buffered, so a stale flip or
-   *  backend switch never replays as the old value on the next reveal). */
+   *  backend switch never replays as the old value on the next reveal).
+   *  Bookended by begin/endPanelReplay so the webview can restore scroll
+   *  position after the tear-down rebuild (retainContextWhenHidden:false). */
   private replayInto(session: Session): void {
-    this.router.replayInto(session, [
-      { type: "modeChanged", modeId: this.displayMode(session) },
-      { type: "chips", chips: session.chips },
-      { type: "backendChanged", backend: session.backend, label: backendSpec(session.backend).label, account: session.claudeAccount },
-    ]);
+    const { begin, end } = buildPanelReplayEnvelope(session);
+    // begin MUST precede clearMessages (router.replayInto starts with clear).
+    this.postTo(session, begin);
+    try {
+      this.router.replayInto(session, [
+        { type: "modeChanged", modeId: this.displayMode(session) },
+        { type: "chips", chips: session.chips },
+        { type: "backendChanged", backend: session.backend, label: backendSpec(session.backend).label, account: session.claudeAccount },
+      ]);
+    } finally {
+      this.postTo(session, end);
+    }
   }
 
   /** Refresh `session`'s composer chips. Transient — replay re-derives them. */
@@ -4311,11 +4479,24 @@ See design doc for the full state machine diagram.`;
    */
   private updateTabTitle(session: Session): void {
     if (!session.panel) return;
+    const id = session.activeSessionId;
+    const meta = id
+      ? this.context.globalState.get<SessionMetaOverrides>(SESSION_META_KEY, {})[id]
+      : undefined;
+    const tabStatus = tabTitleStatusFrom({
+      liveStatus: session.status,
+      unread: meta?.unread,
+      unreadError: meta?.unreadError,
+    });
+    const steps = session.turnToolIds.size;
     session.panel.title = composeTabTitle({
       name: this.bestNameFor(session),
       model: session.client?.currentModelId,
       effort: session.effort,
       backend: session.backend,
+      tabStatus,
+      progressCurrent: tabStatus === "working" && steps > 0 ? steps : undefined,
+      progressTotal: tabStatus === "working" ? session.turnProgressTotal : undefined,
     });
   }
 
@@ -4468,7 +4649,16 @@ See design doc for the full state machine diagram.`;
    */
   private setStatus(session: Session, status: SessionStatus): void {
     if (session.status === status) return;
+    const prev = session.status;
     session.status = status;
+    // Tab progress: reset when entering working (new turn) or leaving working.
+    if (status === "working" && prev !== "working") {
+      session.turnToolIds.clear();
+      session.turnProgressTotal = undefined;
+    } else if (prev === "working" && status !== "working") {
+      session.turnToolIds.clear();
+      session.turnProgressTotal = undefined;
+    }
     // Activity refreshes the recency clock (re-home ordering).
     if (status === "working" || status === "needs-you") this.touch(session);
     // A turn that finishes while its tab isn't visible becomes "unread"
@@ -4479,6 +4669,8 @@ See design doc for the full state machine diagram.`;
     }
     this.pushDot(session);
     this.updateStatusBar();
+    // Editor-tab chrome tracks status/progress (running / needs-you / done-away).
+    this.updateTabTitle(session);
   }
 
   /** Push just this session's recomputed dot to the webview (cheap — no disk read
@@ -4523,6 +4715,8 @@ See design doc for the full state machine diagram.`;
     if (!meta?.unread && !meta?.unreadError) return;
     this.setMetaUnread(id, false, false);
     this.pushDot(session);
+    // Drop done-away / error-away title markers once the user has seen the tab.
+    this.updateTabTitle(session);
   }
 
   /** Tear down every live session (logout, CLI update, extension teardown), or
@@ -4654,11 +4848,7 @@ See design doc for the full state machine diagram.`;
 
   <main id="messages" class="messages">
     <div class="welcome" id="welcome">
-      <span class="welcome-mark" role="img" aria-label="Grok" style="--welcome-mark:url('${resourceUri("blackhole-icon.svg")}')"></span>
       <h2>Grokbit</h2>
-      <p class="welcome-tagline">Your AI coding partner in the editor — ask questions, plan safely, edit files, create images, and produce business documents without the terminal.</p>
-      <p id="welcome-version" class="muted loading-dots">Starting</p>
-      <div id="welcome-guide" class="welcome-guide" hidden></div>
       <div id="welcome-grid" class="welcome-grid">
         <div id="session-setup-card" class="session-setup-card" hidden></div>
         <div id="capabilities-panel" class="capabilities-panel" hidden></div>

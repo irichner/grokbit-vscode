@@ -330,11 +330,10 @@ describe("ACP integration (real subprocess, fake CLI)", () => {
     expect((client as any).__terminalCalls()).toBe(1); // handler was called → command allowed
   });
 
-  it("quirks.clientPlanGate=false: the gate never engages even with planActive=true (Claude-shaped descriptor)", async () => {
-    // Mirrors what a Claude-backend construction site would pass (see
-    // src/backends.ts CLAUDE_BACKEND.quirks) — Claude enforces plan mode
-    // natively, so this flag being off must make the write/terminal gate
-    // completely inert regardless of what `planActive` is set to.
+  it("quirks.clientPlanGate=false: the gate never engages even with planActive=true", async () => {
+    // Structural opt-out: when the flag is off the write/terminal gate must
+    // stay inert regardless of `planActive` (Claude now ships with the gate
+    // *on* for Phase A parity — this test still covers the off path).
     const gatelessClient = new AcpClient({
       command: fixtureCli(),
       args: buildGrokAgentArgs(),

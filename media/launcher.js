@@ -173,6 +173,7 @@
     const row = document.createElement("div");
     const active = s.id === state.activeId;
     row.className = "history-row" + (active ? " active" : "");
+    row.setAttribute("data-session-id", s.id);
 
     const dot = document.createElement("span");
     dot.setAttribute("data-session-dot", s.id);
@@ -296,20 +297,94 @@
   }
 
   function renderRows() {
-    listEl.innerHTML = "";
+    // Phase C: patch existing rows by id when possible instead of always
+    // clear-and-rebuild (up to 500 rows × 2 SVGs on every sessions push).
     if (state.sessions.length === 0) {
+      listEl.innerHTML = "";
       const empty = document.createElement("div");
       empty.className = "history-empty";
       empty.textContent = emptyStateText();
       listEl.appendChild(empty);
-    } else {
-      for (const s of state.sessions) listEl.appendChild(renderRow(s));
-      if (state.sessions.length >= LAUNCHER_MAX_ROWS) {
-        const notice = document.createElement("div");
-        notice.className = "launcher-list-notice";
-        notice.textContent = ceilingNoticeText();
-        listEl.appendChild(notice);
+      updateFooter();
+      return;
+    }
+
+    // Attention strip: sessions that need the user (permission / question / plan).
+    let attention = listEl.querySelector(".launcher-attention");
+    const needYou = state.sessions.filter((s) => state.dots[s.id] === "needs-you");
+    if (needYou.length) {
+      if (!attention) {
+        attention = document.createElement("div");
+        attention.className = "launcher-attention";
+        listEl.insertBefore(attention, listEl.firstChild);
       }
+      attention.innerHTML = "";
+      const head = document.createElement("div");
+      head.className = "launcher-attention-head";
+      head.textContent = needYou.length === 1
+        ? "1 session needs you"
+        : needYou.length + " sessions need you";
+      attention.appendChild(head);
+      for (const s of needYou.slice(0, 8)) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "launcher-attention-item";
+        btn.textContent = s.displayName || "Untitled";
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          const msg = { type: "resumeSession", id: s.id };
+          if (s.backend) msg.backend = s.backend;
+          vscode.postMessage(msg);
+        };
+        attention.appendChild(btn);
+      }
+    } else if (attention) {
+      attention.remove();
+    }
+
+    const existing = new Map();
+    for (const row of listEl.querySelectorAll(".history-row[data-session-id]")) {
+      existing.set(row.getAttribute("data-session-id"), row);
+    }
+    const keep = new Set();
+    const frag = document.createDocumentFragment();
+    // Re-order: remove rows from list then append in order (patch path).
+    for (const s of state.sessions) {
+      keep.add(s.id);
+      let row = existing.get(s.id);
+      if (row) {
+        // Update active class + name/meta without full rebuild when possible.
+        const active = s.id === state.activeId;
+        row.className = "history-row" + (active ? " active" : "");
+        const nameEl = row.querySelector(".history-row-name");
+        if (nameEl && state.renamingId !== s.id) {
+          nameEl.textContent = s.displayName || "Untitled";
+        }
+        applyDot(row.querySelector("[data-session-dot]"), state.dots[s.id]);
+        frag.appendChild(row);
+      } else {
+        const fresh = renderRow(s);
+        fresh.setAttribute("data-session-id", s.id);
+        frag.appendChild(fresh);
+      }
+    }
+    for (const [id, row] of existing) {
+      if (!keep.has(id)) row.remove();
+    }
+    // Clear non-row noise (empty, notice) then append ordered rows.
+    for (const child of [...listEl.children]) {
+      if (child.classList.contains("launcher-attention")) continue;
+      if (child.classList.contains("history-row")) child.remove();
+      else if (child.classList.contains("history-empty") || child.classList.contains("launcher-list-notice")) {
+        child.remove();
+      }
+    }
+    listEl.appendChild(frag);
+    if (state.sessions.length >= LAUNCHER_MAX_ROWS) {
+      const notice = document.createElement("div");
+      notice.className = "launcher-list-notice";
+      notice.textContent = ceilingNoticeText();
+      listEl.appendChild(notice);
     }
     updateFooter();
   }

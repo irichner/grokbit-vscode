@@ -30,11 +30,11 @@ import { BackendId } from "./backends";
 import { CapabilityItem, CapabilityKind } from "./capabilities";
 
 /**
- * The bundled skills in pipeline order (plan → implement → test → document),
- * not alphabetical — the group doubles as the workflow's own documentation, so
- * the order is the teaching. Nothing here sorts: the rendered order comes from
- * `CAPABILITY_FEATURED.grokbit` in `media/webview-helpers.js`, whose
- * `partitionFeatured` already reorders matched items into its configured
+ * The bundled skills in pipeline order (explore → plan → implement → test →
+ * document), not alphabetical — the group doubles as the workflow's own
+ * documentation, so the order is the teaching. Nothing here sorts: the rendered
+ * order comes from `CAPABILITY_FEATURED.grokbit` in `media/webview-helpers.js`,
+ * whose `partitionFeatured` already reorders matched items into its configured
  * order. Keep that array in this same order.
  *
  * This list is the single source of truth for three things that must never
@@ -45,6 +45,7 @@ import { CapabilityItem, CapabilityKind } from "./capabilities";
  * provisioned, and never appears — so add it here in the same change.
  */
 export const SUITE_SKILL_NAMES: readonly string[] = [
+  "grokbit-explore",
   "grokbit-plan",
   "grokbit-implement",
   "grokbit-test",

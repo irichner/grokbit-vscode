@@ -9,6 +9,6 @@
 // Not the context donut, not the status-bar percentage (those are the active
 // session's own context and are a different quantity entirely).
 
-export const DEV_TOKENS_TOTAL = 1186798213;
-export const DEV_TOKENS_GENERATED_AT = "2026-07-31T17:11:29Z";
-export const DEV_TOKENS_SESSIONS = 98;
+export const DEV_TOKENS_TOTAL = 1245419229;
+export const DEV_TOKENS_GENERATED_AT = "2026-08-01T07:11:32Z";
+export const DEV_TOKENS_SESSIONS = 123;
