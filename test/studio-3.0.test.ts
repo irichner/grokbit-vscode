@@ -33,6 +33,27 @@ describe("applyComposerSeed", () => {
     expect(applyComposerSeed("Keep", "")).toBe("Keep");
     expect(applyComposerSeed("Keep", null)).toBe("Keep");
   });
+
+  // Capability / Grokbit Actions rows use replace so a second workflow click
+  // does not stack /explore\n/plan in the composer.
+  it("replace mode always returns the seed (even when composer has text)", () => {
+    expect(applyComposerSeed("Already here", "More", { mode: "replace" })).toBe("More");
+    expect(applyComposerSeed("/grokbit-explore ", "/grokbit-plan ", { mode: "replace" })).toBe(
+      "/grokbit-plan ",
+    );
+    expect(applyComposerSeed("", "/plan ", { mode: "replace" })).toBe("/plan ");
+  });
+
+  it("replace mode still no-ops on empty seed", () => {
+    expect(applyComposerSeed("Keep", "", { mode: "replace" })).toBe("Keep");
+    expect(applyComposerSeed("Keep", null, { mode: "replace" })).toBe("Keep");
+  });
+
+  it("default / unknown mode still appends", () => {
+    expect(applyComposerSeed("A", "B", undefined)).toBe("A\nB");
+    expect(applyComposerSeed("A", "B", {})).toBe("A\nB");
+    expect(applyComposerSeed("A", "B", { mode: "append" })).toBe("A\nB");
+  });
 });
 
 describe("taskQuickActions (E1 catalog)", () => {

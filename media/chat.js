@@ -326,8 +326,9 @@
     || function (opt) { return (opt && opt.name) || "Continue"; };
   const applyComposerSeed = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.applyComposerSeed)
     ? window.GrokWebviewHelpers.applyComposerSeed
-    : function (cur, seed) {
+    : function (cur, seed, opts) {
         if (!seed) return cur || "";
+        if (opts && opts.mode === "replace") return seed;
         if (!(cur || "").trim()) return seed;
         return String(cur).replace(/\s+$/, "") + "\n" + seed;
       };
@@ -851,7 +852,13 @@
       // No click handler at all — same treatment as .inert. A hover
       // affordance on something that can't be clicked yet is the bug.
     } else if (item.action === "invoke") {
-      row.onclick = (e) => { e.stopPropagation(); insertComposerPrompt(item.invoke); closePopovers(); };
+      // Replace, don't append — only the last workflow/skill click should remain
+      // in the composer (stacked /cmd1\n/cmd2 is never useful for Actions).
+      row.onclick = (e) => {
+        e.stopPropagation();
+        insertComposerPrompt(item.invoke, { mode: "replace" });
+        closePopovers();
+      };
     } else if (item.action === "open") {
       row.onclick = (e) => { e.stopPropagation(); vscode.postMessage({ type: "openFile", path: item.path }); closePopovers(); };
     }
@@ -2707,10 +2714,15 @@
     return openTurn(promptText || "");
   }
 
-  /** Seed the composer with a ready-to-edit prompt and place the caret at the end. */
-  function insertComposerPrompt(prompt) {
+  /**
+   * Seed the composer with a ready-to-edit prompt and place the caret at the end.
+   * @param {string} prompt
+   * @param {{ mode?: "append" | "replace" }} [opts] — default append (Studio);
+   *   capability/workflow rows pass `{ mode: "replace" }` so only the last pick remains.
+   */
+  function insertComposerPrompt(prompt, opts) {
     if (typeof prompt !== "string" || !prompt.length) return;
-    input.value = applyComposerSeed(input.value, prompt);
+    input.value = applyComposerSeed(input.value, prompt, opts);
     input.focus();
     try {
       const len = input.value.length;
@@ -5555,17 +5567,18 @@
         // this is what flips it when the mode changes from any OTHER surface.
         if (capabilitiesPopover && !capabilitiesPopover.hidden) renderCapabilitiesPopoverBody();
         break;
-      case "backendChanged":
+      case "backendChanged": {
+        // Agent flip (Session Setup / backend chip) restarts the session on the
+        // SAME panel — no webview ready/initialState — so wiping capabilities here
+        // permanently hid Grokbit Actions until the user left and reselected the
+        // tab. Default Actions are the shared suite (agent-independent); keep the
+        // retained payload so tiles stay visible, re-request only on a true
+        // backend id change, then re-render. Same-backend backendChanged (e.g.
+        // replayInto after reveal) must not clear and must not spam listCapabilities.
+        const prevBackend = state.backend;
         state.backend = msg.backend || "grok";
         state.backendLabel = msg.label || "";
         state.claudeAccount = msg.account || null;
-        // A retained capabilities payload belongs to the PREVIOUS backend — clear
-        // it so a stray re-render (e.g. setBusy:false racing ahead of the new
-        // scan after a mid-session backend switch) can't briefly show the wrong
-        // agent's skills/commands/agents.
-        state.capabilities = null;
-        hideCapabilitiesPanel();
-        if (capabilitiesPopover && !capabilitiesPopover.hidden) renderCapabilitiesPopoverBody();
         updateBackendLabel();
         updateComposerPlaceholder(); // "Ask Grok…" vs "Ask Claude…" follows the tab's own backend
         // The gear popover's effort-dots row only applies to a backend with an
@@ -5575,7 +5588,13 @@
         // Same reasoning for the setup card + quick-settings popover (WP7) —
         // the Thinking row must disappear/reappear immediately on a flip.
         refreshSessionSettingsMounts();
+        if (state.showCapabilities && state.backend !== prevBackend) {
+          vscode.postMessage({ type: "listCapabilities" });
+        }
+        renderCapabilitiesPanel();
+        if (capabilitiesPopover && !capabilitiesPopover.hidden) renderCapabilitiesPopoverBody();
         break;
+      }
       case "openModePopover":
         openModePopover();
         break;

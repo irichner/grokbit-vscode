@@ -121,6 +121,27 @@ describe("Grokbit Actions — the bundled workflow group", () => {
     expect(posted.some((m) => m.type === "send")).toBe(false);
   });
 
+  // [R] Second workflow click must replace, not append — stacked slash
+  // commands are never useful (workflow-seed-replace-last).
+  it("[R] clicking a second workflow replaces the prior seed (does not stack)", () => {
+    const { window, doc, posted } = bootWebview();
+    sendCapabilities(window, [SUITE_GROUP]);
+    const rows = [...panelOf(doc).querySelectorAll(".capability-row")] as HTMLElement[];
+    const explore = rows.find((r) => r.querySelector(".capability-row-name")?.textContent === "Explore")!;
+    const plan = rows.find((r) => r.querySelector(".capability-row-name")?.textContent === "Plan")!;
+    expect(explore).toBeDefined();
+    expect(plan).toBeDefined();
+    posted.length = 0;
+    click(window, explore);
+    expect((doc.getElementById("input") as HTMLTextAreaElement).value).toBe("/grokbit-explore ");
+    click(window, plan);
+    const input = doc.getElementById("input") as HTMLTextAreaElement;
+    expect(input.value).toBe("/grokbit-plan ");
+    expect(input.value).not.toContain("/grokbit-explore");
+    expect(input.value).not.toMatch(/\n/);
+    expect(posted.some((m) => m.type === "send")).toBe(false);
+  });
+
   // Provisioning off, or a failed copy: host may still send Skills/Agents/
   // Commands, but the visible-kinds filter drops them — honest empty state,
   // not a heading with no rows and not a vanished panel.
@@ -371,24 +392,39 @@ describe("capability browser — welcome panel", () => {
     expect(panel.hidden).toBe(true);
   });
 
-  // [R] switchBackend restarts the tab on the other agent; a retained
-  // state.capabilities payload belongs to the PREVIOUS backend, so a stray
-  // re-render racing ahead of the new scan (e.g. setBusy:false) must not
-  // briefly show the wrong agent's skills/commands/agents.
-  it("[R] backendChanged clears a retained capabilities payload from the previous backend", () => {
-    const { window, doc } = bootWebview();
+  // [R] switchBackend restarts the tab on the other agent without a webview
+  // ready cycle. Grokbit Actions (default suite) must stay visible across the
+  // flip; a true backend change re-requests listCapabilities, same-backend
+  // backendChanged (e.g. replay) must not wipe tiles or spam the host.
+  it("[R] backendChanged keeps retained Actions visible and re-requests only on a real flip", () => {
+    const { window, doc, posted } = bootWebview();
     sendCapabilities(window, GROUPS);
     const panel = panelOf(doc);
     expect(panel.hidden).toBe(false);
+    const htmlBefore = panel.innerHTML;
+    expect(htmlBefore.length).toBeGreaterThan(0);
 
+    posted.length = 0;
     dispatch(window, { type: "backendChanged", backend: "claude", label: "Claude Code" });
-    expect(panel.hidden).toBe(true);
-    expect(panel.innerHTML).toBe("");
+    expect(panel.hidden).toBe(false);
+    expect(panel.innerHTML.length).toBeGreaterThan(0);
+    expect(posted.filter((m) => m.type === "listCapabilities")).toHaveLength(1);
 
-    // Without a fresh capabilities message, a later setBusy:false must not
-    // resurrect the OLD (grok) payload.
+    // Same-backend backendChanged (replayInto after reveal) must not re-request.
+    posted.length = 0;
+    dispatch(window, { type: "backendChanged", backend: "claude", label: "Claude Code" });
+    expect(posted.some((m) => m.type === "listCapabilities")).toBe(false);
+    expect(panel.hidden).toBe(false);
+
+    // setBusy must not blank the retained suite tiles mid-restart.
     dispatch(window, { type: "setBusy", value: false });
-    expect(panel.hidden).toBe(true);
+    expect(panel.hidden).toBe(false);
+    expect(panel.innerHTML.length).toBeGreaterThan(0);
+
+    // Fresh scan for the new backend still paints.
+    sendCapabilities(window, GROUPS, { backend: "claude" });
+    expect(panel.hidden).toBe(false);
+    expect(panel.innerHTML.length).toBeGreaterThan(0);
   });
 });
 

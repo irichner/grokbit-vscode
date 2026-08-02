@@ -952,11 +952,15 @@
   /**
    * Composer seed insert policy (Studio E1/E2/E4): empty/whitespace → set;
    * non-empty → append seed on a new line; empty seed is a no-op.
-   * Never auto-sends — caller only mutates composer text.
+   * Optional `opts.mode === "replace"` always returns the seed (used by
+   * Grokbit Actions / capability rows so only the last workflow stays).
+   * Default mode remains "append". Never auto-sends — caller only mutates
+   * composer text.
    */
-  function applyComposerSeed(currentText, seedText) {
+  function applyComposerSeed(currentText, seedText, opts) {
     const seed = seedText == null ? "" : String(seedText);
     if (!seed.length) return currentText == null ? "" : String(currentText);
+    if (opts && opts.mode === "replace") return seed;
     const cur = currentText == null ? "" : String(currentText);
     if (!cur.trim()) return seed;
     return cur.replace(/\s+$/, "") + "\n" + seed;
