@@ -1,7 +1,7 @@
 // New-tab welcome canvas — simplified chrome (plan: welcome-chrome-simplify).
-// Only "Grokbit" above Session Setup / Grokbit Actions; no logo, tagline,
-// version line, or guide strip. Setup card + capabilities lifecycle still
-// live in session-setup.dom.test.ts / capabilities.dom.test.ts.
+// Only "Grokbit" above Grokbit Actions; no logo, tagline, version line, or
+// Session Setup tile (settings live on the top-bar chip). Capabilities
+// lifecycle lives in capabilities.dom.test.ts.
 // Drives the REAL shipped media/chat.js + media/webview-helpers.js via harness.
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -28,10 +28,11 @@ describe("welcome canvas chrome (simplified)", () => {
     expect(h2!.compareDocumentPosition(grid!) & DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("still mounts session-setup and capabilities under #welcome-grid", () => {
+  it("mounts capabilities under #welcome-grid and no Session setup tile", () => {
     const { doc } = bootWebview();
     const grid = doc.getElementById("welcome-grid")!;
-    expect(grid.querySelector("#session-setup-card")).toBeTruthy();
+    expect(grid.querySelector("#session-setup-card")).toBeNull();
+    expect(doc.getElementById("session-setup-card")).toBeNull();
     expect(grid.querySelector("#capabilities-panel")).toBeTruthy();
   });
 
@@ -56,14 +57,12 @@ describe("welcome canvas chrome (simplified)", () => {
     expect(css).not.toMatch(/\.welcome-guide-row\s*\{/);
   });
 
-  it("onboarding still hides setup/capabilities and shows a card", () => {
+  it("onboarding still hides capabilities and shows a card", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "onboarding", state: "auth-required" });
     const onb = doc.getElementById("welcome-onboarding")!;
     expect(onb.textContent).toMatch(/Sign in/i);
-    const setup = doc.getElementById("session-setup-card") as HTMLElement;
     const caps = doc.getElementById("capabilities-panel") as HTMLElement;
-    expect(setup.hidden || !setup.innerHTML).toBeTruthy();
     expect(caps.hidden || !caps.innerHTML).toBeTruthy();
   });
 

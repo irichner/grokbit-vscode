@@ -27,15 +27,20 @@ import { BackendId } from "./backends";
 // that plan's contract section.
 // ---------------------------------------------------------------------------
 
-/** No `"workflow"` member — workflows are deferred (Decision 1). Do not add one
- *  speculatively; see the plan's § Non-goals.
+/**
+ * `"workflow"` — backend-native saved multi-agent workflows (Grok: `*.rhai`
+ * under `.grok/workflows/`; Claude Code: `*.js` under `.claude/workflows/`).
+ * Formats are not interchangeable; roots are per-backend. Historical Decision 1
+ * in docs/plans/capability-surfacing-and-history-ux.md deferred this kind when
+ * neither CLI had authored on-disk workflows; both do now (see
+ * `.grokbit/plans/user-workflows-tile/`).
  *
- *  `"grokbit"` is the bundled suite (see `skill-suite.ts`). It is NOT produced
+ * `"grokbit"` is the bundled suite (see `skill-suite.ts`). It is NOT produced
  *  by any {@link CapabilityRootSpec} — the suite is provisioned into the same
  *  home-tier skills directory the ordinary `skill` roots already scan, so its
  *  items arrive as `skill` and are re-keyed afterwards by `applySuiteKind`.
  *  That ordering is load-bearing; see the note on {@link dedupeByPriority}. */
-export type CapabilityKind = "command" | "skill" | "agent" | "grokbit";
+export type CapabilityKind = "command" | "skill" | "agent" | "grokbit" | "workflow";
 
 export interface CapabilityItem {
   kind: CapabilityKind;
@@ -77,45 +82,53 @@ export interface CapabilityGroup {
 
 /** `CapabilityGroup[]` is an array the producer builds and the consumer
  *  iterates — never a fixed-arity tuple or `groups.skills`-shaped object, so a
- *  later kind (should workflows ever stop being deferred) is one entry in
- *  {@link CAPABILITY_KIND_ORDER}/{@link CAPABILITY_KIND_LABELS} plus a
- *  discovery source, not a renderer rewrite.
+ *  later kind is one entry in {@link CAPABILITY_KIND_ORDER}/
+ *  {@link CAPABILITY_KIND_LABELS} plus a discovery source, not a renderer rewrite.
  *
  *  The bundled Grokbit suite leads — it is the one group that is present and
  *  identical on every backend, so it is what the menu can actually be taught
- *  and documented around. The user's own discovered skills follow; `command`
- *  (the CLI's own plumbing: `/new`, `/compact`, `/resume`, …) goes last, see
- *  docs/plans/session-tab-ux-overhaul.md § Approach B and
+ *  and documented around. Backend-native **User Workflows** follow; the user's
+ *  own skills/agents after that; `command` (the CLI's own plumbing) goes last,
+ *  see docs/plans/session-tab-ux-overhaul.md § Approach B and
  *  docs/plans/grokbit-actions-and-bundled-skill-suite.md § D1. */
-export const CAPABILITY_KIND_ORDER: readonly CapabilityKind[] = ["grokbit", "skill", "agent", "command"];
+export const CAPABILITY_KIND_ORDER: readonly CapabilityKind[] = [
+  "grokbit",
+  "workflow",
+  "skill",
+  "agent",
+  "command",
+];
 
 export const CAPABILITY_KIND_LABELS: Record<CapabilityKind, string> = {
   command: "Commands",
   skill: "Skills",
   agent: "Agents",
-  grokbit: "Grokbit workflow",
+  // Empty on purpose: the Actions panel heading is already "Grokbit Workflows",
+  // so a section title would read as a duplicate. Other kinds keep a title.
+  grokbit: "",
+  workflow: "User Workflows",
 };
 
 // ---------------------------------------------------------------------------
 // Root spec
 // ---------------------------------------------------------------------------
 
-/** `<dir>/<name>/SKILL.md` (a directory per skill) vs `<dir>/*.md` (one file per item). */
-export type RootLayout = "skill-dir" | "flat-md";
+/** `<dir>/<name>/SKILL.md` vs flat files: `*.md` (agents/commands), `*.rhai` (Grok
+ *  workflows), `*.js` (Claude Code workflows). */
+export type RootLayout = "skill-dir" | "flat-md" | "flat-rhai" | "flat-js";
 
 export interface CapabilityRootSpec {
   /** Never `"command"` — commands are ACP-only, see {@link mergeAcpCommands}. */
-  kind: "skill" | "agent";
+  kind: "skill" | "agent" | "workflow";
   base: "workspace" | "home";
   /** Relative to `base`, e.g. `.grok/skills`. */
   dir: string;
   layout: RootLayout;
   source: string;
   /** Falsey value of this env var removes the root (grok's vendor
-   *  skill-dir compat opt-out, e.g. `GROK_CLAUDE_SKILLS_ENABLED`). Only the
-   *  env-var opt-out form is honored — grok's `config.toml` `[compat.claude]
-   *  skills = false` form needs a TOML parser this extension doesn't have and
-   *  doesn't want to add speculatively (see the plan's § Non-goals). */
+   *  skill-dir compat opt-out, e.g. `GROK_CLAUDE_SKILLS_ENABLED`, or
+   *  `GROK_WORKFLOWS` for Grok workflow discovery). Only the env-var form is
+   *  honored — TOML config flags need a parser this extension doesn't have. */
   disabledByEnv?: string;
 }
 
@@ -130,6 +143,9 @@ export const CAPABILITY_ROOTS: Record<BackendId, CapabilityRootSpec[]> = {
     { kind: "skill", base: "workspace", dir: ".claude/skills", layout: "skill-dir", source: "Project (.claude)", disabledByEnv: "GROK_CLAUDE_SKILLS_ENABLED" },
     { kind: "skill", base: "workspace", dir: ".claude/commands", layout: "flat-md", source: "Project (.claude)", disabledByEnv: "GROK_CLAUDE_SKILLS_ENABLED" },
     { kind: "skill", base: "workspace", dir: ".cursor/skills", layout: "skill-dir", source: "Project (.cursor)", disabledByEnv: "GROK_CURSOR_SKILLS_ENABLED" },
+    // Grok Rhai workflows (project before home — same priority as skills)
+    { kind: "workflow", base: "workspace", dir: ".grok/workflows", layout: "flat-rhai", source: "Project (.grok)", disabledByEnv: "GROK_WORKFLOWS" },
+    { kind: "workflow", base: "home", dir: ".grok/workflows", layout: "flat-rhai", source: "User (~/.grok)", disabledByEnv: "GROK_WORKFLOWS" },
     // home — same set, rooted at the user's home dir instead of the workspace
     { kind: "skill", base: "home", dir: ".grok/skills", layout: "skill-dir", source: "User (~/.grok)" },
     { kind: "skill", base: "home", dir: ".grok/commands", layout: "flat-md", source: "User (~/.grok)" },
@@ -146,6 +162,9 @@ export const CAPABILITY_ROOTS: Record<BackendId, CapabilityRootSpec[]> = {
   claude: [
     { kind: "skill", base: "workspace", dir: ".claude/skills", layout: "skill-dir", source: "Project (.claude)" },
     { kind: "skill", base: "workspace", dir: ".claude/commands", layout: "flat-md", source: "Project (.claude)" },
+    // Claude Code JS workflows (project before home)
+    { kind: "workflow", base: "workspace", dir: ".claude/workflows", layout: "flat-js", source: "Project (.claude)" },
+    { kind: "workflow", base: "home", dir: ".claude/workflows", layout: "flat-js", source: "User (~/.claude)" },
     { kind: "skill", base: "home", dir: ".claude/skills", layout: "skill-dir", source: "User (~/.claude)" },
     { kind: "skill", base: "home", dir: ".claude/commands", layout: "flat-md", source: "User (~/.claude)" },
     { kind: "agent", base: "workspace", dir: ".claude/agents", layout: "flat-md", source: "Project (.claude)" },
@@ -421,6 +440,150 @@ export function capabilityFromSkillFile(input: CapabilityFileInput): CapabilityI
   };
 }
 
+// ---------------------------------------------------------------------------
+// Workflow meta (Grok Rhai + Claude JS) — pure, never executes scripts
+// ---------------------------------------------------------------------------
+
+/** Quoted or bare string value after `key:` / `key =` in a small meta map. */
+function extractMetaStringField(block: string, key: string): string | undefined {
+  // name: "x" | name: 'x' | name: `x` | "name": "x" | name = "x"
+  const re = new RegExp(
+    `(?:^|[\\s,{])(?:"${key}"|'${key}'|${key})\\s*[:=]\\s*("(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|\`(?:\\\\.|[^\\\`\\\\])*\`)`,
+    "m",
+  );
+  const m = block.match(re);
+  if (!m) return undefined;
+  const raw = m[1];
+  const q = raw[0];
+  let inner = raw.slice(1, -1);
+  if (q === '"') inner = inner.replace(/\\"/g, '"').replace(/\\n/g, "\n").replace(/\\\\/g, "\\");
+  else if (q === "'") inner = inner.replace(/\\'/g, "'");
+  return inner.trim() || undefined;
+}
+
+/**
+ * Extract `name` / `description` from a Grok workflow head (`let meta = #{…};`).
+ * Pure substring parse — never evaluates Rhai.
+ */
+export function parseRhaiWorkflowMeta(text: string): { name?: string; description?: string } {
+  const s = String(text ?? "");
+  const start = s.search(/let\s+meta\s*=\s*#\{/);
+  if (start < 0) return {};
+  const hashOpen = s.indexOf("#{", start);
+  if (hashOpen < 0) return {};
+  const open = hashOpen + 1; // the `{` of `#{`
+  let depth = 0;
+  let end = -1;
+  for (let i = open; i < s.length; i++) {
+    if (s[i] === "{") depth++;
+    else if (s[i] === "}") {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  if (end < 0) return {};
+  const block = s.slice(open, end + 1);
+  return {
+    name: extractMetaStringField(block, "name"),
+    description: extractMetaStringField(block, "description"),
+  };
+}
+
+/**
+ * Extract `name` / `description` (or `whenToUse`) from a Claude Code workflow
+ * head (`export const meta = {…}`). Pure — never evaluates JS.
+ */
+export function parseClaudeWorkflowMeta(text: string): { name?: string; description?: string } {
+  const s = String(text ?? "");
+  const start = s.search(/export\s+const\s+meta\s*=\s*\{/);
+  if (start < 0) return {};
+  const open = s.indexOf("{", start);
+  if (open < 0) return {};
+  let depth = 0;
+  let end = -1;
+  let inStr: '"' | "'" | "`" | null = null;
+  let escape = false;
+  for (let i = open; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (c === "\\") {
+        escape = true;
+        continue;
+      }
+      if (c === inStr) inStr = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      inStr = c;
+      continue;
+    }
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  if (end < 0) return {};
+  const block = s.slice(open, end + 1);
+  const name = extractMetaStringField(block, "name");
+  const description =
+    extractMetaStringField(block, "description") ||
+    extractMetaStringField(block, "whenToUse") ||
+    extractMetaStringField(block, "when_to_use");
+  return { name, description };
+}
+
+export type WorkflowScriptFormat = "rhai" | "claude-js";
+
+/**
+ * Seed form for both CLIs: `/workflow <name> ` (trailing space for composer).
+ * Grok documents `/name` and `/workflow name`; Claude Code saves named workflows
+ * invocable by name — `/workflow <name>` is the unambiguous Actions seed (T5).
+ */
+export function workflowInvokeForName(name: string): string {
+  return `/workflow ${name} `;
+}
+
+export interface CapabilityWorkflowFileInput {
+  rawText: string;
+  filePath: string;
+  source: string;
+  format: WorkflowScriptFormat;
+}
+
+/**
+ * Build a workflow {@link CapabilityItem}, or `null` when the head has no safe
+ * invocable name (skip decorative chrome).
+ */
+export function capabilityFromWorkflowFile(input: CapabilityWorkflowFileInput): CapabilityItem | null {
+  const { rawText, filePath, source, format } = input;
+  const meta =
+    format === "rhai" ? parseRhaiWorkflowMeta(rawText) : parseClaudeWorkflowMeta(rawText);
+  // Require an explicit meta.name — file-stem-only would list non-workflow
+  // scripts as invocable chrome (thin-client rule: only real launchable names).
+  const candidate = (meta.name || "").trim();
+  if (!candidate || !CAPABILITY_NAME_PATTERN.test(candidate)) return null;
+  return {
+    kind: "workflow",
+    name: truncateName(candidate),
+    description: truncateDescription(meta.description || ""),
+    invoke: workflowInvokeForName(candidate),
+    path: filePath,
+    source,
+    origin: "disk",
+  };
+}
+
 /**
  * grok's three documented built-in `spawn_subagent` types
  * (`16-subagents.md`) — not disk files, so no `path`; not user-invocable via
@@ -639,7 +802,16 @@ export function scanCapabilityRoots(deps: ScanCapabilityRootsDeps): ScanCapabili
         const skillEntry = subEntries.find((e) => e.name === "SKILL.md");
         if (!skillEntry || !skillEntry.isFile()) continue;
         filePath = path.join(subDir, "SKILL.md");
+      } else if (root.layout === "flat-rhai") {
+        if (!name.toLowerCase().endsWith(".rhai")) continue;
+        if (!entry.isFile()) continue;
+        filePath = path.join(dir, name);
+      } else if (root.layout === "flat-js") {
+        if (!name.toLowerCase().endsWith(".js")) continue;
+        if (!entry.isFile()) continue;
+        filePath = path.join(dir, name);
       } else {
+        // flat-md
         if (!name.toLowerCase().endsWith(".md")) continue;
         if (!entry.isFile()) continue; // rejects a symlink, FIFO, socket, or directory named *.md
         filePath = path.join(dir, name);
@@ -668,7 +840,26 @@ export function scanCapabilityRoots(deps: ScanCapabilityRootsDeps): ScanCapabili
       } catch {
         continue;
       }
-      items.push(capabilityFromSkillFile({ kind: root.kind, rawText: text, filePath, layout: root.layout, source: root.source }));
+      if (root.kind === "workflow") {
+        const format = root.layout === "flat-rhai" ? "rhai" : "claude-js";
+        const wf = capabilityFromWorkflowFile({
+          rawText: text,
+          filePath,
+          source: root.source,
+          format,
+        });
+        if (wf) items.push(wf);
+      } else {
+        items.push(
+          capabilityFromSkillFile({
+            kind: root.kind,
+            rawText: text,
+            filePath,
+            layout: root.layout === "skill-dir" ? "skill-dir" : "flat-md",
+            source: root.source,
+          }),
+        );
+      }
     }
   }
 

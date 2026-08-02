@@ -2,6 +2,7 @@ import type * as vscode from "vscode";
 import { AcpClient, EffortLevel } from "./acp";
 import { BackendId } from "./backends";
 import { FileChip } from "./chips";
+import type { PendingImage } from "./pending-images";
 
 /** Live state for the dashboard dot. `cold` (no live process) is represented by
  *  the absence of a Session, so it isn't in this union. */
@@ -97,14 +98,29 @@ export class Session {
   promptInFlight = false;
 
   /**
-   * User messages submitted while a turn was already running. Additive FIFO:
-   * each entry is drained as its own sequential turn after the current one
-   * finishes (no cancel, no last-wins). UI ack (user bubble + Grokking) is
-   * deferred until the entry actually runs. Cleared on Stop/cancel so
-   * abandoned follow-ups do not run. Drained without flashing idle (no
-   * agentEnd between chained turns while the queue has work).
+   * Mid-turn follow-ups (docs/plans/paste-screenshots.md + vibe-coder-wave-1).
+   * Additive FIFO: drained as sequential turns after the current one finishes.
+   * Images snapshotted at queue time; content blocks rebuilt at drain via
+   * buildSessionPromptBlocks. A queued user bubble is emitted immediately
+   * (`queued: true` + `queueId`); drain emits `userMessageDequeued` only.
+   * Cleared on Stop/cancel / steer so abandoned follow-ups do not run.
    */
-  pendingUserSends: { text: string; finalPrompt: string; sentChips: FileChip[] }[] = [];
+  pendingUserSends: {
+    queueId: string;
+    text: string;
+    sentChips: FileChip[];
+    sentImages: PendingImage[];
+  }[] = [];
+
+  /**
+   * Steer (stop current + send new): snapshotted while cancel runs; after the
+   * turn lane releases, host runs one normal send. Cleared on Stop.
+   */
+  pendingSteer?: {
+    text: string;
+    chips: FileChip[];
+    images: PendingImage[];
+  };
 
   /**
    * Drop remaining stream content from a cancelled turn (same content set as
@@ -147,6 +163,14 @@ export class Session {
    * next send retries. undefined until the primer is first requested.
    */
   primingPromise?: Promise<void>;
+
+  /**
+   * In-flight (or settled) cross-backend handoff inject after an Agent switch.
+   * First real user send awaits this (same turn-lane reason as primingPromise)
+   * so the new agent receives prior-conversation context before the next prompt.
+   * Cleared on startSession and when the inject settles.
+   */
+  handoffPromise?: Promise<void>;
 
   /** Drop streaming content from the webview (primer / summary injection). */
   suppressContent = false;
@@ -222,20 +246,6 @@ export class Session {
   status: SessionStatus = "idle";
 
   /**
-   * Distinct ACP `toolCallId`s seen during the current `working` turn — drives
-   * the editor-tab progress step count (`…7` in composeTabTitle). Cleared when
-   * entering/leaving working (see sidebar setStatus). Not a known total; just
-   * a de-duped step counter for multi-tool implementation turns.
-   */
-  turnToolIds = new Set<string>();
-
-  /**
-   * Optional known total for tab progress (`…3/12`). Leave undefined unless a
-   * real total is known — never invent one. Usually unset in v1.
-   */
-  turnProgressTotal?: number;
-
-  /**
    * ms-epoch of the last time this session was made the focus, created, or put to
    * work — its "recency" for the pool's LRU/TTL reaping (see session-pool.ts).
    * 0 until the sidebar touches it (kept off the constructor so this stays a pure
@@ -265,6 +275,19 @@ export class Session {
    * chat keeps its own attachment list — two composers must never share one.
    */
   chips: FileChip[] = [];
+
+  /**
+   * Staged clipboard screenshots for the composer (paste-screenshots plan).
+   * Cleared on send like chips; staged files stay on disk until session dispose
+   * so in-tab buffer thumbs can re-resolve.
+   */
+  pendingImages: PendingImage[] = [];
+
+  /**
+   * Stable key for paste staging dir before (and after) activeSessionId exists.
+   * Set once per Session instance.
+   */
+  pasteStagingKey = `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
   /**
    * The editor tab rendering this session, once opened (type-only vscode import

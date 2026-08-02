@@ -14,9 +14,7 @@ const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.met
 
 /** Slice a single top-level CSS rule (selector list + declaration block) out
  *  of a stylesheet, anchored to the start of a line so a substring match
- *  inside an unrelated rule (e.g. ".welcome-grid > .session-setup-card {"
- *  containing the literal text ".session-setup-card {") can't be mistaken
- *  for the rule itself. */
+ *  inside an unrelated rule can't be mistaken for the rule itself. */
 function ruleBlock(css: string, selectorLineStart: string): string {
   const anchor = `\n${selectorLineStart}`;
   const idx = css.indexOf(anchor);
@@ -29,8 +27,10 @@ function ruleBlock(css: string, selectorLineStart: string): string {
 describe("full-canvas layout — no ribbon left (source check)", () => {
   const css = read("../media/chat.css");
 
-  it("[R] .session-setup-card no longer carries max-width: 360px", () => {
-    expect(ruleBlock(css, ".session-setup-card {")).not.toContain("360px");
+  it("[R] welcome Session setup tile CSS is gone (settings live on top-bar chip)", () => {
+    expect(css).not.toMatch(/\.session-setup-card\s*\{/);
+    expect(css).not.toMatch(/\.session-setup-heading\s*\{/);
+    expect(css).not.toMatch(/\.session-setup-footer\s*\{/);
   });
 
   it("[R] .capabilities-panel no longer carries max-width: 360px", () => {
@@ -57,55 +57,25 @@ describe("full-canvas layout — no ribbon left (source check)", () => {
 describe("full-canvas layout — intrinsic grids, overflow-safe (source check)", () => {
   const css = read("../media/chat.css");
 
-  it("[R] .welcome-grid is a wrapping flex row, not two equal 1fr tracks", () => {
-    // auto-fit only collapses EMPTY repetitions, so with exactly two children
-    // it always produced two equal (W − 10)/2 tracks while the setup card sat
-    // capped at 420px — dead space of (W − 10)/2 − 420, opening at W ≈ 850px
-    // and growing at half the tab's rate. The two-1fr-track shape IS the
-    // defect (docs/plans/actions-panel-layout-and-dynamic-capabilities.md).
+  it("[R] .welcome-grid is a wrapping flex row, not equal 1fr auto-fit tracks", () => {
     const rule = ruleBlock(css, ".welcome-grid {");
     expect(rule).toContain("display: flex");
     expect(rule).toContain("flex-wrap: wrap");
     expect(rule).not.toContain("repeat(auto-fit");
   });
 
-  it("[R] .welcome-grid stretches its children to a shared height, never the flex default it inherited", () => {
-    // Decision A: the two panels form one flush rectangle. `stretch` has to be
-    // explicit — reverting to flex-start (or dropping the line, whose default
-    // for a flex container happens to be stretch but reads as an accident)
-    // loses the equal heights this was asked for.
+  it("[R] .welcome-grid stretches its children", () => {
     const rule = ruleBlock(css, ".welcome-grid {");
     expect(rule).toContain("align-items: stretch");
     expect(rule).not.toContain("align-items: flex-start");
     expect(rule).not.toContain("align-items: start");
   });
 
-  it("[R] the Actions panel is the growable child; the setup card keeps its 420px form measure", () => {
-    // The card freezing at its cap is what frees the space; the panel's
-    // flex-grow is what absorbs it. Either half alone re-opens the gap.
-    const card = ruleBlock(css, ".welcome-grid > .session-setup-card {");
-    expect(card).toContain("flex: 1 1");
-    expect(card).toContain("max-width: 420px");
+  it("[R] the Actions panel is the growable welcome-grid child with overflow-safe basis", () => {
     const panel = ruleBlock(css, ".welcome-grid > .capabilities-panel {");
     expect(panel).toContain("flex: 1 1");
     expect(panel).toContain("min-width: 0");
-  });
-
-  it("[R] both welcome-grid children clamp their flex-basis with min(100%, …)", () => {
-    // Same guard the minmax() form carried: a bare 300px basis overflows a
-    // ~250px split-editor tab. Restated for the flex form.
-    expect(ruleBlock(css, ".welcome-grid > .session-setup-card {")).toContain("min(100%, 300px)");
-    expect(ruleBlock(css, ".welcome-grid > .capabilities-panel {")).toContain("min(100%, 300px)");
-  });
-
-  it("[R] .session-setup-card keeps its content top-pinned inside the stretched box", () => {
-    // With align-items: stretch the shorter card (normally this one) gains
-    // dead space. It belongs BELOW the content — a justify-content here would
-    // strand the footer at the bottom of an arbitrarily tall box on a wide,
-    // skill-rich canvas. The flex column's own default does the right thing.
-    const rule = ruleBlock(css, ".session-setup-card {");
-    expect(rule).toContain("flex-direction: column");
-    expect(rule).not.toContain("justify-content");
+    expect(panel).toContain("min(100%, 300px)");
   });
 
   it("[R] .capability-group-items is an auto-fit grid clamped with min(100%, …) inside minmax()", () => {
@@ -147,9 +117,9 @@ describe("full-canvas layout — launcher isolation (source check)", () => {
     // media/launcher.js reuses chat.css, but only the row family
     // (.history-list, .history-row-*, .onb-action, .toolbar-popover) plus its
     // own .launcher-* rules — it never renders .messages/.composer/.welcome/
-    // .session-setup-card/.capabilities-panel (CLAUDE.md § History pagination
-    // → "Launcher safety"). Cheap standing guard against a future change
-    // reusing a chat-canvas class in the 250px activity bar.
+    // .capabilities-panel (CLAUDE.md § History pagination → "Launcher safety").
+    // Cheap standing guard against a future change reusing a chat-canvas class
+    // in the 250px activity bar.
     const sidebarSrc = read("../src/sidebar.ts");
     const start = sidebarSrc.indexOf("private getLauncherHtml(");
     expect(start).toBeGreaterThan(-1);
@@ -174,13 +144,12 @@ describe("full-canvas layout — orphaned duplicate #model-label (source check)"
 });
 
 describe("full-canvas layout — welcome-grid parentage (real booted DOM)", () => {
-  it("#session-setup-card and #capabilities-panel are children of #welcome-grid", () => {
+  it("#capabilities-panel is a child of #welcome-grid; no #session-setup-card", () => {
     const { doc } = bootWebview();
     const grid = doc.getElementById("welcome-grid");
     expect(grid).not.toBeNull();
-    const card = doc.getElementById("session-setup-card");
+    expect(doc.getElementById("session-setup-card")).toBeNull();
     const panel = doc.getElementById("capabilities-panel");
-    expect(card?.parentElement?.id).toBe("welcome-grid");
     expect(panel?.parentElement?.id).toBe("welcome-grid");
     expect(grid?.classList.contains("welcome-grid")).toBe(true);
   });

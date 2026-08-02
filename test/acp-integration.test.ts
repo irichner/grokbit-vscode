@@ -296,6 +296,51 @@ describe("ACP integration (real subprocess, fake CLI)", () => {
     expect(fs.readFileSync(path.join(workspace, "file.ts"), "utf8")).toBe("// new file");
   });
 
+  it("permission-bind: content digest mismatch blocks same-path write", async () => {
+    const { extractGrant, hashGrantContent } = await import("../src/permission-bind");
+    client.planActive = false;
+    const target = path.join(workspace, "file.ts");
+    // Fake CLI writes content "// new file" — grant a different body digest.
+    client.pushApprovedGrant(
+      extractGrant(
+        {
+          toolCallId: "t-bind",
+          rawInput: { file_path: target, content: "approved different body" },
+        },
+        "allow_once",
+      ),
+    );
+    expect(client.approvedGrants[0]?.contentDigest).toBe(hashGrantContent("approved different body"));
+
+    const blocked = collect<{ kind: string; target: string }>(client, "mutationBlocked");
+    await client.prompt("SCENARIO_WORKSPACE_WRITE");
+
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0].kind).toBe("bind");
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
+  it("permission-bind: matching content digest allows write", async () => {
+    const { extractGrant } = await import("../src/permission-bind");
+    client.planActive = false;
+    const target = path.join(workspace, "file.ts");
+    client.pushApprovedGrant(
+      extractGrant(
+        {
+          toolCallId: "t-bind-ok",
+          rawInput: { file_path: target, content: "// new file" },
+        },
+        "allow_once",
+      ),
+    );
+
+    const blocked = collect<unknown>(client, "mutationBlocked");
+    await client.prompt("SCENARIO_WORKSPACE_WRITE");
+
+    expect(blocked).toHaveLength(0);
+    expect(fs.readFileSync(target, "utf8")).toBe("// new file");
+  });
+
   it("gate: planActive=true blocks terminal/create with a mutating command", async () => {
     client.planActive = true;
     const blocked = collect<{ kind: string; target: string }>(client, "mutationBlocked");

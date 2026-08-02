@@ -1,8 +1,8 @@
 # Session handoff
 
-- **Slug:** workflow-seed-replace-last
-- **Phase reached:** implement complete — T1 verified (84 targeted tests); commits deferred
-- **Open items:** optional full `npm test`; rebuild/reinstall to try live; free-text wipe on workflow click is intentional
+- **Slug:** vibe-coder-wave-1
+- **Phase reached:** implement complete — T1–T6; full suite green (1510)
+- **Open items:** rebuild/reinstall to try live; commit when ready (not auto-committed)
 - **Blocked tasks:** none
-- **Shipped code:** uncommitted — `media/webview-helpers.js`, `media/chat.js`, `test/studio-3.0.test.ts`, `test/capabilities.dom.test.ts` (plus prior unrelated dirty WIP)
-- **Plan path:** `.grokbit/plans/workflow-seed-replace-last/plan.md`
+- **Shipped code:** uncommitted — content digest on allow-once Write grants; mid-turn Queued badge + dequeue; steer via pendingSteer + shortcuts
+- **Plan path:** `.grokbit/plans/vibe-coder-wave-1/plan.md`

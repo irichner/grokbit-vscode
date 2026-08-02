@@ -249,4 +249,15 @@ describe("session event persists {id, backend} for the panel serializer", () => 
     });
     expect(states.at(-1)).toEqual({ id: "s2", backend: "claude" });
   });
+
+  // session-tab-window-restore T4 — host re-stashes on ready before ACP session
+  it("sessionIdentity message stashes {id, backend} for the panel serializer", () => {
+    const { window, states } = bootWebview();
+    dispatch(window, {
+      type: "sessionIdentity",
+      sessionId: "restored-1",
+      backend: "claude",
+    });
+    expect(states.at(-1)).toEqual({ id: "restored-1", backend: "claude" });
+  });
 });

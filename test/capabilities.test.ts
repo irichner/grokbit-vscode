@@ -19,12 +19,16 @@ import {
   GROK_BUILTIN_AGENTS,
   buildCapabilityGroups,
   capabilityFromSkillFile,
+  capabilityFromWorkflowFile,
   dedupeByPriority,
   frontmatterBool,
   isPathContained,
   mergeAcpCommands,
+  parseClaudeWorkflowMeta,
   parseFrontmatter,
+  parseRhaiWorkflowMeta,
   scanCapabilityRoots,
+  workflowInvokeForName,
 } from "../src/capabilities";
 
 // ---------------------------------------------------------------------------
@@ -735,17 +739,19 @@ describe("buildCapabilityGroups", () => {
   // identical on every backend, so it is what the menu is taught around
   // (docs/plans/grokbit-actions-and-bundled-skill-suite.md § D1). The user's
   // own skills follow; the CLI's own command plumbing stays last.
-  it("[R] CAPABILITY_KIND_ORDER leads with the Grokbit suite, ends with the CLI's own command plumbing", () => {
-    expect(CAPABILITY_KIND_ORDER).toEqual(["grokbit", "skill", "agent", "command"]);
+  it("[R] CAPABILITY_KIND_ORDER leads with the Grokbit suite, then User Workflows, ends with the CLI's own command plumbing", () => {
+    expect(CAPABILITY_KIND_ORDER).toEqual(["grokbit", "workflow", "skill", "agent", "command"]);
   });
 
   it("[R] groups are ordered by CAPABILITY_KIND_ORDER (Grokbit suite leads, commands last), empty kinds omitted", () => {
     const suite: CapabilityItem = {
       kind: "grokbit", name: "grokbit-plan", description: "", source: "Grokbit", origin: "disk", invoke: "/grokbit-plan ",
     };
-    const groups = buildCapabilityGroups([diskSkill, diskAgent, suite], [{ name: "compact" }]);
-    // no "command" row would exist without the unmatched acp command above
-    expect(groups.map((g) => g.kind)).toEqual(["grokbit", "skill", "agent", "command"]);
+    const wf: CapabilityItem = {
+      kind: "workflow", name: "review-changes", description: "", source: "Project (.grok)", origin: "disk", invoke: "/workflow review-changes ",
+    };
+    const groups = buildCapabilityGroups([diskSkill, diskAgent, suite, wf], [{ name: "compact" }]);
+    expect(groups.map((g) => g.kind)).toEqual(["grokbit", "workflow", "skill", "agent", "command"]);
   });
 
   it("[R] no suite installed ⇒ no Grokbit group at all, never an empty placeholder", () => {
@@ -774,5 +780,181 @@ describe("buildCapabilityGroups", () => {
     const skills = buildCapabilityGroups(many, []).find((g) => g.kind === "skill");
     expect(skills?.items).toHaveLength(CAPABILITY_GROUP_CAP);
     expect(skills?.total).toBe(CAPABILITY_GROUP_CAP + 3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// User Workflows — Rhai (Grok) + JS (Claude) meta parse + scan
+// ---------------------------------------------------------------------------
+
+describe("workflow meta parsers + builders", () => {
+  const rhaiHappy = `
+let meta = #{
+    name: "review-changes",
+    description: "Review a diff across dimensions",
+    phases: [ #{ title: "Review" } ],
+};
+phase("Review");
+`;
+
+  const claudeHappy = `
+export const meta = {
+  name: 'spot-review-fanout',
+  description: 'Review every rendered spot across four lenses',
+  whenToUse:
+    'After a batch of spots renders. ' +
+    'Budget accordingly.',
+  phases: [
+    { title: 'Review' },
+  ],
+}
+
+const SPOTS = args?.length ? args : [];
+`;
+
+  it("parseRhaiWorkflowMeta reads name + description", () => {
+    expect(parseRhaiWorkflowMeta(rhaiHappy)).toEqual({
+      name: "review-changes",
+      description: "Review a diff across dimensions",
+    });
+  });
+
+  it("parseClaudeWorkflowMeta reads name + description", () => {
+    const m = parseClaudeWorkflowMeta(claudeHappy);
+    expect(m.name).toBe("spot-review-fanout");
+    expect(m.description).toBe("Review every rendered spot across four lenses");
+  });
+
+  it("no meta ⇒ empty / null item", () => {
+    expect(parseRhaiWorkflowMeta("phase(\"x\");")).toEqual({});
+    expect(capabilityFromWorkflowFile({
+      rawText: "phase(\"x\");",
+      filePath: path.join(ws, ".grok", "workflows", "nope.rhai"),
+      source: "Project (.grok)",
+      format: "rhai",
+    })).toBeNull();
+  });
+
+  it("capabilityFromWorkflowFile seeds /workflow <name>  (T5 lock)", () => {
+    expect(workflowInvokeForName("review-changes")).toBe("/workflow review-changes ");
+    const item = capabilityFromWorkflowFile({
+      rawText: rhaiHappy,
+      filePath: path.join(ws, ".grok", "workflows", "review-changes.rhai"),
+      source: "Project (.grok)",
+      format: "rhai",
+    });
+    expect(item).toMatchObject({
+      kind: "workflow",
+      name: "review-changes",
+      invoke: "/workflow review-changes ",
+      origin: "disk",
+    });
+    const claude = capabilityFromWorkflowFile({
+      rawText: claudeHappy,
+      filePath: path.join(ws, ".claude", "workflows", "spot-review-fanout.js"),
+      source: "Project (.claude)",
+      format: "claude-js",
+    });
+    expect(claude?.invoke).toBe("/workflow spot-review-fanout ");
+  });
+});
+
+describe("scanCapabilityRoots — workflows", () => {
+  const grokWfRoot: CapabilityRootSpec = {
+    kind: "workflow", base: "workspace", dir: ".grok/workflows", layout: "flat-rhai", source: "Project (.grok)",
+  };
+  const grokWfHome: CapabilityRootSpec = {
+    kind: "workflow", base: "home", dir: ".grok/workflows", layout: "flat-rhai", source: "User (~/.grok)",
+  };
+  const claudeWfRoot: CapabilityRootSpec = {
+    kind: "workflow", base: "workspace", dir: ".claude/workflows", layout: "flat-js", source: "Project (.claude)",
+  };
+
+  it("flat-rhai discovers *.rhai with meta; ignores .md and .js siblings", () => {
+    const rhaiPath = path.join(ws, ".grok", "workflows", "review-changes.rhai");
+    const mdPath = path.join(ws, ".grok", "workflows", "notes.md");
+    const jsPath = path.join(ws, ".grok", "workflows", "other.js");
+    const fs = buildCapFs(
+      {
+        [rhaiPath]: {
+          content: `let meta = #{\n    name: "review-changes",\n    description: "Review diffs",\n};\n`,
+        },
+        [mdPath]: { content: "# not a workflow\n" },
+        [jsPath]: { content: "export const meta = { name: 'evil' };\n" },
+      },
+      [ws, path.join(ws, ".grok"), path.join(ws, ".grok", "workflows")],
+    );
+    const result = scanCapabilityRoots({
+      fs, roots: [grokWfRoot], backend: "grok", workspaceDir: ws, homeDir: home, env: {},
+    });
+    const wfs = result.items.filter((i) => i.kind === "workflow");
+    expect(wfs).toHaveLength(1);
+    expect(wfs[0].name).toBe("review-changes");
+    expect(wfs[0].invoke).toBe("/workflow review-changes ");
+  });
+
+  it("flat-js discovers *.js; ignores *.rhai", () => {
+    const jsPath = path.join(ws, ".claude", "workflows", "spot-review-fanout.js");
+    const rhaiPath = path.join(ws, ".claude", "workflows", "other.rhai");
+    const fs = buildCapFs(
+      {
+        [jsPath]: {
+          content: `export const meta = {\n  name: 'spot-review-fanout',\n  description: 'Review spots',\n};\n`,
+        },
+        [rhaiPath]: { content: `let meta = #{ name: "should-not-appear", description: "x" };\n` },
+      },
+      [ws, path.join(ws, ".claude"), path.join(ws, ".claude", "workflows")],
+    );
+    const result = scanCapabilityRoots({
+      fs, roots: [claudeWfRoot], backend: "claude", workspaceDir: ws, homeDir: home, env: {},
+    });
+    const wfs = result.items.filter((i) => i.kind === "workflow");
+    expect(wfs).toHaveLength(1);
+    expect(wfs[0].name).toBe("spot-review-fanout");
+  });
+
+  it("project workflow wins over home for the same meta.name", () => {
+    const proj = path.join(ws, ".grok", "workflows", "shared.rhai");
+    const homeFile = path.join(home, ".grok", "workflows", "shared.rhai");
+    const fs = buildCapFs(
+      {
+        [proj]: { content: `let meta = #{ name: "shared", description: "Project copy" };\n` },
+        [homeFile]: { content: `let meta = #{ name: "shared", description: "Home copy" };\n` },
+      },
+      [
+        ws, path.join(ws, ".grok"), path.join(ws, ".grok", "workflows"),
+        home, path.join(home, ".grok"), path.join(home, ".grok", "workflows"),
+      ],
+    );
+    const result = scanCapabilityRoots({
+      fs, roots: [grokWfRoot, grokWfHome], backend: "grok", workspaceDir: ws, homeDir: home, env: {},
+    });
+    const wfs = result.items.filter((i) => i.kind === "workflow" && i.name === "shared");
+    expect(wfs).toHaveLength(1);
+    expect(wfs[0].source).toBe("Project (.grok)");
+    expect(wfs[0].description).toBe("Project copy");
+  });
+
+  it("GROK_WORKFLOWS=0 disables Grok workflow roots", () => {
+    const rhaiPath = path.join(ws, ".grok", "workflows", "x.rhai");
+    const root: CapabilityRootSpec = {
+      ...grokWfRoot,
+      disabledByEnv: "GROK_WORKFLOWS",
+    };
+    const fs = buildCapFs(
+      { [rhaiPath]: { content: `let meta = #{ name: "x", description: "X" };\n` } },
+      [ws, path.join(ws, ".grok"), path.join(ws, ".grok", "workflows")],
+    );
+    const off = scanCapabilityRoots({
+      fs, roots: [root], backend: "grok", workspaceDir: ws, homeDir: home, env: { GROK_WORKFLOWS: "0" },
+    });
+    expect(off.items.filter((i) => i.kind === "workflow")).toHaveLength(0);
+  });
+
+  it("CAPABILITY_ROOTS includes workflow dirs per backend only", () => {
+    expect(CAPABILITY_ROOTS.grok.some((r) => r.kind === "workflow" && r.layout === "flat-rhai")).toBe(true);
+    expect(CAPABILITY_ROOTS.claude.some((r) => r.kind === "workflow" && r.layout === "flat-js")).toBe(true);
+    expect(CAPABILITY_ROOTS.grok.some((r) => r.layout === "flat-js")).toBe(false);
+    expect(CAPABILITY_ROOTS.claude.some((r) => r.layout === "flat-rhai")).toBe(false);
   });
 });

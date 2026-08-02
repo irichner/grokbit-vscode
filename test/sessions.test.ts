@@ -21,6 +21,8 @@ import {
   sessionsDirFor,
   shortEffort,
   shortModelName,
+  formatTabTokenCount,
+  tabIconKindFrom,
   tabStatusHead,
   tabTitleFor,
   tabTitleStatusFrom,
@@ -808,52 +810,40 @@ describe("composeTabTitle", () => {
     expect(title.length).toBeGreaterThan("Sonnet·med — ".length);
   });
 
-  it("idle / omitted tabStatus keeps the pre-status title for short names", () => {
+  it("idle / no tokens keeps the settings-only title for short names", () => {
     expect(composeTabTitle({ name: "Fix login bug", model: "sonnet", effort: "high" }))
       .toBe("Sonnet·hig — Fix login bug");
     expect(composeTabTitle({ name: "Fix login bug", model: "sonnet", effort: "high", tabStatus: "none" }))
       .toBe("Sonnet·hig — Fix login bug");
-  });
-
-  it("prefixes working / needs-you / done-away / error-away markers", () => {
     expect(composeTabTitle({ name: "Fix login bug", model: "sonnet", effort: "high", tabStatus: "working" }))
-      .toBe("… Sonnet·hig — Fix login bug");
-    expect(composeTabTitle({ name: "Fix login bug", model: "sonnet", effort: "high", tabStatus: "needs-you" }))
-      .toBe("? Sonnet·hig — Fix login bug");
-    expect(composeTabTitle({ name: "Fix login bug", model: "sonnet", effort: "high", tabStatus: "done-away" }))
-      .toBe("* Sonnet·hig — Fix login bug");
-    expect(composeTabTitle({ name: "Fix login bug", model: "sonnet", effort: "high", tabStatus: "error-away" }))
-      .toBe("! Sonnet·hig — Fix login bug");
+      .toBe("Sonnet·hig — Fix login bug"); // status is icon-only; no tokens yet → no head
   });
 
-  it("fuses step progress into the working marker when current ≥ 1", () => {
+  it("prefixes the session token total when known (any status)", () => {
     expect(composeTabTitle({
       name: "Fix login bug", model: "sonnet", effort: "high",
-      tabStatus: "working", progressCurrent: 7,
-    })).toBe("…7 Sonnet·hig — Fix login bug");
+      totalTokens: 12_500,
+    })).toBe("12.5K Sonnet·hig — Fix login bug");
     expect(composeTabTitle({
       name: "Fix login bug", model: "sonnet", effort: "high",
-      tabStatus: "working", progressCurrent: 3, progressTotal: 12,
-    })).toBe("…3/12 Sonnet·hig — Fix login bug");
+      tabStatus: "working", totalTokens: 12_500,
+    })).toBe("12.5K Sonnet·hig — Fix login bug");
+    expect(composeTabTitle({
+      name: "Fix login bug", model: "sonnet", effort: "high",
+      tabStatus: "needs-you", totalTokens: 42,
+    })).toBe("42 Sonnet·hig — Fix login bug");
+    expect(composeTabTitle({
+      name: "Fix login bug", model: "sonnet", effort: "high",
+      tabStatus: "done-away", totalTokens: 1_503_035,
+    })).toBe("1.5M Sonnet·hig — Fix login bug");
   });
 
-  it("does not show progress digits when current is 0 or for non-working status", () => {
-    expect(composeTabTitle({
-      name: "Fix login bug", model: "sonnet", effort: "high",
-      tabStatus: "working", progressCurrent: 0,
-    })).toBe("… Sonnet·hig — Fix login bug");
-    expect(composeTabTitle({
-      name: "Fix login bug", model: "sonnet", effort: "high",
-      tabStatus: "needs-you", progressCurrent: 5,
-    })).toBe("? Sonnet·hig — Fix login bug");
-  });
-
-  it("keeps the status marker when the name is long (status survives end-truncation)", () => {
+  it("keeps the token head when the name is long (survives end-truncation)", () => {
     const long = "refactor the authentication helper across the whole API layer";
     const title = composeTabTitle({
-      name: long, model: "grok-build", effort: "medium", tabStatus: "needs-you",
+      name: long, model: "grok-build", effort: "medium", totalTokens: 12_500,
     });
-    expect(title.startsWith("? Grok·med — ")).toBe(true);
+    expect(title.startsWith("12.5K Grok·med — ")).toBe(true);
     expect(title.length).toBeLessThanOrEqual(40);
   });
 });
@@ -877,20 +867,40 @@ describe("tabTitleStatusFrom", () => {
   });
 });
 
-describe("tabStatusHead", () => {
-  it("returns empty for none / omitted", () => {
+describe("formatTabTokenCount / tabStatusHead", () => {
+  it("returns empty for unknown / invalid", () => {
+    expect(formatTabTokenCount(undefined)).toBe("");
+    expect(formatTabTokenCount(NaN)).toBe("");
+    expect(formatTabTokenCount(-1)).toBe("");
     expect(tabStatusHead()).toBe("");
-    expect(tabStatusHead("none")).toBe("");
   });
 
-  it("locks the design markers and progress fusion", () => {
-    expect(tabStatusHead("working")).toBe("…");
-    expect(tabStatusHead("working", 0)).toBe("…");
-    expect(tabStatusHead("working", 7)).toBe("…7");
-    expect(tabStatusHead("working", 3, 12)).toBe("…3/12");
-    expect(tabStatusHead("needs-you", 9)).toBe("?");
-    expect(tabStatusHead("done-away")).toBe("*");
-    expect(tabStatusHead("error-away")).toBe("!");
+  it("formats compact counts within the 6-char title budget", () => {
+    expect(formatTabTokenCount(0)).toBe("0");
+    expect(formatTabTokenCount(42)).toBe("42");
+    expect(formatTabTokenCount(999)).toBe("999");
+    expect(formatTabTokenCount(1000)).toBe("1.0K");
+    expect(formatTabTokenCount(12_500)).toBe("12.5K");
+    expect(formatTabTokenCount(1_503_035)).toBe("1.5M");
+    expect(tabStatusHead(12_500)).toBe("12.5K");
+  });
+
+  it("coarsens counts that would exceed 6 chars", () => {
+    // 999999 → "1000.0K" is 7 chars with one-decimal; coarsen to integer K/M.
+    const s = formatTabTokenCount(999_999);
+    expect(s.length).toBeLessThanOrEqual(6);
+    expect(s).toMatch(/K$|M$/);
+  });
+});
+
+describe("tabIconKindFrom", () => {
+  it("maps working / needs-you / everything else to the three icon colors", () => {
+    expect(tabIconKindFrom("working")).toBe("working");
+    expect(tabIconKindFrom("needs-you")).toBe("needs-you");
+    expect(tabIconKindFrom("none")).toBe("stopped");
+    expect(tabIconKindFrom("done-away")).toBe("stopped");
+    expect(tabIconKindFrom("error-away")).toBe("stopped");
+    expect(tabIconKindFrom(undefined)).toBe("stopped");
   });
 });
 

@@ -35,12 +35,37 @@ import {
 } from "./permission-bind";
 import { resolveGrokHome } from "./sessions";
 import { BackendQuirks, buildGrokAgentArgs, EffortLevel } from "./backends";
+import type { AcpContentBlock } from "./pending-images";
 
 // Re-exported for existing call sites/tests that import these from "./acp"
 // (`session.ts`, `sidebar.ts`, `test/acp.test.ts`) — see src/backends.ts,
 // which now owns the definitions, and docs/plans/claude-code-backend.md § WP2.
 export { buildGrokAgentArgs };
 export type { EffortLevel };
+
+/** Agent-advertised prompt content capabilities from `initialize`. */
+export interface PromptCapabilities {
+  image: boolean;
+  audio: boolean;
+  embeddedContext: boolean;
+}
+
+export function parsePromptCapabilities(initResult: unknown): PromptCapabilities {
+  let caps: { image?: unknown; audio?: unknown; embeddedContext?: unknown } | undefined;
+  if (initResult && typeof initResult === "object") {
+    const ac = (initResult as { agentCapabilities?: { promptCapabilities?: unknown } })
+      .agentCapabilities;
+    const pc = ac?.promptCapabilities;
+    if (pc && typeof pc === "object") {
+      caps = pc as { image?: unknown; audio?: unknown; embeddedContext?: unknown };
+    }
+  }
+  return {
+    image: caps?.image === true,
+    audio: caps?.audio === true,
+    embeddedContext: caps?.embeddedContext === true,
+  };
+}
 
 export interface AcpClientOptions {
   /** Executable to spawn — grok's resolved CLI path, or `process.execPath`
@@ -158,6 +183,12 @@ export class AcpClient extends EventEmitter {
   availableModels: ModelInfo[] = [];
   availableCommands: SlashCommand[] = [];
   lastMeta?: PromptResultMeta;
+  /** From `initialize` — never assume image:true without this (Grok is false today). */
+  promptCapabilities: PromptCapabilities = {
+    image: false,
+    audio: false,
+    embeddedContext: false,
+  };
 
   /**
    * Tool-call ids known to be media generations (`/imagine`, `/imagine-video`).
@@ -254,6 +285,7 @@ export class AcpClient extends EventEmitter {
         terminal: true,
       },
     });
+    this.promptCapabilities = parsePromptCapabilities(init);
     this.emit("initialized", init);
   }
 
@@ -349,11 +381,19 @@ export class AcpClient extends EventEmitter {
     // current_mode_update will arrive as a session/update
   }
 
-  async prompt(text: string): Promise<PromptResultMeta> {
+  /**
+   * Send a user turn. Accepts plain text (primer / handoff / plan follow-ups)
+   * or a pre-built content-block array (user sends with optional images —
+   * see `buildSessionPromptBlocks` in pending-images.ts).
+   */
+  async prompt(textOrBlocks: string | AcpContentBlock[]): Promise<PromptResultMeta> {
     if (!this.sessionId) throw new Error("no session");
+    const prompt: AcpContentBlock[] = typeof textOrBlocks === "string"
+      ? [{ type: "text", text: textOrBlocks }]
+      : textOrBlocks;
     const result = await this.request("session/prompt", {
       sessionId: this.sessionId,
-      prompt: [{ type: "text", text }],
+      prompt,
     });
     const meta = extractPromptMeta(result);
     // A result without _meta.totalTokens (a metaless primer ack, a cancelled
@@ -604,12 +644,21 @@ export class AcpClient extends EventEmitter {
           this.respondError(id, PLAN_BLOCKED_CODE, PLAN_BLOCKED_WRITE_MSG);
           return;
         }
-        // Permission-bind: when scoped path grants exist, path must match.
-        const writeBind = consumeWriteGrant(params.path, this.approvedGrants);
+        // Permission-bind: when scoped path grants exist, path (and optional
+        // content digest for allow-once Write previews) must match.
+        const writeBind = consumeWriteGrant(
+          params.path,
+          typeof params.content === "string" ? params.content : undefined,
+          this.approvedGrants,
+        );
         this.approvedGrants = writeBind.grants;
         if (!writeBind.ok) {
           this.emit("mutationBlocked", { kind: "bind", target: params.path });
-          this.respondError(id, BIND_BLOCKED_CODE, BIND_BLOCKED_WRITE_MSG);
+          this.respondError(
+            id,
+            BIND_BLOCKED_CODE,
+            writeBind.reason || BIND_BLOCKED_WRITE_MSG,
+          );
           return;
         }
         await this.fsWrite(params.path, params.content);

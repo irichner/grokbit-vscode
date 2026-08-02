@@ -13,6 +13,7 @@
   const capabilitiesBtn = $("capabilities-btn");
   const modeBtn = $("mode-btn");
   const modelLabel = $("model-label");
+  const sessionSetupChip = $("session-setup-chip");
   const backendLabelBtn = $("backend-label");
   const gearBtn = $("gear-btn");
   const addBtn = $("add-btn");
@@ -68,6 +69,11 @@
     useCtrlEnter: false,
     commands: [],
     chips: [],
+    // Staged clipboard screenshots (docs/plans/paste-screenshots.md) — host is
+    // SoT; mirrored here for send gate + co-render with file attachments.
+    pendingImages: [],
+    imagePromptSupported: false,
+    pasteImageError: null,
     // Studio E2 workspace-docs popover state (ephemeral — not buffered).
     workspaceDocs: { entries: [], loading: false, error: null, total: 0, capped: false },
     // Capability browser (slash commands, skills, agents) — ephemeral, not
@@ -349,6 +355,11 @@
   // docs/plans/claude-code-backend.md § WP7.
   const sessionSetupModel = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.sessionSetupModel)
     || function () { return { backend: "grok", rows: [] }; };
+  const sessionSetupChipLabel = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.sessionSetupChipLabel)
+    || function (opts) {
+      opts = opts || {};
+      return { label: opts.modelName || "Model", title: "Session setup", agentShort: "Grok", modeShort: "Agent", modeFull: "Agent" };
+    };
 
   // Three blinking dots — the tool rows' in-progress animation, reused by every
   // progress indicator (Grokking / Thinking) so they all pulse the same way
@@ -420,6 +431,41 @@
     const full = name || "Model";
     modelLabel.title = `${full}${state.effort ? " (" + capitalize(state.effort) + " effort)" : ""} — click to change`;
     modelLabel.hidden = false;
+  }
+
+  // Top-bar Session setup chip — always-available door to Agent / Model /
+  // Thinking / Mode (session-setup-top-bar). Visibility truth table: hide during
+  // onboarding or when no model is known; otherwise show (rows lock via busy).
+  function isOnboardingActive() {
+    const onb = $("welcome-onboarding");
+    return !!(onb && onb.innerHTML && onb.innerHTML.trim());
+  }
+
+  function updateSessionSetupChip() {
+    if (!sessionSetupChip) return;
+    const name = modelDisplayName(state.currentModelId, state.availableModels) || "";
+    if (isOnboardingActive() || (!name && !state.currentModelId)) {
+      sessionSetupChip.hidden = true;
+      sessionSetupChip.setAttribute("aria-expanded", "false");
+      return;
+    }
+    const built = sessionSetupChipLabel({
+      backend: state.backend,
+      modelName: name || state.currentModelId || "Model",
+      effort: state.backend === "claude" ? "" : (state.effort || ""),
+      modeId: state.currentModeId || "agent",
+    });
+    const short = truncate(built.label, 42);
+    // Chevron signals "opens a menu" — the chip used to read as static status text.
+    const chevron = `<span class="session-setup-chip-chevron" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>`;
+    sessionSetupChip.innerHTML = `<span class="btn-label">${escapeHtml(short)}</span>${chevron}`;
+    sessionSetupChip.title = built.title;
+    sessionSetupChip.hidden = false;
+    if (sessionSettingsPopover && !sessionSettingsPopover.hidden && sessionSetupChip.parentElement && sessionSetupChip.parentElement.contains(sessionSettingsPopover)) {
+      sessionSetupChip.setAttribute("aria-expanded", "true");
+    } else {
+      sessionSetupChip.setAttribute("aria-expanded", "false");
+    }
   }
 
   // Backend chip beside the model chip — which agent (Grok Build / Claude Code)
@@ -617,51 +663,45 @@
     return rows;
   }
 
-  function hideSessionSetupCard() {
-    const el = $("session-setup-card");
-    if (el) { el.hidden = true; el.innerHTML = ""; }
-  }
-
-  // New-tab welcome-screen card: Agent / Model / Thinking / Mode.
-  // Model/effort/backend changes normally restart the session, but a brand-new
-  // tab has no history, so the restart is free and invisible — the footer says
-  // so. Hidden during onboarding and once the chat begins; renders LOCKED (not
-  // hidden) during startup/priming — currentSessionSetupModel() already keys
-  // `locked` off state.busy, which is true for the whole spawn+primer window,
-  // so no extra gating is needed here to reflect that (docs/plans/
-  // session-tab-ux-overhaul.md § Approach C — the canvas is populated from the
-  // first frame instead of blank while the session starts).
-  function renderSessionSetupCard() {
-    const el = $("session-setup-card");
-    if (!el) return;
-    const onb = $("welcome-onboarding");
-    const onboardingActive = !!(onb && onb.innerHTML && onb.innerHTML.trim());
-    if (!state.welcomeVisible || onboardingActive) {
-      hideSessionSetupCard();
-      return;
-    }
-    el.innerHTML = "";
-    const heading = document.createElement("p");
-    heading.className = "session-setup-heading";
-    heading.textContent = "Session setup";
-    el.appendChild(heading);
-    el.appendChild(buildSessionSettingsRows(currentSessionSetupModel()));
-    const footer = document.createElement("p");
-    footer.className = "session-setup-footer";
-    footer.textContent = "Free to change here — this tab hasn't sent a message yet, so nothing restarts.";
-    el.appendChild(footer);
-    el.hidden = false;
-  }
-
-  // Composer quick-settings popover — the SAME four controls as the setup card
-  // above, opened from the model/effort chip (see modelLabel.onclick below).
-  // Unlike the single-purpose backend/mode popovers it does NOT close on a
-  // pick, since the whole point of bundling four controls together is
-  // adjusting more than one without reopening.
+  // Shared session-settings popover — Agent / Model / Thinking / Mode from
+  // sessionSetupModel(), opened from the top-bar #session-setup-chip or the
+  // composer #model-label. Unlike the single-purpose backend/mode popovers it
+  // does NOT close on a pick, so several settings can be adjusted per open.
   function renderSessionSettingsPopover() {
     if (!sessionSettingsPopover) return;
     sessionSettingsPopover.innerHTML = "";
     sessionSettingsPopover.appendChild(buildSessionSettingsRows(currentSessionSetupModel()));
+  }
+
+  // Dual-anchor placement for #session-settings-popover (session-setup-top-bar):
+  // top-bar chip → re-parent under .top-bar, open *below* the chip (left-clamped);
+  // composer #model-label → re-parent under .composer, open *above* via positionPopover.
+  // A single shared node; appendChild moves it. Never use right-align-only
+  // positionDropdownPopover for the left chip.
+  function positionSessionSettingsFromTop(popover, btn) {
+    const parent = popover.parentElement;
+    if (!parent) return;
+    const parentRect = parent.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    const EDGE = 6;
+    popover.style.bottom = "auto";
+    popover.style.top = (btnRect.bottom - parentRect.top + 4) + "px";
+    popover.style.right = "auto";
+    let left = btnRect.left - parentRect.left;
+    popover.style.left = left + "px";
+    requestAnimationFrame(() => {
+      const pw = popover.getBoundingClientRect().width;
+      const maxLeft = Math.max(EDGE, parentRect.width - pw - EDGE);
+      if (left + pw > parentRect.width - EDGE) left = maxLeft;
+      if (left < EDGE) left = EDGE;
+      popover.style.left = left + "px";
+    });
+  }
+
+  function setSessionSettingsExpanded(expanded) {
+    const v = expanded ? "true" : "false";
+    if (sessionSetupChip) sessionSetupChip.setAttribute("aria-expanded", v);
+    if (modelLabel) modelLabel.setAttribute("aria-expanded", v);
   }
 
   function openSessionSettingsPopover(anchorBtn) {
@@ -669,14 +709,33 @@
     if (!sessionSettingsPopover.hidden) { closePopovers(); return; }
     closePopovers();
     renderSessionSettingsPopover();
-    positionPopover(sessionSettingsPopover, anchorBtn);
+    const topBar = document.querySelector(".top-bar");
+    const composer =
+      (modelLabel && modelLabel.closest(".composer")) ||
+      document.querySelector("footer.composer") ||
+      sessionSettingsPopover.parentElement;
+    if (topBar && topBar.contains(anchorBtn)) {
+      topBar.appendChild(sessionSettingsPopover);
+      positionSessionSettingsFromTop(sessionSettingsPopover, anchorBtn);
+    } else {
+      if (composer) composer.appendChild(sessionSettingsPopover);
+      positionPopover(sessionSettingsPopover, anchorBtn);
+    }
     sessionSettingsPopover.hidden = false;
+    setSessionSettingsExpanded(true);
+    if (anchorBtn === sessionSetupChip) {
+      sessionSetupChip.setAttribute("aria-expanded", "true");
+      if (modelLabel) modelLabel.setAttribute("aria-expanded", "false");
+    } else if (anchorBtn === modelLabel) {
+      if (modelLabel) modelLabel.setAttribute("aria-expanded", "true");
+      if (sessionSetupChip) sessionSetupChip.setAttribute("aria-expanded", "false");
+    }
   }
 
-  // Re-render whichever of the two mounts is currently live — after a pick, or
-  // whenever a session/model/mode/backend/busy update arrives from the host.
+  // Re-render live mounts — top-bar chip label + open popover — after a pick
+  // or host session/model/mode/backend/busy update.
   function refreshSessionSettingsMounts() {
-    renderSessionSetupCard();
+    updateSessionSetupChip();
     if (sessionSettingsPopover && !sessionSettingsPopover.hidden) renderSessionSettingsPopover();
   }
 
@@ -690,7 +749,7 @@
   // the same word the top-bar door and the composer's add-popover door use, so
   // the three surfaces read as one consistent feature rather than three names
   // for the same thing.
-  const CAPABILITIES_HEADING = "Grokbit Actions";
+  const CAPABILITIES_HEADING = "Grokbit Workflows";
   const CAPABILITIES_EXPLAINER = "Click anything to drop it into the message box. Nothing is sent until you press Send.";
 
   // `locked` (default false) renders the row like an inert one — no click
@@ -899,11 +958,21 @@
     container.appendChild(head);
   }
 
+  // Appends onto the heading row (same line as CAPABILITIES_HEADING), not as a
+  // separate block below it — insert before Refresh when that button is present
+  // so the layout stays: title · explainer … Refresh.
   function appendCapabilitiesExplainer(container) {
-    const p = document.createElement("p");
+    const head = container.querySelector(".capabilities-head");
+    const p = document.createElement("span");
     p.className = "capabilities-explainer muted";
     p.textContent = CAPABILITIES_EXPLAINER;
-    container.appendChild(p);
+    if (head) {
+      const refresh = head.querySelector(".capabilities-refresh");
+      if (refresh) head.insertBefore(p, refresh);
+      else head.appendChild(p);
+    } else {
+      container.appendChild(p);
+    }
   }
 
   // `featuredCount` comes only from capabilityGroupsView's groups
@@ -915,10 +984,15 @@
     for (const group of viewGroups) {
       const groupEl = document.createElement("div");
       groupEl.className = "capability-group";
-      const title = document.createElement("p");
-      title.className = "capability-group-title";
-      title.textContent = group.title;
-      groupEl.appendChild(title);
+      // Skip empty titles and the suite label that only restates the panel
+      // heading ("Grokbit Workflows") — keeps User Workflows / Session controls.
+      const titleText = (group.title || "").trim();
+      if (titleText && !/^grokbit workflows?$/i.test(titleText)) {
+        const title = document.createElement("p");
+        title.className = "capability-group-title";
+        title.textContent = titleText;
+        groupEl.appendChild(title);
+      }
       const itemsEl = document.createElement("div");
       itemsEl.className = "capability-group-items";
       const featuredCount = typeof group.featuredCount === "number" ? group.featuredCount : group.items.length;
@@ -965,14 +1039,29 @@
     }
   }
 
+  /** Backend-specific empty block for User Workflows (no invocable rows). */
+  function appendUserWorkflowsEmpty(container, emptyState) {
+    if (!emptyState || !emptyState.showEmpty) return;
+    const groupEl = document.createElement("div");
+    groupEl.className = "capability-group capability-group-empty-workflows";
+    const title = document.createElement("p");
+    title.className = "capability-group-title";
+    title.textContent = emptyState.title || "User Workflows";
+    groupEl.appendChild(title);
+    const p = document.createElement("p");
+    p.className = "capabilities-empty muted capability-row-desc";
+    p.textContent = emptyState.message || "";
+    groupEl.appendChild(p);
+    container.appendChild(groupEl);
+  }
+
   function hideCapabilitiesPanel() {
     const el = $("capabilities-panel");
     if (el) { el.hidden = true; el.innerHTML = ""; }
   }
 
-  // New-tab welcome-screen capability browser. Copies BOTH halves of
-  // renderSessionSetupCard's behaviour: its gate (welcomeVisible / onboarding)
-  // AND every call site that hides or re-renders it (see the "capabilities"
+  // New-tab welcome-screen capability browser. Gate: welcomeVisible / onboarding
+  // plus every call site that hides or re-renders it (see the "capabilities"
   // and lifecycle-anchor message handlers below) — a gate with only one of
   // those renders once during priming, while the gate is shut, and never
   // again. Renders FROM state.capabilities, never re-requesting: the payload
@@ -1013,20 +1102,30 @@
       el.hidden = false;
       return;
     }
-    const viewGroups = capabilityGroupsView({
-      groups: (markLocalSuiteOverrides || ((g) => g))(
+    const filtered = (withCreateWorkflowTile || ((g) => g))(
+      (markLocalSuiteOverrides || ((g) => g))(
         visibleCapabilityGroups(cap.groups, { scope: state.actionsScope }),
       ),
-      backend: cap.backend,
+      { backend: cap.backend || state.backend },
+    );
+    const viewGroups = capabilityGroupsView({
+      groups: filtered,
+      backend: cap.backend || state.backend,
     });
-    if (!viewGroups.length) {
+    const hasWorkflowItems = viewGroups.some(
+      (g) => g && g.kind === "workflow" && Array.isArray(g.items) && g.items.length > 0,
+    );
+    const uwEmpty = typeof userWorkflowsPanelState === "function"
+      ? userWorkflowsPanelState({
+        backend: cap.backend || state.backend,
+        hasWorkflowItems,
+      })
+      : null;
+    if (!viewGroups.length && !(uwEmpty && uwEmpty.showEmpty)) {
       // Not onboarding (already gated above) and genuinely nothing discovered:
       // an honest empty state, not a vanished panel — hiding here is what makes
       // the feature look broken to a user who has nothing installed yet. Shown
       // regardless of `locked` — the line makes no clickability claim.
-      // Post-filter: non-grokbit groups never render, so this also fires when
-      // the suite is absent (provision off / failed copy) and only Skills/
-      // Agents/Commands would have been present.
       const p = document.createElement("p");
       p.className = "capabilities-empty muted";
       p.textContent = state.actionsScope === "all"
@@ -1038,6 +1137,7 @@
     }
     appendCapabilitiesExplainer(el);
     appendCapabilityGroups(el, viewGroups, locked);
+    appendUserWorkflowsEmpty(el, uwEmpty);
     if (typeof state.mcpServerCount === "number" && state.mcpServerCount > 0) {
       const mcp = document.createElement("p");
       mcp.className = "capabilities-mcp muted";
@@ -1082,13 +1182,26 @@
         body.appendChild(p);
         return;
       }
-      const viewGroups = capabilityGroupsView({
-        groups: (markLocalSuiteOverrides || ((g) => g))(
+      const filtered = (withCreateWorkflowTile || ((g) => g))(
+        (markLocalSuiteOverrides || ((g) => g))(
           visibleCapabilityGroups(cap.groups, { scope: state.actionsScope }),
         ),
-        backend: cap.backend,
+        { backend: cap.backend || state.backend },
+      );
+      const viewGroups = capabilityGroupsView({
+        groups: filtered,
+        backend: cap.backend || state.backend,
       });
-      if (!viewGroups.length) {
+      const hasWorkflowItems = viewGroups.some(
+        (g) => g && g.kind === "workflow" && Array.isArray(g.items) && g.items.length > 0,
+      );
+      const uwEmpty = typeof userWorkflowsPanelState === "function"
+        ? userWorkflowsPanelState({
+          backend: cap.backend || state.backend,
+          hasWorkflowItems,
+        })
+        : null;
+      if (!viewGroups.length && !(uwEmpty && uwEmpty.showEmpty)) {
         const p = document.createElement("p");
         p.className = "studio-popover-empty muted";
         p.textContent = "No workflows available.";
@@ -1096,6 +1209,7 @@
         return;
       }
       appendCapabilityGroups(body, viewGroups);
+      appendUserWorkflowsEmpty(body, uwEmpty);
       if (typeof state.mcpServerCount === "number" && state.mcpServerCount > 0) {
         const mcp = document.createElement("p");
         mcp.className = "studio-popover-empty muted";
@@ -1158,6 +1272,13 @@
   function updateComposerPlaceholder() {
     if (!input) return;
     const agentName = state.backend === "claude" ? "Claude" : "Grok";
+    if (state.busy && !state.busyLocked) {
+      // Mid-turn: default queues; steer shortcut tracks useCtrlEnter.
+      input.placeholder = state.useCtrlEnter
+        ? `${MOD}+Enter queues · ${MOD}+Shift+Enter stops & sends…`
+        : `Enter queues · ${MOD}+Enter stops & sends…`;
+      return;
+    }
     input.placeholder = state.useCtrlEnter
       ? `Ask ${agentName} anything…   ${MOD}+Enter to send`
       : `Ask ${agentName} anything…   Enter to send · Shift+Enter for newline`;
@@ -1173,7 +1294,7 @@
 
   // ---------- markdown ----------
 
-  const { looksLikeFileRef, formatRelativeTime, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext, backendBadgeLabel, capabilityGroupsView, visibleCapabilityGroups, markLocalSuiteOverrides, sessionToggleGroup } = globalThis.GrokWebviewHelpers;
+  const { looksLikeFileRef, formatRelativeTime, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext, backendBadgeLabel, capabilityGroupsView, visibleCapabilityGroups, markLocalSuiteOverrides, sessionToggleGroup, userWorkflowsPanelState, withCreateWorkflowTile, canAcceptPasteImageBytes, isAllowedPasteImageMime, PASTE_IMAGE_MAX_COUNT } = globalThis.GrokWebviewHelpers;
 
   function escapeAttr(s) {
     return String(s == null ? "" : s)
@@ -1768,6 +1889,7 @@
     modePopover.hidden = true;
     if (backendPopover) backendPopover.hidden = true;
     if (sessionSettingsPopover) sessionSettingsPopover.hidden = true;
+    setSessionSettingsExpanded(false);
     gearPopover.hidden = true;
     addPopover.hidden = true;
     historyPopover.hidden = true;
@@ -2256,7 +2378,7 @@
     if (capabilitiesPopover && capabilitiesBtn && state.showCapabilities) {
       const capItem = document.createElement("div");
       capItem.className = "toolbar-popover-item";
-      capItem.innerHTML = `<span class="add-item-icon">${ICON.cpu}</span><span>Browse Grokbit Actions…</span>`;
+      capItem.innerHTML = `<span class="add-item-icon">${ICON.cpu}</span><span>Browse Grokbit Workflows…</span>`;
       capItem.onclick = (e) => {
         e.stopPropagation();
         // openCapabilitiesPopover() itself calls closePopovers() (hiding this
@@ -2533,7 +2655,6 @@
     const welcome = $("welcome");
     if (welcome) welcome.hidden = true;
     state.welcomeVisible = false;
-    hideSessionSetupCard();
     hideCapabilitiesPanel();
   }
 
@@ -2741,7 +2862,6 @@
       welcome.hidden = false;
       const onb = $("welcome-onboarding");
       if (onb) onb.innerHTML = "";
-      hideSessionSetupCard();
       hideCapabilitiesPanel();
     }
     state.welcomeVisible = true;
@@ -2750,7 +2870,10 @@
     state.toolFailuresById.clear();
     state.capabilitiesExpanded = {}; // new session — the old expansion choice doesn't belong to it
     state.pendingCapabilityDetail = null;
+    state.pendingImages = [];
+    state.pasteImageError = null;
     clearChangedFiles(); // switching sessions — the strip belongs to the old view
+    renderChips();
     state.activeAgentEl = null;
     state.activeAgentRaw = "";
     state.activeUserEl = null;
@@ -2790,7 +2913,6 @@
     const onb = $("welcome-onboarding");
     if (!onb) return;
     if (mode === "missing-cli") {
-      hideSessionSetupCard(); // install flow replaces the setup card
       hideCapabilitiesPanel();
       const installCmd = info.platform === "win32"
         ? "irm https://x.ai/cli/install.ps1 | iex"
@@ -2806,7 +2928,6 @@
           `<button class="onb-action onb-secondary" type="button" data-act="recheck">Re-check connection</button>` +
         `</div>`;
     } else if (mode === "auth-required") {
-      hideSessionSetupCard();
       hideCapabilitiesPanel();
       onb.innerHTML =
         `<div class="onb">` +
@@ -2822,7 +2943,6 @@
           `<button class="onb-action onb-secondary" type="button" data-act="recheck">Re-check connection</button>` +
         `</div>`;
     } else if (mode === "missing-claude-adapter") {
-      hideSessionSetupCard();
       hideCapabilitiesPanel();
       onb.innerHTML =
         `<div class="onb">` +
@@ -2835,7 +2955,6 @@
           `<button class="onb-action onb-secondary" type="button" data-act="recheck">Re-check connection</button>` +
         `</div>`;
     } else if (mode === "claude-auth-required") {
-      hideSessionSetupCard();
       hideCapabilitiesPanel();
       onb.innerHTML =
         `<div class="onb">` +
@@ -2847,8 +2966,8 @@
         `</div>`;
     } else {
       onb.innerHTML = "";
-      renderSessionSetupCard();
     }
+    updateSessionSetupChip(); // hide during onboarding cards; restore when cleared
   }
 
   function makeCollapsible(el, container) {
@@ -2885,11 +3004,17 @@
     return tag;
   }
 
-  function addMessage(role, text, chips) {
+  function addMessage(role, text, chips, images, opts) {
     clearWelcome();
     const el = document.createElement("div");
     el.className = `msg ${role}`;
     el._copyText = text || "";
+    if (role === "user" && opts && opts.queueId) {
+      el.dataset.queueId = opts.queueId;
+    }
+    if (role === "user" && opts && opts.queued) {
+      el.dataset.queued = "true";
+    }
 
     let contentParent = el;
     if (role === "user") {
@@ -2897,6 +3022,33 @@
       bubble.className = "msg-bubble";
       el.appendChild(bubble);
       contentParent = bubble;
+      if (opts && opts.queued) {
+        const badge = document.createElement("span");
+        badge.className = "msg-queued-badge";
+        badge.textContent = "Queued";
+        badge.setAttribute("aria-label", "Message queued");
+        bubble.appendChild(badge);
+      }
+    }
+
+    if (role === "user" && images && images.length > 0) {
+      const imgRow = document.createElement("div");
+      imgRow.className = "msg-images";
+      for (const im of images) {
+        if (im && im.previewUri) {
+          const thumb = document.createElement("img");
+          thumb.src = im.previewUri;
+          thumb.alt = im.fileName || "Screenshot";
+          thumb.title = im.fileName || im.absPath || "Screenshot";
+          imgRow.appendChild(thumb);
+        } else {
+          const fb = document.createElement("span");
+          fb.className = "msg-image-fallback";
+          fb.textContent = (im && (im.fileName || im.absPath)) || "Screenshot";
+          imgRow.appendChild(fb);
+        }
+      }
+      contentParent.appendChild(imgRow);
     }
 
     const body = document.createElement("div");
@@ -3696,14 +3848,16 @@
     }
   }
 
-  function addSessionContextBanner() {
+  function addSessionContextBanner(text) {
     finalizeActivity(); // compaction boundary — freeze any live block first
     clearWelcome();
     const existing = document.getElementById("summarizing-indicator");
     if (existing) existing.remove();
     const el = document.createElement("div");
     el.className = "session-context-banner";
-    el.textContent = "Context from previous session applied";
+    // Host may pass Agent-switch copy ("Switched to Claude — …"); model/effort
+    // summarize omits text and keeps the legacy default.
+    el.textContent = text || "Context from previous session applied";
     messagesEl.appendChild(el);
     scrollToBottom();
   }
@@ -4975,7 +5129,28 @@
     scrollToBottom();
   }
 
-  // ---------- chips ----------
+  // ---------- chips + pending images (co-render into #attachments) ----------
+
+  const pasteImageNotice = $("paste-image-notice");
+
+  function updatePasteImageNotice() {
+    if (!pasteImageNotice) return;
+    if (state.pasteImageError) {
+      pasteImageNotice.hidden = false;
+      pasteImageNotice.classList.add("is-error");
+      pasteImageNotice.textContent = state.pasteImageError;
+      return;
+    }
+    pasteImageNotice.classList.remove("is-error");
+    if (state.pendingImages.length > 0 && !state.imagePromptSupported) {
+      pasteImageNotice.hidden = false;
+      pasteImageNotice.textContent =
+        "This agent can’t view images — attached as a file path.";
+      return;
+    }
+    pasteImageNotice.hidden = true;
+    pasteImageNotice.textContent = "";
+  }
 
   function renderChips() {
     chipsEl.innerHTML = "";
@@ -5001,7 +5176,9 @@
         rm.type = "button";
         rm.className = "attachment-remove";
         rm.title = "Remove";
+        rm.setAttribute("aria-label", "Remove " + fileName);
         rm.textContent = "×";
+        rm.disabled = !!state.busy;
         rm.onclick = () => vscode.postMessage({ type: "removeChip", id: chip.id });
         el.appendChild(rm);
         attachmentsEl.appendChild(el);
@@ -5018,6 +5195,32 @@
       el.onclick = () => vscode.postMessage({ type: "toggleChip", id: chip.id });
       chipsEl.appendChild(el);
     }
+    // Pending images always re-drawn here so a chips-only update never wipes thumbs.
+    for (const img of state.pendingImages) {
+      const el = document.createElement("div");
+      el.className = "attachment attachment-image";
+      el.title = img.fileName || "Screenshot";
+      if (img.previewUri) {
+        const thumb = document.createElement("img");
+        thumb.src = img.previewUri;
+        thumb.alt = img.fileName || "Screenshot";
+        el.appendChild(thumb);
+      }
+      const label = document.createElement("span");
+      label.textContent = truncate(img.fileName || "Screenshot", 16);
+      el.appendChild(label);
+      const rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "attachment-remove";
+      rm.title = "Remove screenshot";
+      rm.setAttribute("aria-label", "Remove " + (img.fileName || "screenshot"));
+      rm.textContent = "×";
+      rm.disabled = !!state.busy;
+      rm.onclick = () => vscode.postMessage({ type: "removePendingImage", id: img.id });
+      el.appendChild(rm);
+      attachmentsEl.appendChild(el);
+    }
+    updatePasteImageNotice();
   }
 
   // ---------- donut ----------
@@ -5176,7 +5379,9 @@
       sendBtn.disabled = true;
     } else {
       sendBtn.innerHTML = ICON.square;
-      sendBtn.title = "Stop";
+      sendBtn.title = state.useCtrlEnter
+        ? `Stop — ${MOD}+Enter queues · ${MOD}+Shift+Enter steers`
+        : `Stop — Enter queues · ${MOD}+Enter steers`;
       sendBtn.classList.add("stop");
       sendBtn.disabled = false;
     }
@@ -5185,17 +5390,20 @@
   /**
    * Submit a user message to the host. Works while idle *or* mid-turn: a
    * follow-up while busy is posted as send (host queues FIFO without cancelling
-   * the in-flight turn; UI ack is deferred until that turn runs). Mid-turn
-   * submit does not seal the streaming agent reply — it keeps painting until
-   * the current turn finishes. Stop still posts cancel only.
+   * the in-flight turn; queued bubble arrives from host). opts.steer=true
+   * cancels the live turn then sends (Ctrl/Cmd+Enter or Ctrl/Cmd+Shift+Enter).
+   * Stop still posts cancel only.
    */
-  function submitMessage(text) {
+  function submitMessage(text, opts) {
     const wasBusy = state.busy;
+    const steer = !!(opts && opts.steer);
     state.busy = true;
     state.busyLocked = false; // a real send is always stoppable
     updateSendButton();
+    updateComposerPlaceholder();
     // Idle send: seal any residual agent UI so the next stream is clean.
     // Mid-turn queue: leave the active stream alone (host does not cancel).
+    // Steer will cancel — still leave stream until host tears it down.
     if (!wasBusy) {
       if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl) {
         commitAgentTurn();
@@ -5208,10 +5416,16 @@
         state.activeToolGroupEl = null;
       }
     }
-    vscode.postMessage({ type: "send", text, chips: state.chips });
+    vscode.postMessage({ type: "send", text, chips: state.chips, steer: steer || undefined });
     input.value = "";
     renderInputHighlight();
     slashPopover.hidden = true;
+  }
+
+  function hasSendContent(text) {
+    return !!(text
+      || state.chips.some((c) => !c.hidden)
+      || (state.pendingImages && state.pendingImages.length > 0));
   }
 
   function sendOrStop() {
@@ -5219,14 +5433,14 @@
       // Mid-turn Enter with content → follow-up send (host keeps busy continuous).
       // Empty Enter while busy is a no-op; the Stop button handles cancel.
       const text = input.value.trim();
-      if (text || state.chips.some((c) => !c.hidden)) {
+      if (hasSendContent(text)) {
         submitMessage(text);
         return;
       }
       return;
     }
     const text = input.value.trim();
-    if (!text && state.chips.every((c) => c.hidden)) return;
+    if (!hasSendContent(text)) return;
     submitMessage(text);
   }
 
@@ -5374,6 +5588,7 @@
         if (typeof msg.compactActivity === "boolean") state.compactActivity = msg.compactActivity;
         applyThinkingVisibility();
         updateModelLabel(); // effort is now known
+        updateSessionSetupChip(); // top-bar chip includes effort segment
         updateComposerPlaceholder(); // send-key hint follows useCtrlEnter
         // grok.showCapabilities isn't known at "ready" time — initialState is
         // posted AFTER ready (postPanelConfig replies to it) — so the capability
@@ -5395,6 +5610,10 @@
         }
         if (msg.actionsScope === "all" || msg.actionsScope === "workflow") {
           state.actionsScope = msg.actionsScope;
+        }
+        if (typeof msg.imagePromptSupported === "boolean") {
+          state.imagePromptSupported = msg.imagePromptSupported;
+          updatePasteImageNotice();
         }
         break;
       case "seedComposer":
@@ -5519,13 +5738,19 @@
         if (onb) onb.innerHTML = "";
         // Render locked, not hidden — the canvas is populated from the first
         // frame instead of blank for the whole spawn+primer window.
-        renderSessionSetupCard();
         renderCapabilitiesPanel();
         break;
       }
       case "cliUpdating": {
         // Host may fire this while the silent `grok update` runs before spawn.
         // Welcome chrome no longer shows a status line; composer busy remains.
+        break;
+      }
+      case "sessionIdentity": {
+        // Host re-stash on ready (before ACP session/load finishes) so the next
+        // window reload still has {id, backend} for the panel serializer.
+        if (msg.backend) { state.backend = msg.backend; updateBackendLabel(); }
+        if (msg.sessionId) vscode.setState({ id: msg.sessionId, backend: state.backend });
         break;
       }
       case "session": {
@@ -5661,33 +5886,76 @@
         state.chips = msg.chips;
         renderChips();
         break;
+      case "pendingImages":
+        state.pendingImages = Array.isArray(msg.images) ? msg.images : [];
+        if (typeof msg.imagePromptSupported === "boolean") {
+          state.imagePromptSupported = msg.imagePromptSupported;
+        }
+        state.pasteImageError = null;
+        renderChips();
+        break;
+      case "pasteImageError":
+        state.pasteImageError = msg.message || "Could not attach image.";
+        updatePasteImageNotice();
+        break;
+      case "imagePromptSupported":
+        state.imagePromptSupported = msg.value === true;
+        updatePasteImageNotice();
+        break;
       case "commandsUpdate":
         state.commands = msg.commands || [];
         break;
       case "userMessage":
-        // Live send or deferred mid-turn-queue ack (or verdict-feedback bubble):
+        // Live send, mid-turn queue bubble, or verdict-feedback bubble:
         // render and bump the counter so any plan history for this position drains.
         // Seal any in-flight agent bubble first so a chained follow-up lands
         // *below* the completed prior reply instead of looking interrupted.
-        if (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl || state.activeActivityEl) {
+        // Queued mid-turn: do NOT seal the active agent stream (it keeps painting).
+        if (!msg.queued && (state.activeAgentEl || state.activeThoughtEl || state.activeToolGroupEl || state.activeActivityEl)) {
           commitAgentTurn();
         }
-        clearChangedFiles(); // a new turn starts — the strip shows only its own edits
+        if (!msg.queued) clearChangedFiles(); // a new turn starts — the strip shows only its own edits
         drainPlanHistory(state.userMsgCount);
         drainPermissionHistory(state.userMsgCount);
         state.userMsgCount += 1;
-        addMessage("user", msg.text, msg.chips || []);
+        addMessage("user", msg.text, msg.chips || [], msg.images || [], {
+          queued: !!msg.queued,
+          queueId: msg.queueId,
+        });
         // Keep busy across chained turns (host skips agentEnd while queue has work).
         state.busy = true;
         state.busyLocked = false;
         updateSendButton();
+        updateComposerPlaceholder();
+        renderChips(); // refresh remove disabled state while busy
         forceScrollToBottom(); // jump back to the bottom on the user's own send (#16)
         // If the indicator is showing and a NEW (live-send) user message comes
         // in, hide it. (When the host posts a userMessage as part of the verdict
         // flow, it then immediately posts planProcessing, which re-shows it
         // after we hide here — the net effect is correct: indicator below.)
-        hidePlanProcessing();
+        if (!msg.queued) hidePlanProcessing();
         break;
+      case "userMessageDequeued": {
+        // Mid-turn queue entry is now running — drop the Queued badge only.
+        const qid = msg.queueId != null ? String(msg.queueId) : "";
+        if (qid) {
+          const nodes = messagesEl.querySelectorAll(".msg.user[data-queue-id]");
+          for (const el of nodes) {
+            if (el.getAttribute("data-queue-id") === qid) {
+              el.removeAttribute("data-queued");
+              const badge = el.querySelector(".msg-queued-badge");
+              if (badge) badge.remove();
+              break;
+            }
+          }
+        }
+        break;
+      }
+      case "userQueueCleared": {
+        // Stop/steer abandoned the queue — remove every still-queued bubble.
+        messagesEl.querySelectorAll('.msg.user[data-queued="true"]').forEach((el) => el.remove());
+        break;
+      }
       case "agentStart":
         // A user-initiated turn just began (live send, deferred queue drain, or
         // plan-verdict follow-up). Show "Grokking…" until the first real content
@@ -5902,6 +6170,7 @@
         addError(msg.text);
         state.busy = false;
         updateSendButton();
+        updateComposerPlaceholder();
         flushVoiceQueue(); // don't strand messages dictated during this turn
         break;
       case "agentEnd":
@@ -5909,6 +6178,7 @@
         hideThinkingIndicator();
         state.busy = false;
         updateSendButton();
+        updateComposerPlaceholder();
         flushVoiceQueue(); // send anything dictated while Grok was responding
         break;
       case "exit":
@@ -5917,6 +6187,7 @@
         state.busy = false;
         state.voiceQueue = []; // session is dead — drop anything queued for it
         updateSendButton();
+        updateComposerPlaceholder();
         break;
       case "setBusy":
         // Host-driven busy state for flows where there's no natural agentEnd
@@ -5927,6 +6198,8 @@
         state.busy = !!msg.value;
         state.busyLocked = !!msg.locked;
         updateSendButton();
+        updateComposerPlaceholder();
+        renderChips(); // attachment remove buttons track busy
         if (!state.busy) {
           // When a non-turn busy window clears (e.g. session-start priming), send
           // anything dictated during it — priming has no agentEnd to flush on.
@@ -5956,7 +6229,7 @@
         break;
       }
       case "sessionContext":
-        addSessionContextBanner();
+        addSessionContextBanner(msg.text);
         break;
       case "beginPanelReplay":
         // Host posts this BEFORE clearMessages on every ready-driven rebuild.
@@ -6051,10 +6324,23 @@
   // the SAME four controls (Agent/Model/Thinking/Mode) as the new-tab setup
   // card, built from the same sessionSetupModel() — rather than the gear's
   // full main menu (docs/plans/claude-code-backend.md § WP7).
-  if (modelLabel) modelLabel.onclick = (e) => {
-    e.stopPropagation();
-    openSessionSettingsPopover(modelLabel);
-  };
+  if (modelLabel) {
+    modelLabel.setAttribute("aria-haspopup", "dialog");
+    modelLabel.setAttribute("aria-expanded", "false");
+    modelLabel.onclick = (e) => {
+      e.stopPropagation();
+      openSessionSettingsPopover(modelLabel);
+    };
+  }
+  // Top-bar Session setup chip — same popover, dual-anchor open (session-setup-top-bar).
+  if (sessionSetupChip) {
+    sessionSetupChip.setAttribute("aria-haspopup", "dialog");
+    sessionSetupChip.setAttribute("aria-expanded", "false");
+    sessionSetupChip.onclick = (e) => {
+      e.stopPropagation();
+      openSessionSettingsPopover(sessionSetupChip);
+    };
+  }
   if (sessionSettingsPopover) sessionSettingsPopover.addEventListener("click", (e) => e.stopPropagation());
   // The backend chip keeps its own small single-purpose popover (Grok Build /
   // Claude Code only) — unchanged; the Agent row above is a second, equivalent
@@ -6220,9 +6506,23 @@
       }
       if (e.key === "Escape") { slashPopover.hidden = true; state.atHits = []; return; }
     }
+    // Mid-turn steer (before default sendKey): cancel + send.
+    if (state.busy && !state.busyLocked) {
+      const t = input.value.trim();
+      if (hasSendContent(t)) {
+        const steerKey = state.useCtrlEnter
+          ? e.key === "Enter" && (e.metaKey || e.ctrlKey) && e.shiftKey
+          : e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey;
+        if (steerKey) {
+          e.preventDefault();
+          submitMessage(t, { steer: true });
+          return;
+        }
+      }
+    }
     const sendKey = state.useCtrlEnter
-      ? e.key === "Enter" && (e.metaKey || e.ctrlKey)
-      : e.key === "Enter" && !e.shiftKey;
+      ? e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey
+      : e.key === "Enter" && !e.shiftKey && !(e.metaKey || e.ctrlKey);
     if (sendKey) { e.preventDefault(); sendOrStop(); }
   });
 
@@ -6232,6 +6532,14 @@
   document.addEventListener("drop", (e) => {
     e.preventDefault();
     document.body.classList.remove("dragging");
+    // Image files dropped from Explorer (optional one-line add-on from plan).
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (files && files.length) {
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        if (f && isAllowedPasteImageMime(f.type)) stageClipboardImageFile(f);
+      }
+    }
     const data = e.dataTransfer?.getData("text/uri-list");
     if (!data) return;
     const uris = data.split(/\r?\n/).filter((l) => l && !l.startsWith("#"));
@@ -6240,6 +6548,78 @@
       if (!m) continue;
       vscode.postMessage({ type: "dropFile", path: decodeURIComponent(m[1]), shift: e.shiftKey });
     }
+  });
+
+  // Paste screenshots into the composer (docs/plans/paste-screenshots.md).
+  function stageClipboardImageFile(file) {
+    if (!file || !isAllowedPasteImageMime(file.type)) {
+      state.pasteImageError = "Only PNG, JPEG, WebP, and GIF images can be pasted.";
+      updatePasteImageNotice();
+      return;
+    }
+    if (state.pendingImages.length >= (PASTE_IMAGE_MAX_COUNT || 6)) {
+      state.pasteImageError = `At most ${PASTE_IMAGE_MAX_COUNT || 6} images can be attached at once.`;
+      updatePasteImageNotice();
+      return;
+    }
+    if (!canAcceptPasteImageBytes(file.size)) {
+      state.pasteImageError = "Image is too large (max 8 MB).";
+      updatePasteImageNotice();
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const comma = result.indexOf(",");
+      const dataBase64 = comma >= 0 ? result.slice(comma + 1) : result;
+      if (!dataBase64) {
+        state.pasteImageError = "Image data is empty.";
+        updatePasteImageNotice();
+        return;
+      }
+      state.pasteImageError = null;
+      vscode.postMessage({
+        type: "pasteImage",
+        mimeType: file.type,
+        dataBase64,
+        fileName: file.name || undefined,
+        byteLength: file.size,
+      });
+    };
+    reader.onerror = () => {
+      state.pasteImageError = "Could not read image from clipboard.";
+      updatePasteImageNotice();
+    };
+    reader.readAsDataURL(file);
+  }
+
+  input.addEventListener("paste", (e) => {
+    const cd = e.clipboardData;
+    if (!cd) return;
+    let consumedImage = false;
+    // Prefer items (OS screenshots often land here as image/png).
+    if (cd.items && cd.items.length) {
+      for (let i = 0; i < cd.items.length; i++) {
+        const item = cd.items[i];
+        if (!item || item.kind !== "file") continue;
+        if (!isAllowedPasteImageMime(item.type)) continue;
+        const file = item.getAsFile && item.getAsFile();
+        if (!file) continue;
+        stageClipboardImageFile(file);
+        consumedImage = true;
+      }
+    }
+    if (!consumedImage && cd.files && cd.files.length) {
+      for (let i = 0; i < cd.files.length; i++) {
+        const f = cd.files[i];
+        if (f && isAllowedPasteImageMime(f.type)) {
+          stageClipboardImageFile(f);
+          consumedImage = true;
+        }
+      }
+    }
+    // Only block default when we consumed an image (keep text paste working).
+    if (consumedImage) e.preventDefault();
   });
 
   // Keep the open history popover correctly placed + sized as the panel resizes. Its

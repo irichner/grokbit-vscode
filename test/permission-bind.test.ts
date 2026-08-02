@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
+  BIND_BLOCKED_CONTENT_MSG,
   BIND_BLOCKED_TERMINAL_MSG,
   BIND_BLOCKED_WRITE_MSG,
   consumeTerminalGrant,
   consumeWriteGrant,
   extractGrant,
+  hashGrantContent,
   isAllowOptionKind,
   normalizeGrantPath,
   pushGrant,
@@ -23,7 +25,7 @@ describe("normalizeGrantPath", () => {
 });
 
 describe("extractGrant", () => {
-  it("extracts Claude write file_path", () => {
+  it("extracts Claude write file_path with content digest on allow_once", () => {
     const g = extractGrant(
       { toolCallId: "t1", rawInput: { file_path: "/w/a.ts", content: "x" } },
       "allow_once",
@@ -33,7 +35,17 @@ describe("extractGrant", () => {
       value: normalizeGrantPath("/w/a.ts"),
       durable: false,
       toolCallId: "t1",
+      contentDigest: hashGrantContent("x"),
     });
+  });
+
+  it("allow_always path grants never store contentDigest", () => {
+    const g = extractGrant(
+      { rawInput: { file_path: "/w/a.ts", content: "secret-body" } },
+      "allow_always",
+    );
+    expect(g?.durable).toBe(true);
+    expect(g?.contentDigest).toBeUndefined();
   });
 
   it("extracts edit old/new with file_path", () => {
@@ -86,7 +98,7 @@ describe("isAllowOptionKind", () => {
 
 describe("consumeWriteGrant", () => {
   it("allows any write when no path grants", () => {
-    const r = consumeWriteGrant("/other/x.ts", []);
+    const r = consumeWriteGrant("/other/x.ts", "body", []);
     expect(r.ok).toBe(true);
     expect(r.grants).toEqual([]);
   });
@@ -95,7 +107,7 @@ describe("consumeWriteGrant", () => {
     const grants: PermissionGrant[] = [
       { kind: "path", value: normalizeGrantPath("/w/a.ts"), durable: false },
     ];
-    const r = consumeWriteGrant("/w/a.ts", grants);
+    const r = consumeWriteGrant("/w/a.ts", "any", grants);
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.grants).toEqual([]);
   });
@@ -104,7 +116,7 @@ describe("consumeWriteGrant", () => {
     const grants: PermissionGrant[] = [
       { kind: "path", value: normalizeGrantPath("/w/a.ts"), durable: false },
     ];
-    const r = consumeWriteGrant("/w/b.ts", grants);
+    const r = consumeWriteGrant("/w/b.ts", "x", grants);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe(BIND_BLOCKED_WRITE_MSG);
     expect(r.grants).toHaveLength(1);
@@ -114,7 +126,7 @@ describe("consumeWriteGrant", () => {
     const grants: PermissionGrant[] = [
       { kind: "path", value: normalizeGrantPath("/w/a.ts"), durable: true },
     ];
-    const r = consumeWriteGrant("/w/a.ts", grants);
+    const r = consumeWriteGrant("/w/a.ts", "changed-body", grants);
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.grants).toHaveLength(1);
@@ -126,8 +138,52 @@ describe("consumeWriteGrant", () => {
     const grants: PermissionGrant[] = [
       { kind: "path", value: normalizeGrantPath("C:\\proj\\a.ts"), durable: false },
     ];
-    const r = consumeWriteGrant("c:/proj/a.ts", grants);
+    const r = consumeWriteGrant("c:/proj/a.ts", undefined, grants);
     expect(r.ok).toBe(true);
+  });
+
+  it("allows path+digest match and consumes allow_once", () => {
+    const body = "approved body";
+    const grants: PermissionGrant[] = [
+      {
+        kind: "path",
+        value: normalizeGrantPath("/w/a.ts"),
+        durable: false,
+        contentDigest: hashGrantContent(body),
+      },
+    ];
+    const r = consumeWriteGrant("/w/a.ts", body, grants);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.grants).toEqual([]);
+  });
+
+  it("blocks same path when content digest mismatches", () => {
+    const grants: PermissionGrant[] = [
+      {
+        kind: "path",
+        value: normalizeGrantPath("/w/a.ts"),
+        durable: false,
+        contentDigest: hashGrantContent("approved"),
+      },
+    ];
+    const r = consumeWriteGrant("/w/a.ts", "bait-and-switch", grants);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe(BIND_BLOCKED_CONTENT_MSG);
+    expect(r.grants).toHaveLength(1);
+  });
+
+  it("path-only grant (no digest) allows any content", () => {
+    const grants: PermissionGrant[] = [
+      { kind: "path", value: normalizeGrantPath("/w/a.ts"), durable: false },
+    ];
+    expect(consumeWriteGrant("/w/a.ts", "whatever", grants).ok).toBe(true);
+  });
+});
+
+describe("hashGrantContent", () => {
+  it("is stable for the same string", () => {
+    expect(hashGrantContent("a")).toBe(hashGrantContent("a"));
+    expect(hashGrantContent("a")).not.toBe(hashGrantContent("b"));
   });
 });
 

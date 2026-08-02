@@ -11,16 +11,22 @@
  *   without a prior permission).
  * - Scoped grants outstanding → mutation must match one; allow_once consumes,
  *   allow_always keeps a durable grant.
+ * - Non-durable path grants with preview `content` also bind a content digest
+ *   (Write bait-and-switch). Durable (allow_always) grants stay path-only so
+ *   Auto-accept does not lock one body forever.
  * - Permission with no extractable path/command → no scoped grant (do not
  *   invent false security).
  */
 
+import * as crypto from "node:crypto";
 import * as nodePath from "node:path";
 
 /** JSON-RPC error when a write/command does not match an approved grant. */
 export const BIND_BLOCKED_CODE = -32011;
 export const BIND_BLOCKED_WRITE_MSG =
   "Blocked: write path did not match the approved file.";
+export const BIND_BLOCKED_CONTENT_MSG =
+  "Blocked: write content did not match the approved preview.";
 export const BIND_BLOCKED_TERMINAL_MSG =
   "Blocked: command did not match the approved command.";
 
@@ -33,6 +39,16 @@ export interface PermissionGrant {
   /** True for allow_always — not consumed on match. */
   durable: boolean;
   toolCallId?: string;
+  /**
+   * sha256 hex of approved preview content (UTF-8). Only set on non-durable
+   * path grants when rawInput.content was present at approval.
+   */
+  contentDigest?: string;
+}
+
+/** Stable content digest for grant / write body comparison. */
+export function hashGrantContent(content: string): string {
+  return crypto.createHash("sha256").update(String(content ?? ""), "utf8").digest("hex");
 }
 
 export interface PermissionRawLike {
@@ -115,12 +131,18 @@ export function extractGrant(
   if (pathVal) {
     const norm = normalizeGrantPath(pathVal);
     if (!norm) return null;
-    return {
+    const durable = isAllowAlwaysKind(optionKind);
+    const grant: PermissionGrant = {
       kind: "path",
       value: norm,
-      durable: isAllowAlwaysKind(optionKind),
+      durable,
       toolCallId: typeof toolCall?.toolCallId === "string" ? toolCall.toolCallId : undefined,
     };
+    // Content digest only on allow_once — durable path grants must not lock one body.
+    if (!durable && typeof raw.content === "string" && raw.content.length > 0) {
+      grant.contentDigest = hashGrantContent(raw.content);
+    }
+    return grant;
   }
   const cmdVal = firstString(raw.command);
   if (cmdVal) {
@@ -146,9 +168,16 @@ export type BindResult =
 
 /**
  * If any path-scoped grants exist, `path` must match one (consume non-durable).
- * If none exist, allow and leave grants unchanged.
+ * When the matched grant has `contentDigest`, the write body must hash equal
+ * (or block). If none exist, allow and leave grants unchanged.
+ *
+ * @param content Write body from `fs/write_text_file` (may be undefined).
  */
-export function consumeWriteGrant(path: string, grants: readonly PermissionGrant[]): BindResult {
+export function consumeWriteGrant(
+  path: string,
+  content: string | undefined,
+  grants: readonly PermissionGrant[],
+): BindResult {
   const list = [...grants];
   if (!hasScoped(list, "path")) return { ok: true, grants: list };
   const want = normalizeGrantPath(path);
@@ -157,7 +186,14 @@ export function consumeWriteGrant(path: string, grants: readonly PermissionGrant
   if (idx < 0) {
     return { ok: false, reason: BIND_BLOCKED_WRITE_MSG, grants: list };
   }
-  if (!list[idx].durable) list.splice(idx, 1);
+  const grant = list[idx];
+  if (grant.contentDigest) {
+    const body = content ?? "";
+    if (hashGrantContent(body) !== grant.contentDigest) {
+      return { ok: false, reason: BIND_BLOCKED_CONTENT_MSG, grants: list };
+    }
+  }
+  if (!grant.durable) list.splice(idx, 1);
   return { ok: true, grants: list };
 }
 

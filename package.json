@@ -2,7 +2,7 @@
   "name": "grokbit",
   "displayName": "Grokbit",
   "description": "VS Code UI for Grok Build and Claude Code. Native chat tabs, Plan first + inline-diff approvals, Grokbit Actions (explore→plan→implement→test→document), file chips, resumable history, activity carousel, status-bar HUD, /imagine media, voice, math & Mermaid. Needs the Grok CLI + SuperGrok, X Premium+, or an xAI API key. MIT. Based on grok-build-vscode by Paweł Huryn. Not affiliated with xAI.",
-  "version": "2026.8.13",
+  "version": "2026.8.21",
   "publisher": "Grokbit",
   "author": {
     "name": "Israel Richner",
@@ -231,17 +231,17 @@
         "grok.showCapabilities": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Show a browser of what the selected agent can actually do — the bundled Grokbit workflow plus your own slash commands, skills, and agents — as a panel on a new tab's empty canvas and from the **Grokbit Actions** button in the top bar. Every row is a real, discovered, launchable capability of the running CLI. Off hides both."
+          "markdownDescription": "Show **Grokbit Workflows** — the bundled suite plus backend-native User Workflows (and skills/agents/commands when `grok.actionsScope` is `all`) — on a new tab's empty canvas and from the top-bar button. Every row is a real, discovered, launchable capability of the running CLI. Off hides both."
         },
         "grok.actionsScope": {
           "type": "string",
           "enum": ["workflow", "all"],
           "enumDescriptions": [
-            "Only the bundled Grokbit workflow tiles (Explore → plan → implement → test → document)",
-            "Workflow tiles plus your skills, agents, and CLI commands"
+            "Bundled suite tiles plus User Workflows (Grok .rhai / Claude .js)",
+            "Suite + User Workflows plus skills, agents, and CLI commands"
           ],
           "default": "workflow",
-          "markdownDescription": "What **Grokbit Actions** lists. **workflow** (default) keeps the menu focused on the bundled pipeline. **all** also shows discovered skills, agents, and commands — use this when you want the full capability browser without leaving Actions."
+          "markdownDescription": "What **Grokbit Workflows** lists. **workflow** (default) = bundled pipeline + User Workflows (backend-native saved scripts). **all** also shows discovered skills, agents, and commands."
         },
         "grok.skills.provision": {
           "type": "string",

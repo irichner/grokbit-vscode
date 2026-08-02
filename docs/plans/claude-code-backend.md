@@ -41,7 +41,7 @@ The alternative — driving `claude -p --input-format stream-json` directly — 
 
 - **Not** replacing Grok. Grok stays the default backend; every existing Grok behaviour is untouched.
 - **Not** porting grok-only surfaces to Claude: the hidden plan-mode primer, the client-side plan gate, the Windows `agent stdio` version pin (#22), the empty-primer-session sweep (#24), `x.ai/ask_user_question`, `x.ai/exit_plan_mode`, and `/imagine` media generation are **grok-specific and must be gated off** for Claude sessions.
-- **Not** carrying conversation history across a backend flip (different agents, different session stores).
+- **Not** a shared ACP session identity across backends (`session/load` of a Grok id into Claude or the reverse — different agents, different session stores). **Superseded for UI/agent continuity:** Agent switch on a history tab now keeps the visible transcript and injects a bounded text handoff into the new process (see `.grokbit/plans/agent-switch-retain-context/`); that is not true shared session state.
 - **Not** a unified model list — each backend shows its own models.
 - **Not** Claude-specific chat chrome (thinking-budget UI, cost display, `/cost`).
 - **Not** shipping our own Claude auth — we use the user's existing Claude Code login.

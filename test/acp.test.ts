@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { AcpClient, buildGrokAgentArgs } from "../src/acp";
+import { AcpClient, buildGrokAgentArgs, parsePromptCapabilities } from "../src/acp";
 
 // Unit tests for AcpClient internals that don't need a real subprocess. We
 // stand up the client with a fake writable proc and drive `request`/`onLine`
@@ -134,6 +134,55 @@ describe("AcpClient quirks.mediaGen gating (emitToolMedia)", () => {
     (client as any).emitToolMedia(completedUpdate);
 
     expect(media).toEqual([]);
+  });
+});
+
+describe("parsePromptCapabilities", () => {
+  it("defaults all false when missing", () => {
+    expect(parsePromptCapabilities(undefined)).toEqual({
+      image: false,
+      audio: false,
+      embeddedContext: false,
+    });
+  });
+
+  it("reads agentCapabilities.promptCapabilities", () => {
+    expect(
+      parsePromptCapabilities({
+        agentCapabilities: {
+          promptCapabilities: { image: true, audio: false, embeddedContext: true },
+        },
+      }),
+    ).toEqual({ image: true, audio: false, embeddedContext: true });
+  });
+});
+
+describe("AcpClient.prompt content blocks", () => {
+  it("sends a string as a single text block", async () => {
+    const { client, written } = clientWithFakeProc();
+    (client as any).sessionId = "s1";
+    const p = client.prompt("hello");
+    (client as any).onLine(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }));
+    await p;
+    const line = written.find((w) => w.includes("session/prompt"));
+    expect(line).toBeTruthy();
+    const msg = JSON.parse(line!);
+    expect(msg.params.prompt).toEqual([{ type: "text", text: "hello" }]);
+  });
+
+  it("sends multi-block arrays (text + image) unchanged", async () => {
+    const { client, written } = clientWithFakeProc();
+    (client as any).sessionId = "s1";
+    const blocks = [
+      { type: "text" as const, text: "see" },
+      { type: "image" as const, mimeType: "image/png", data: "QUJD" },
+    ];
+    const p = client.prompt(blocks);
+    (client as any).onLine(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }));
+    await p;
+    const line = written.find((w) => w.includes("session/prompt"));
+    const msg = JSON.parse(line!);
+    expect(msg.params.prompt).toEqual(blocks);
   });
 });
 

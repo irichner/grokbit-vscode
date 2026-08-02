@@ -25,6 +25,10 @@ import {
   buildPanelReplayEnvelope,
   resetSessionScrollMemory,
 } from "./session-scroll";
+import {
+  activeSessionIdForStart,
+  decidePanelRestore,
+} from "./panel-restore";
 import { computeDot, Dot, shouldRecycleEmptySession } from "./session-pool";
 import { PanelRouter } from "./panel-router";
 import { resolveVoiceKey, parseVoiceCommand, DEFAULT_SEND_PHRASE } from "./voice";
@@ -69,7 +73,15 @@ import {
   removeChip,
   toggleChip,
 } from "./chips";
-import { buildPrompt } from "./prompt-builder";
+import {
+  buildSessionPromptBlocks,
+  canAcceptPasteImage,
+  defaultScreenshotFileName,
+  PASTE_IMAGES_DIR_NAME,
+  pasteStagingRelPath,
+  toBufferedUserImage,
+  type PendingImage,
+} from "./pending-images";
 import { isUsableFilePath, parseFileRef, shouldReadFileInline } from "./file-ref";
 import { pickRejectOption, shouldRejectPermission } from "./plan-gate";
 import { extractGrant } from "./permission-bind";
@@ -97,7 +109,9 @@ import {
   readSessionTokenUsage,
   resolveGrokHome,
   sessionsDirFor,
+  tabIconKindFrom,
   tabTitleStatusFrom,
+  type TabIconKind,
 } from "./sessions";
 import { DEV_TOKENS_GENERATED_AT, DEV_TOKENS_TOTAL } from "./token-metrics";
 import {
@@ -110,6 +124,13 @@ import {
   defaultClaudeFs,
   resolveClaudeHome,
 } from "./session-store";
+import {
+  agentHandoffEnvelope,
+  agentSwitchContextBannerText,
+  buildAgentHandoffText,
+  shouldBlockBackendFlip,
+  shouldDiscardAfterBackendFlip,
+} from "./agent-handoff";
 import {
   CAPABILITY_ROOTS,
   CapabilityDirEntry,
@@ -127,7 +148,7 @@ import {
 
 type WebviewMsg =
   | { type: "ready" }
-  | { type: "send"; text: string; chips: FileChip[] }
+  | { type: "send"; text: string; chips: FileChip[]; steer?: boolean }
   | { type: "newSession"; backend?: BackendId }
   | { type: "switchBackend"; backend: BackendId }
   | { type: "installClaudeAdapter" }
@@ -149,6 +170,8 @@ type WebviewMsg =
   | { type: "setShowThinking"; value: boolean }
   | { type: "setCompactActivity"; value: boolean }
   | { type: "dropFile"; path: string; shift: boolean }
+  | { type: "pasteImage"; mimeType?: string; dataBase64?: string; fileName?: string; byteLength?: number }
+  | { type: "removePendingImage"; id?: string }
   | { type: "permissionAnswer"; requestId: number | string; optionId: string }
   | { type: "exitPlanAnswer"; requestId: number | string; verdict: "approved" | "abandoned" | "rejected"; comment?: string }
   | { type: "questionAnswer"; requestId: number | string; answers?: Record<string, string>; annotations?: Record<string, { notes?: string; preview?: string }> }
@@ -603,29 +626,64 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
   }
 
   /**
-   * Flip `session` to `backend` and restart its process on it — history cannot
-   * carry across (different agents, different on-disk stores), so a tab with
-   * real history gets a modal confirm; an empty/primer-only tab restarts
-   * transparently, same as the model/effort empty-session fast path. The
-   * abandoned pre-flip session (only ever reachable when it had no history) is
-   * discarded from its OWN backend's store so repeated flips don't pile up
-   * empty sessions, mirroring `discardRestartedEmptySession`.
+   * Flip `session` to `backend` and restart its process on it.
+   *
+   * Empty/primer-only tabs restart transparently and discard the abandoned
+   * pre-flip session from its OWN backend store (mirrors
+   * `discardRestartedEmptySession`). Tabs with real history keep the visible
+   * transcript (host buffer + counters restored after start) and seed the new
+   * agent with a bounded text handoff built from that buffer — not a shared
+   * ACP session id (stores stay per-backend). Mid-turn / pending permissions
+   * block the flip. See `src/agent-handoff.ts` and
+   * `.grokbit/plans/agent-switch-retain-context/`.
    */
   private async switchBackend(session: Session, backend: BackendId): Promise<void> {
     if (session.backend === backend || session.priming) return;
-    const targetLabel = backendSpec(backend).label;
-    if (session.hasHistory) {
-      const choice = await vscode.window.showWarningMessage(
-        `Switch this tab to ${targetLabel}? History can't carry over between backends — ` +
-          `this tab will start a fresh ${targetLabel} session.`,
-        { modal: true },
-        "Switch",
-      );
-      if (choice !== "Switch") return;
+    const block = shouldBlockBackendFlip({
+      promptInFlight: session.promptInFlight,
+      pendingPermissionCount: session.pendingPermissions.size,
+    });
+    if (block) {
+      void vscode.window.showWarningMessage(block);
+      return;
     }
+
     const oldBackend = session.backend;
     const oldId = session.activeSessionId;
-    const wasEmpty = !session.hasHistory;
+    const oldLabel = backendSpec(oldBackend).label;
+    const hadHistory = session.hasHistory;
+    const wasEmpty = shouldDiscardAfterBackendFlip(hadHistory);
+    // Snapshot UI transcript BEFORE startSession wipes the buffer.
+    const uiBuffer = session.buffer.slice();
+    const snapUserMessageCount = session.userMessageCount;
+    const snapTitle = session.latestUserMessageForTitle;
+
+    let handoffText = "";
+    let handoffTruncated = false;
+    if (hadHistory) {
+      const built = buildAgentHandoffText(uiBuffer);
+      handoffText = built.text;
+      handoffTruncated = built.truncated;
+      // Transcript-first; summarize only if the buffer produced nothing usable.
+      if (!handoffText.trim() && session.client) {
+        this.emit(session, { type: "summarizing" });
+        const chunks: string[] = [];
+        const captureChunk = (t: string) => chunks.push(t);
+        const currentClient = session.client;
+        currentClient.on("messageChunk", captureChunk);
+        session.suppressContent = true;
+        try {
+          await currentClient.prompt(
+            "Summarize our conversation so far in a concise paragraph. Be brief.",
+          );
+        } catch { /* best effort */ } finally {
+          currentClient.off("messageChunk", captureChunk);
+          session.suppressContent = false;
+        }
+        handoffText = chunks.join("").trim();
+      }
+    }
+
     session.backend = backend;
     session.effort = undefined; // let startSession reseed for the new backend
     // Post the flip BEFORE startSession, not after: a failed start (missing
@@ -641,8 +699,52 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
       label: backendSpec(backend).label,
       account: session.claudeAccount,
     });
+    // Never pass resumeId here — handoff path must not emit clearMessages.
     await this.startSession(session);
-    if (wasEmpty) this.discardAbandonedBackendSession(session, oldBackend, oldId);
+
+    if (hadHistory) {
+      // Restore conversation for hide/reveal replay; startSession cleared it.
+      session.buffer = uiBuffer;
+      session.hasHistory = true;
+      session.userMessageCount = snapUserMessageCount;
+      session.latestUserMessageForTitle = snapTitle;
+      this.updateTabTitle(session);
+    }
+
+    if (wasEmpty) {
+      this.discardAbandonedBackendSession(session, oldBackend, oldId);
+    } else {
+      // Old id stays on the source store; list may show both rows.
+      this.broadcastSessionsList();
+    }
+
+    if (hadHistory && handoffText && session.client) {
+      const client = session.client;
+      const gen = session.gen;
+      const targetLabel = backendSpec(session.backend).label;
+      const promise = (async () => {
+        try {
+          await this.ensurePrimed(client, session, gen);
+          if (gen !== session.gen || session.client !== client) return;
+          this.emit(session, {
+            type: "sessionContext",
+            text: agentSwitchContextBannerText(targetLabel, handoffTruncated),
+          });
+          session.suppressContent = true;
+          try {
+            await client.prompt(agentHandoffEnvelope(oldLabel) + handoffText);
+          } catch { /* best effort */ } finally {
+            if (gen === session.gen) session.suppressContent = false;
+          }
+        } catch { /* best effort */ }
+      })();
+      session.handoffPromise = promise;
+      try {
+        await promise;
+      } finally {
+        if (session.handoffPromise === promise) session.handoffPromise = undefined;
+      }
+    }
   }
 
   /** Backend-aware counterpart to `discardRestartedEmptySession` — deletes an
@@ -728,17 +830,26 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
         // breaks that lifecycle (ready would never re-fire); see panel-router.ts
         // before turning the dial.
         retainContextWhenHidden: false,
-        localResourceRoots: [
-          vscode.Uri.joinPath(this.context.extensionUri, "media"),
-          vscode.Uri.joinPath(this.context.extensionUri, "resources"),
-          // grok writes generated media under ~/.grok/sessions/<cwd>/<id>/…;
-          // serving it via asWebviewUri lets the webview stream a multi-MB
-          // video from disk — see postGeneratedMedia.
-          vscode.Uri.file(resolveGrokHome()),
-        ],
+        localResourceRoots: this.sessionLocalResourceRoots(),
       },
     );
     this.bindPanel(session, panel);
+  }
+
+  /** Every session panel shares the same roots (media, resources, grok home,
+   *  paste-image staging under globalStorage). Keep one helper so openPanel and
+   *  any future panel options stay in sync (paste-screenshots plan). */
+  private sessionLocalResourceRoots(): vscode.Uri[] {
+    return [
+      vscode.Uri.joinPath(this.context.extensionUri, "media"),
+      vscode.Uri.joinPath(this.context.extensionUri, "resources"),
+      // grok writes generated media under ~/.grok/sessions/<cwd>/<id>/…;
+      // serving it via asWebviewUri lets the webview stream a multi-MB
+      // video from disk — see postGeneratedMedia.
+      vscode.Uri.file(resolveGrokHome()),
+      // Staged clipboard screenshots (docs/plans/paste-screenshots.md).
+      vscode.Uri.joinPath(this.context.globalStorageUri, PASTE_IMAGES_DIR_NAME),
+    ];
   }
 
   /** Wire a panel (fresh or serializer-restored) to its session: html, message
@@ -747,9 +858,14 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
     session.panel = panel;
     this.panels.add(session);
     this.router.bind(session, { postMessage: (m) => void panel.webview.postMessage(m) });
-    panel.iconPath = {
-      light: vscode.Uri.joinPath(this.context.extensionUri, "resources", "blackhole-icon-black.svg"),
-      dark: vscode.Uri.joinPath(this.context.extensionUri, "resources", "blackhole-icon-white.svg"),
+    // Status-colored disc (blue stopped / green working / red needs-you).
+    // Title carries the session token total; color can't live in the title string.
+    this.applyTabIcon(panel, "stopped");
+    // Serializer-restored panels keep their old options; re-apply so paste
+    // staging under globalStorage is always a localResourceRoot.
+    panel.webview.options = {
+      enableScripts: true,
+      localResourceRoots: this.sessionLocalResourceRoots(),
     };
     panel.webview.html = this.getHtml(panel.webview);
     panel.webview.onDidReceiveMessage((m: WebviewMsg) => {
@@ -789,39 +905,78 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
    * restore can race a launcher click for the same id.
    */
   async restorePanel(panel: vscode.WebviewPanel, id: string | undefined, backend?: BackendId): Promise<void> {
-    if (id && !this.router.beginOpen(id)) {
-      // Another entry point is already materializing this session — don't
-      // double-open; that tab will exist momentarily.
+    // Pure policy: resume a real id, reveal an existing tab, or dispose an
+    // orphan with no identity — never silently start a brand-new session for a
+    // "restored" tab that lost its webview state (session-tab-window-restore).
+    const alreadyOpen = !!(id && [...this.panels].some((s) => s.activeSessionId === id));
+    const decision = decidePanelRestore({
+      id,
+      backend,
+      alreadyOpen,
+      panelVisible: panel.visible,
+    });
+    if (decision.action === "dispose-orphan") {
+      this.output.appendLine(
+        `[restore] disposing orphan panel (no session id in webview state) — reopen from history`,
+      );
       panel.dispose();
       return;
     }
-    try {
+    if (decision.action === "reveal-existing") {
+      // Another entry point already materialised this session — don't double-open.
+      panel.dispose();
       if (id) {
         for (const s of this.panels) {
           if (s.activeSessionId === id) {
-            panel.dispose();
             s.panel?.reveal(undefined, false);
+            this.setActive(s);
             return;
           }
         }
       }
+      return;
+    }
+    // decision.action === "resume"
+    const resumeId = decision.id;
+    if (!this.router.beginOpen(resumeId)) {
+      panel.dispose();
+      for (const s of this.panels) {
+        if (s.activeSessionId === resumeId) {
+          s.panel?.reveal(undefined, false);
+          this.setActive(s);
+          return;
+        }
+      }
+      return;
+    }
+    try {
+      for (const s of this.panels) {
+        if (s.activeSessionId === resumeId) {
+          panel.dispose();
+          s.panel?.reveal(undefined, false);
+          this.setActive(s);
+          return;
+        }
+      }
       const session = new Session();
-      session.activeSessionId = id;
-      if (backend) session.backend = backend;
+      session.activeSessionId = resumeId;
+      session.backend = decision.backend;
       this.seedSessionEffort(session);
       this.bindPanel(session, panel);
       // Title from the disk entry immediately, before any spawn.
       panel.title = composeTabTitle({
-        name: id ? this.displayNameForId(id, session.backend) : undefined,
+        name: this.displayNameForId(resumeId, session.backend),
         backend: session.backend,
       });
-      if (panel.visible) {
-        void this.startSession(session, id);
+      // Never await full startSession here — deserializeWebviewPanel must stay
+      // responsive (CLI spawn can take seconds or hang).
+      if (decision.spawn === "now") {
+        void this.startSession(session, resumeId);
       } else {
-        session.pendingStart = id ?? "";
+        session.pendingStart = resumeId;
       }
     } finally {
-      if (id) this.router.endOpen(id);
+      this.router.endOpen(resumeId);
     }
   }
 
@@ -835,6 +990,7 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
    */
   private onPanelClosed(session: Session): void {
     session.pendingPermissions.clear();
+    this.cleanupPasteStaging(session);
     this.router.unbind(session);
     this.panels.delete(session);
     session.panel = undefined;
@@ -2116,13 +2272,17 @@ See design doc for the full state machine diagram.`;
     session.hasHistory = false;
     session.primed = false;
     session.primingPromise = undefined;
+    session.handoffPromise = undefined;
     session.suppressContent = false;
     session.suppressPlanReject = false;
     session.lastPlanText = "";
     session.pendingPlanText = "";
     session.userMessageCount = 0;
     session.inUserMessage = false;
-    session.activeSessionId = undefined;
+    // Resume keeps the id for the whole spawn/load window so openTabForId /
+    // restore / CLI-update can still find this tab; new sessions clear until
+    // session/new assigns one (session-tab-window-restore T2).
+    session.activeSessionId = activeSessionIdForStart(resumeId);
     session.latestUserMessageForTitle = undefined;
     session.priming = true;
     // Transient (not buffered): replay derives the mode from session state instead.
@@ -2384,13 +2544,6 @@ See design doc for the full state machine diagram.`;
     client.on("toolCall", (u) => {
       if (gen !== session.gen) return;
       session.inUserMessage = false;
-      // Tab progress: count each distinct toolCallId once while working
-      // (design: toolCall start only — do not double-count toolCallUpdate).
-      const toolId = typeof u?.toolCallId === "string" ? u.toolCallId : undefined;
-      if (session.status === "working" && toolId && !session.turnToolIds.has(toolId)) {
-        session.turnToolIds.add(toolId);
-        this.updateTabTitle(session);
-      }
       this.emit(session, { type: "toolCall", call: u });
     });
     client.on("toolCallUpdate", (u) => {
@@ -2420,6 +2573,9 @@ See design doc for the full state machine diagram.`;
       // an absent count is dropped.
       if (typeof meta?.totalTokens === "number") {
         this.emit(session, { type: "tokenUsage", totalTokens: meta.totalTokens });
+        // Tab title head is the session token total — refresh when usage lands
+        // (including suppressed primer/summary turns that still update lastMeta).
+        this.updateTabTitle(session);
       }
       if (session === this.active) this.updateStatusBar(); // refresh context %
     });
@@ -2607,6 +2763,7 @@ See design doc for the full state machine diagram.`;
         if (usedTokens) {
           client.lastMeta = { totalTokens: usedTokens };
           this.emit(session, { type: "tokenUsage", totalTokens: usedTokens });
+          this.updateTabTitle(session); // token head on the tab
           if (session === this.active) this.updateStatusBar();
         }
 
@@ -2647,6 +2804,13 @@ See design doc for the full state machine diagram.`;
       session.priming = false;
       this.pool.add(session);
       this.touch(session);
+      // Push live promptCapabilities.image (initialize already ran) for the
+      // paste-image notice — postPanelConfig may have run earlier with false.
+      this.postPendingImages(session);
+      this.postTo(session, {
+        type: "imagePromptSupported",
+        value: client.promptCapabilities.image === true,
+      });
       // Observable for the lazy-start guarantee (reload restore / CLI update):
       // the Output channel shows exactly which tabs spawned and when. Backend
       // ids ARE their own log word ("grok"/"claude"), so this is byte-identical
@@ -2756,6 +2920,9 @@ See design doc for the full state machine diagram.`;
         // creation drives startSession; ready only replays.
         this.router.markReady(session);
         this.postPanelConfig(session);
+        // Re-stash {id, backend} for the panel serializer before ACP session
+        // events (and for pendingStart tabs that have not loadSession'd yet).
+        this.postSessionIdentity(session);
         this.replayInto(session);
         if (session.pendingStart !== undefined) {
           // Lazy start (CLI-update respawn / serializer-restored background tab):
@@ -2767,8 +2934,19 @@ See design doc for the full state machine diagram.`;
         break;
       }
       case "send":
-        await this.handleSend(session, msg.text, msg.chips);
+        await this.handleSend(session, msg.text, msg.chips, { steer: !!msg.steer });
         break;
+      case "pasteImage":
+        this.handlePasteImage(session, msg);
+        break;
+      case "removePendingImage": {
+        const id = typeof msg.id === "string" ? msg.id : "";
+        if (id) {
+          session.pendingImages = session.pendingImages.filter((i) => i.id !== id);
+          this.postPendingImages(session);
+        }
+        break;
+      }
       case "newSession":
         await this.newTab();
         break;
@@ -2776,8 +2954,9 @@ See design doc for the full state machine diagram.`;
         // Stop: abandon any mid-turn follow-ups so they never run after cancel,
         // then cancel the in-flight prompt. (Ordinary follow-up queueing does
         // not cancel — only the explicit Stop path does.)
-        session.pendingUserSends = [];
-        session.suppressTurnTail = false;
+        this.clearPendingUserQueue(session);
+        session.pendingSteer = undefined;
+        session.suppressTurnTail = true;
         await session.client?.cancel();
         break;
       case "pickModel":
@@ -4234,28 +4413,66 @@ See design doc for the full state machine diagram.`;
   }
 
   /**
-   * User hit send while a turn is already running. Snapshot the wire prompt +
-   * chips, clear the composer chips, and enqueue for FIFO drain after the
-   * current turn fully completes. Does NOT cancel the in-flight prompt and
-   * does NOT suppress its stream — mid-turn sends are additive. UI ack (user
-   * bubble + Grokking) is deferred until the entry runs in executeUserSend.
-   * Skipping agentEnd between chained turns keeps busy continuous.
+   * User hit send while a turn is already running. Snapshot chips/images, clear
+   * the composer, enqueue for FIFO drain, and emit a queued user bubble
+   * immediately (vibe-coder-wave-1 DC4). Does NOT cancel the in-flight prompt.
    */
   private queueFollowUpSend(session: Session, text: string, chips: FileChip[]): void {
-    const finalPrompt = buildPrompt(text, chips, {
-      readFile: (p) => fs.readFileSync(p, "utf8"),
-      extName: (p) => path.extname(p),
-    });
     const sentChips = chips.filter((c) => !c.hidden);
+    const sentImages = session.pendingImages.slice();
+    const queueId = `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 
     session.chips = [];
+    session.pendingImages = [];
     this.postChips(session);
+    this.postPendingImages(session);
     // Stay in working so the status-bar / dots don't flash idle while queued.
     this.setStatus(session, "working");
-    session.pendingUserSends.push({ text, finalPrompt, sentChips });
+    session.pendingUserSends.push({ queueId, text, sentChips, sentImages });
+
+    // Bookkeeping + visible bubble now (drain only dequeues the badge).
+    const isFirstSend = !session.hasHistory;
+    session.hasHistory = true;
+    session.userMessageCount += 1;
+    session.latestUserMessageForTitle = text;
+    this.updateTabTitle(session);
+    this.touch(session);
+    this.broadcastSessionsList();
+    if (isFirstSend) this.reportSessionStart(session);
+    this.emitUserMessage(session, text, sentChips, sentImages, { queued: true, queueId });
   }
 
-  private async handleSend(session: Session, text: string, chips: FileChip[]): Promise<void> {
+  /** Abandon mid-turn queue entries and tell the webview to drop queued bubbles. */
+  private clearPendingUserQueue(session: Session): void {
+    if (session.pendingUserSends.length === 0) {
+      session.pendingUserSends = [];
+      return;
+    }
+    session.pendingUserSends = [];
+    this.emit(session, { type: "userQueueCleared" });
+  }
+
+  private async handleSend(
+    session: Session,
+    text: string,
+    chips: FileChip[],
+    opts?: { steer?: boolean },
+  ): Promise<void> {
+    // Mid-turn steer: cancel live turn + queue, then send after the lane frees.
+    if (session.promptInFlight && opts?.steer) {
+      const sentChips = chips.filter((c) => !c.hidden);
+      const sentImages = session.pendingImages.slice();
+      session.chips = [];
+      session.pendingImages = [];
+      this.postChips(session);
+      this.postPendingImages(session);
+      session.pendingSteer = { text, chips: sentChips, images: sentImages };
+      this.clearPendingUserQueue(session);
+      session.suppressTurnTail = true;
+      await session.client?.cancel();
+      return;
+    }
+
     // Mid-turn follow-up: queue only — do not cancel or overlap client.prompt.
     if (session.promptInFlight) {
       this.queueFollowUpSend(session, text, chips);
@@ -4278,22 +4495,35 @@ See design doc for the full state machine diagram.`;
           text: next.text,
           chips: [],
           alreadyAcked: true,
-          finalPrompt: next.finalPrompt,
+          queueId: next.queueId,
           sentChips: next.sentChips,
+          sentImages: next.sentImages,
         });
       }
     } finally {
       if (gen === session.gen) {
         session.promptInFlight = false;
         session.suppressTurnTail = false;
+        // Steer: after the cancelled turn releases the lane, send the new message.
+        const steer = session.pendingSteer;
+        if (steer) {
+          session.pendingSteer = undefined;
+          // Rebuild chips array for idle send path (already filtered).
+          session.chips = steer.chips.slice();
+          session.pendingImages = steer.images.slice();
+          this.postChips(session);
+          this.postPendingImages(session);
+          await this.handleSend(session, steer.text, session.chips);
+        }
       }
     }
   }
 
   /**
-   * Run one user→agent prompt. When `alreadyAcked`, the wire prompt was built
-   * at mid-turn queue time; UI (user bubble + Grokking) + title/history are
-   * applied here when the turn actually starts (deferred ack).
+   * Run one user→agent prompt. When `alreadyAcked`, chips/images were snapshotted
+   * at mid-turn queue time and the queued user bubble was already emitted —
+   * drain only clears the badge (`userMessageDequeued`) then starts the agent.
+   * Content blocks are always built here via buildSessionPromptBlocks.
    */
   private async executeUserSend(
     session: Session,
@@ -4301,22 +4531,29 @@ See design doc for the full state machine diagram.`;
     gen: number,
     opts:
       | { text: string; chips: FileChip[]; alreadyAcked: false }
-      | { text: string; chips: FileChip[]; alreadyAcked: true; finalPrompt: string; sentChips: FileChip[] },
+      | {
+          text: string;
+          chips: FileChip[];
+          alreadyAcked: true;
+          queueId: string;
+          sentChips: FileChip[];
+          sentImages: PendingImage[];
+        },
   ): Promise<void> {
-    let finalPrompt: string;
+    let sentChips: FileChip[];
+    let sentImages: PendingImage[];
+
     if (!opts.alreadyAcked) {
-      finalPrompt = buildPrompt(opts.text, opts.chips, {
-        readFile: (p) => fs.readFileSync(p, "utf8"),
-        extName: (p) => path.extname(p),
-      });
+      sentChips = opts.chips.filter((c) => !c.hidden);
+      sentImages = session.pendingImages.slice();
 
       session.chips = [];
+      session.pendingImages = [];
       this.postChips(session);
+      this.postPendingImages(session);
 
       const isFirstSend = !session.hasHistory;
       session.hasHistory = true;
-
-      const sentChips = opts.chips.filter((c) => !c.hidden);
       session.userMessageCount += 1;
 
       // Always track the latest user prompt so the tab title and history rows
@@ -4332,29 +4569,37 @@ See design doc for the full state machine diagram.`;
         this.reportSessionStart(session);
       }
       session.inUserMessage = false; // live send isn't part of the streamed-chunk count path
-      this.emit(session, { type: "userMessage", text: opts.text, chips: sentChips });
+      this.emitUserMessage(session, opts.text, sentChips, sentImages);
       this.emit(session, { type: "agentStart" });
       this.setStatus(session, "working");
     } else {
-      finalPrompt = opts.finalPrompt;
+      sentChips = opts.sentChips;
+      sentImages = opts.sentImages;
       session.suppressTurnTail = false;
-
-      // Deferred UI + bookkeeping for a send that was queued mid-turn.
-      const isFirstSend = !session.hasHistory;
-      session.hasHistory = true;
-      session.userMessageCount += 1;
-      session.latestUserMessageForTitle = opts.text;
-      this.updateTabTitle(session);
-      this.touch(session);
-      this.broadcastSessionsList();
-      if (isFirstSend) this.reportSessionStart(session);
       session.inUserMessage = false;
-      this.emit(session, { type: "userMessage", text: opts.text, chips: opts.sentChips });
+      // Bubble + count already applied at queue time — only clear the Queued badge.
+      this.emit(session, { type: "userMessageDequeued", queueId: opts.queueId });
       this.emit(session, { type: "agentStart" });
       this.setStatus(session, "working");
     }
 
+    const promptBlocks = buildSessionPromptBlocks({
+      text: opts.text,
+      chips: sentChips,
+      images: sentImages,
+      imageCapable: client.promptCapabilities.image,
+      readFile: (p) => fs.readFileSync(p, "utf8"),
+      readFileB64: (p) => fs.readFileSync(p).toString("base64"),
+      extName: (p) => path.extname(p),
+    });
+
     try {
+      // Cross-backend handoff inject (Agent switch) must finish before the next
+      // real prompt so the new agent has prior-conversation context.
+      if (session.handoffPromise) {
+        try { await session.handoffPromise; } catch { /* best effort */ }
+      }
+      if (gen !== session.gen) return;
       // The hidden primer was kicked off eagerly when the session went live, so
       // this usually just awaits an already-settled promise. If the user sent
       // before it acked, we hold the real prompt here until it does (grok runs one
@@ -4362,7 +4607,7 @@ See design doc for the full state machine diagram.`;
       // indicator covers the gap. If the eager primer failed, this retries it.
       await this.ensurePrimed(client, session, gen);
       if (gen !== session.gen) return;
-      const meta = await client.prompt(finalPrompt);
+      const meta = await client.prompt(promptBlocks);
       if (gen !== session.gen) return; // session was switched mid-turn
       // Skip agentEnd if a verdict was clicked mid-turn (afterTurn is queued) or
       // a follow-up send is waiting — otherwise busy clears here and the UI
@@ -4410,8 +4655,31 @@ See design doc for the full state machine diagram.`;
       compactActivity: cfg.get("compactActivity", true),
       showCapabilities: cfg.get("showCapabilities", true),
       actionsScope: this.actionsScope(),
+      // Live agent capability (defaults false until initialize). Webview uses
+      // this for the "can't view images" notice — never hardcodes backend.
+      imagePromptSupported: session.client?.promptCapabilities.image === true,
     });
     this.postTo(session, this.voiceConfiguredMessage());
+    this.postPendingImages(session);
+  }
+
+  /**
+   * Ask the webview to `setState({id, backend})` for the panel serializer.
+   * Uses activeSessionId, or a non-empty pendingStart (lazy restore) so the
+   * next window reload still has identity before ACP `session` fires.
+   */
+  private postSessionIdentity(session: Session): void {
+    const pending =
+      typeof session.pendingStart === "string" && session.pendingStart.trim()
+        ? session.pendingStart.trim()
+        : undefined;
+    const sessionId = session.activeSessionId || pending;
+    if (!sessionId) return;
+    this.postTo(session, {
+      type: "sessionIdentity",
+      sessionId,
+      backend: session.backend,
+    });
   }
 
   /** grok.actionsScope — workflow tiles only vs all capability kinds (Phase B). */
@@ -4448,11 +4716,15 @@ See design doc for the full state machine diagram.`;
     // begin MUST precede clearMessages (router.replayInto starts with clear).
     this.postTo(session, begin);
     try {
+      // Re-resolve image preview URIs on buffered userMessages before replay
+      // (asWebviewUri strings go stale across hide/reveal).
+      this.enrichBufferedUserMessageImages(session);
       this.router.replayInto(session, [
         { type: "modeChanged", modeId: this.displayMode(session) },
         { type: "chips", chips: session.chips },
         { type: "backendChanged", backend: session.backend, label: backendSpec(session.backend).label, account: session.claudeAccount },
       ]);
+      this.postPendingImages(session);
     } finally {
       this.postTo(session, end);
     }
@@ -4461,6 +4733,169 @@ See design doc for the full state machine diagram.`;
   /** Refresh `session`'s composer chips. Transient — replay re-derives them. */
   private postChips(session: Session): void {
     this.postTo(session, { type: "chips", chips: session.chips });
+  }
+
+  /** Composer pending screenshots — ephemeral (postTo), re-derived on ready. */
+  private postPendingImages(session: Session): void {
+    const images = session.pendingImages.map((img) => ({
+      id: img.id,
+      fileName: img.fileName,
+      mimeType: img.mimeType,
+      byteLength: img.byteLength,
+      previewUri: this.previewUriForPath(session, img.absPath),
+    }));
+    this.postTo(session, {
+      type: "pendingImages",
+      images,
+      imagePromptSupported: session.client?.promptCapabilities.image === true,
+    });
+  }
+
+  private pasteStagingDir(session: Session): string {
+    // Always pasteStagingKey — never switch to activeSessionId mid-session or
+    // thumbs/cleanup would point at a different directory after session/new.
+    return path.join(
+      this.context.globalStorageUri.fsPath,
+      pasteStagingRelPath(`${session.backend}-${session.pasteStagingKey}`),
+    );
+  }
+
+  private previewUriForPath(session: Session, absPath: string): string | undefined {
+    const panel = session.panel;
+    if (!panel) return undefined;
+    try {
+      if (!fs.existsSync(absPath)) return undefined;
+      return panel.webview.asWebviewUri(vscode.Uri.file(absPath)).toString();
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Mutate buffered userMessage entries in place with fresh previewUri fields. */
+  private enrichBufferedUserMessageImages(session: Session): void {
+    for (const raw of session.buffer) {
+      const msg = raw as { type?: string; images?: Array<{ absPath?: string; previewUri?: string }> };
+      if (msg?.type !== "userMessage" || !Array.isArray(msg.images)) continue;
+      for (const im of msg.images) {
+        if (im && typeof im.absPath === "string") {
+          im.previewUri = this.previewUriForPath(session, im.absPath);
+        }
+      }
+    }
+  }
+
+  private emitUserMessage(
+    session: Session,
+    text: string,
+    chips: FileChip[],
+    images: PendingImage[],
+    extra?: { queued?: boolean; queueId?: string },
+  ): void {
+    const buffered = images.map((img) => {
+      const base = toBufferedUserImage(img);
+      return { ...base, previewUri: this.previewUriForPath(session, img.absPath) };
+    });
+    this.emit(session, {
+      type: "userMessage",
+      text,
+      chips,
+      images: buffered.length ? buffered : undefined,
+      queued: extra?.queued === true ? true : undefined,
+      queueId: extra?.queueId,
+    });
+  }
+
+  private handlePasteImage(
+    session: Session,
+    msg: { mimeType?: string; dataBase64?: string; fileName?: string; byteLength?: number },
+  ): void {
+    const mimeType = typeof msg.mimeType === "string" ? msg.mimeType : "";
+    const dataBase64 = typeof msg.dataBase64 === "string" ? msg.dataBase64 : "";
+    const byteLength =
+      typeof msg.byteLength === "number" && Number.isFinite(msg.byteLength)
+        ? msg.byteLength
+        : Math.floor((dataBase64.length * 3) / 4);
+
+    const check = canAcceptPasteImage({
+      currentCount: session.pendingImages.length,
+      byteLength,
+      mimeType,
+    });
+    if (!check.ok) {
+      this.postTo(session, { type: "pasteImageError", message: check.reason });
+      return;
+    }
+    if (!dataBase64) {
+      this.postTo(session, { type: "pasteImageError", message: "Image data is empty." });
+      return;
+    }
+
+    let buf: Buffer;
+    try {
+      buf = Buffer.from(dataBase64, "base64");
+    } catch {
+      this.postTo(session, { type: "pasteImageError", message: "Could not decode image data." });
+      return;
+    }
+    // Host defense-in-depth size check (decoded bytes).
+    const hostCheck = canAcceptPasteImage({
+      currentCount: session.pendingImages.length,
+      byteLength: buf.length,
+      mimeType: check.mimeType,
+    });
+    if (!hostCheck.ok) {
+      this.postTo(session, { type: "pasteImageError", message: hostCheck.reason });
+      return;
+    }
+
+    const dir = this.pasteStagingDir(session);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (e) {
+      this.postTo(session, {
+        type: "pasteImageError",
+        message: `Could not create staging folder: ${e instanceof Error ? e.message : String(e)}`,
+      });
+      return;
+    }
+
+    const n = session.pendingImages.length + 1;
+    const fileName =
+      (typeof msg.fileName === "string" && msg.fileName.trim())
+        ? path.basename(msg.fileName.trim())
+        : defaultScreenshotFileName(check.mimeType, n);
+    const absPath = path.join(dir, fileName);
+    try {
+      fs.writeFileSync(absPath, buf);
+    } catch (e) {
+      this.postTo(session, {
+        type: "pasteImageError",
+        message: `Could not save image: ${e instanceof Error ? e.message : String(e)}`,
+      });
+      return;
+    }
+
+    const pending: PendingImage = {
+      id: `paste:${randomUUID()}`,
+      absPath,
+      fileName,
+      mimeType: check.mimeType,
+      byteLength: buf.length,
+      createdAt: Date.now(),
+    };
+    session.pendingImages.push(pending);
+    this.postPendingImages(session);
+  }
+
+  /** Best-effort delete of this session's paste staging dir (on panel close). */
+  private cleanupPasteStaging(session: Session): void {
+    session.pendingImages = [];
+    const dir = this.pasteStagingDir(session);
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
   }
 
   // grok's OUTPUT for a hidden turn (primer / summary injection) — dropped from
@@ -4526,12 +4961,10 @@ See design doc for the full state machine diagram.`;
   // ---------- session pool ----------
 
   /**
-   * Keep a session's editor-tab title current. Precedence:
-   * `customName` (user rename) → in-memory latest user prompt → disk displayName → "Grokbit New".
-   * The in-memory prompt is updated on every send, so the tab title follows each new prompt.
-   * Formatting (incl. the `Model·effort — ` settings prefix) via the pure `composeTabTitle`;
-   * model/effort come from this session's own client/state, not global config, so two tabs
-   * can show two different settings.
+   * Keep a session's editor-tab chrome current: title = token total + Model·effort — Name;
+   * icon color = working (green) / needs-you (red) / stopped (blue).
+   * Name precedence: `customName` → in-memory latest user prompt → disk displayName → "New".
+   * Model/effort come from this session's own client/state, not global config.
    */
   private updateTabTitle(session: Session): void {
     if (!session.panel) return;
@@ -4544,16 +4977,28 @@ See design doc for the full state machine diagram.`;
       unread: meta?.unread,
       unreadError: meta?.unreadError,
     });
-    const steps = session.turnToolIds.size;
+    const totalTokens = session.client?.lastMeta?.totalTokens;
     session.panel.title = composeTabTitle({
       name: this.bestNameFor(session),
       model: session.client?.currentModelId,
       effort: session.effort,
       backend: session.backend,
       tabStatus,
-      progressCurrent: tabStatus === "working" && steps > 0 ? steps : undefined,
-      progressTotal: tabStatus === "working" ? session.turnProgressTotal : undefined,
+      totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
     });
+    this.applyTabIcon(session.panel, tabIconKindFrom(tabStatus));
+  }
+
+  /** Status-colored tab disc — VS Code can't color title text, so color lives here. */
+  private applyTabIcon(panel: vscode.WebviewPanel, kind: TabIconKind): void {
+    const file =
+      kind === "working"
+        ? "tab-status-working.svg"
+        : kind === "needs-you"
+          ? "tab-status-needs-you.svg"
+          : "tab-status-stopped.svg";
+    const uri = vscode.Uri.joinPath(this.context.extensionUri, "resources", file);
+    panel.iconPath = { light: uri, dark: uri };
   }
 
   private bestNameFor(session: Session): string | undefined {
@@ -4705,16 +5150,7 @@ See design doc for the full state machine diagram.`;
    */
   private setStatus(session: Session, status: SessionStatus): void {
     if (session.status === status) return;
-    const prev = session.status;
     session.status = status;
-    // Tab progress: reset when entering working (new turn) or leaving working.
-    if (status === "working" && prev !== "working") {
-      session.turnToolIds.clear();
-      session.turnProgressTotal = undefined;
-    } else if (prev === "working" && status !== "working") {
-      session.turnToolIds.clear();
-      session.turnProgressTotal = undefined;
-    }
     // Activity refreshes the recency clock (re-home ordering).
     if (status === "working" || status === "needs-you") this.touch(session);
     // A turn that finishes while its tab isn't visible becomes "unread"
@@ -4725,7 +5161,7 @@ See design doc for the full state machine diagram.`;
     }
     this.pushDot(session);
     this.updateStatusBar();
-    // Editor-tab chrome tracks status/progress (running / needs-you / done-away).
+    // Editor-tab chrome: token total in title + colored status icon.
     this.updateTabTitle(session);
   }
 
@@ -4888,10 +5324,11 @@ See design doc for the full state machine diagram.`;
 <body class="${this.showThinking() ? "" : "thinking-hidden"}" style="--chat-zoom: ${this.chatFontScale()}">
 
   <header class="top-bar">
+    <button id="session-setup-chip" class="toolbar-btn session-setup-chip" type="button" hidden title="Session setup" aria-haspopup="dialog" aria-expanded="false"></button>
     <button id="history-btn" class="toolbar-btn" title="Session history"></button>
     <button id="new-btn" class="toolbar-btn" title="New session"></button>
     <button id="docs-btn" class="toolbar-btn studio-top-btn" title="Workspace documents">Docs</button>
-    <button id="capabilities-btn" class="toolbar-btn studio-top-btn" title="Grokbit workflows — plan, implement, test, document">Grokbit Actions</button>
+    <button id="capabilities-btn" class="toolbar-btn studio-top-btn" title="Grokbit workflows — plan, implement, test, document">Grokbit Workflows</button>
     <div id="history-popover" class="toolbar-popover history-popover" hidden></div>
     <div id="docs-popover" class="toolbar-popover history-popover studio-popover" hidden></div>
     <div id="capabilities-popover" class="toolbar-popover history-popover studio-popover" hidden></div>
@@ -4906,7 +5343,6 @@ See design doc for the full state machine diagram.`;
     <div class="welcome" id="welcome">
       <h2>Grokbit</h2>
       <div id="welcome-grid" class="welcome-grid">
-        <div id="session-setup-card" class="session-setup-card" hidden></div>
         <div id="capabilities-panel" class="capabilities-panel" hidden></div>
       </div>
       <div id="welcome-onboarding"></div>
@@ -4918,6 +5354,7 @@ See design doc for the full state machine diagram.`;
     <button id="scroll-bottom-btn" class="scroll-bottom-btn" type="button" title="Scroll to bottom"></button>
     <div id="changed-files" class="changed-files" hidden></div>
     <div id="attachments" class="attachments"></div>
+    <div id="paste-image-notice" class="paste-image-notice muted" hidden></div>
     <div class="composer-input-wrap">
       <div id="input-highlight" class="input-highlight" aria-hidden="true"></div>
       <textarea id="input" placeholder="Ask Grok anything…" rows="3"></textarea>

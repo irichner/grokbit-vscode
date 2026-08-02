@@ -20,6 +20,7 @@ const chatSrc = read("../media/chat.js");
 // Mirror of getHtml()'s <body> — only the ids chat.js queries at startup matter.
 export const BODY = `
   <header class="top-bar">
+    <button id="session-setup-chip" class="toolbar-btn session-setup-chip" type="button" hidden title="Session setup" aria-haspopup="dialog" aria-expanded="false"></button>
     <button id="history-btn"></button>
     <button id="new-btn"></button>
     <button id="docs-btn">Docs</button>
@@ -33,7 +34,6 @@ export const BODY = `
     <div class="welcome" id="welcome">
       <h2>Grokbit</h2>
       <div id="welcome-grid" class="welcome-grid">
-        <div id="session-setup-card" class="session-setup-card" hidden></div>
         <div id="capabilities-panel" class="capabilities-panel" hidden></div>
       </div>
       <div id="welcome-onboarding"></div>
@@ -43,6 +43,8 @@ export const BODY = `
   <footer class="composer">
     <button id="scroll-bottom-btn" class="scroll-bottom-btn"></button>
     <div id="changed-files" class="changed-files" hidden></div>
+    <div id="attachments" class="attachments"></div>
+    <div id="paste-image-notice" class="paste-image-notice muted" hidden></div>
     <div class="composer-input-wrap">
       <div id="input-highlight"></div>
       <textarea id="input"></textarea>

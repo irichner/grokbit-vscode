@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain JS module, no types
-import { looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, clampScrollTop, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, formatLauncherMetaTooltip, activityPeek, activityPosText, backendBadgeLabel, inferPermissionKind, permissionDiffFromRawInput, sessionSetupModel, capabilityGroupsView, sessionToggleGroup, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK, CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups, CAPABILITY_ROW_DESCRIPTION_MAX } from "../media/webview-helpers.js";
+import { looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, clampScrollTop, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, formatLauncherMetaTooltip, activityPeek, activityPosText, backendBadgeLabel, inferPermissionKind, permissionDiffFromRawInput, sessionSetupModel, sessionSetupChipLabel, capabilityGroupsView, sessionToggleGroup, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK, CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups, userWorkflowsPanelState, withCreateWorkflowTile, CAPABILITY_ROW_DESCRIPTION_MAX } from "../media/webview-helpers.js";
 import { buildPrompt } from "../src/prompt-builder";
 import { makeExplicitChip, makeImplicitChip } from "../src/chips";
 
@@ -865,6 +865,45 @@ describe("sessionSetupModel", () => {
   });
 });
 
+// Top-bar Session setup chip label (session-setup-top-bar) — pure segments only.
+describe("sessionSetupChipLabel", () => {
+  it("joins Grok · model · short effort · mode", () => {
+    const r = sessionSetupChipLabel({
+      backend: "grok", modelName: "Grok Build", effort: "medium", modeId: "agent",
+    });
+    expect(r.label).toBe("Grok · Grok Build · med · Agent");
+    expect(r.title).toContain("Session setup");
+    expect(r.title).toMatch(/click to change/i);
+    expect(r.title).toContain("Grok Build");
+    expect(r.title).toContain("Medium effort");
+    expect(r.title).toContain("Agent");
+  });
+
+  it("omits effort when empty (Claude / no axis)", () => {
+    const r = sessionSetupChipLabel({
+      backend: "claude", modelName: "Sonnet", effort: "", modeId: "plan",
+    });
+    expect(r.label).toBe("Claude · Sonnet · Plan");
+    expect(r.label).not.toMatch(/med|min|hig|xhi/);
+    expect(r.agentShort).toBe("Claude");
+  });
+
+  it("shortens yolo mode to Auto in the label but Auto accept in the title", () => {
+    const r = sessionSetupChipLabel({
+      backend: "grok", modelName: "Grok Code", effort: "high", modeId: "yolo",
+    });
+    expect(r.label).toBe("Grok · Grok Code · hig · Auto");
+    expect(r.modeShort).toBe("Auto");
+    expect(r.modeFull).toBe("Auto accept");
+    expect(r.title).toContain("Auto accept");
+  });
+
+  it("defaults backend to grok and mode to agent", () => {
+    const r = sessionSetupChipLabel({ modelName: "X" });
+    expect(r.label).toBe("Grok · X · Agent");
+  });
+});
+
 // Pure view-model for the capability browser (slash commands, skills, agents) —
 // rendered into BOTH the welcome canvas and the top-bar Skills popover by the
 // SAME builder. See docs/plans/capability-surfacing-and-history-ux.md § Approach
@@ -916,24 +955,25 @@ describe("sessionToggleGroup", () => {
 });
 
 describe("visibleCapabilityGroups", () => {
-  it("keeps a grokbit group and drops skill/agent/command", () => {
+  it("keeps grokbit + workflow groups and drops skill/agent/command", () => {
     const input = [
       { kind: "grokbit", title: "Grokbit workflow", total: 1, items: [{ kind: "grokbit", name: "grokbit-plan" }] },
+      { kind: "workflow", title: "User Workflows", total: 1, items: [{ kind: "workflow", name: "review-changes" }] },
       { kind: "skill", title: "Skills", total: 1, items: [{ kind: "skill", name: "plan" }] },
       { kind: "agent", title: "Agents", total: 1, items: [{ kind: "agent", name: "explore" }] },
       { kind: "command", title: "Commands", total: 1, items: [{ kind: "command", name: "new" }] },
     ];
     const out = visibleCapabilityGroups(input);
-    expect(out.map((g: { kind: string }) => g.kind)).toEqual(["grokbit"]);
-    expect(out[0]).toBe(input[0]);
+    expect(out.map((g: { kind: string }) => g.kind)).toEqual(["grokbit", "workflow"]);
   });
 
   it("drops a group with an unknown kind", () => {
     const out = visibleCapabilityGroups([
-      { kind: "workflow", title: "Workflows", total: 1, items: [{ kind: "workflow", name: "x" }] },
+      { kind: "persona", title: "Personas", total: 1, items: [{ kind: "persona", name: "x" }] },
       { kind: "grokbit", title: "Grokbit workflow", total: 1, items: [{ kind: "grokbit", name: "grokbit-plan" }] },
+      { kind: "workflow", title: "User Workflows", total: 1, items: [{ kind: "workflow", name: "x" }] },
     ]);
-    expect(out.map((g: { kind: string }) => g.kind)).toEqual(["grokbit"]);
+    expect(out.map((g: { kind: string }) => g.kind)).toEqual(["grokbit", "workflow"]);
   });
 
   it("returns [] for undefined or non-array input", () => {
@@ -951,8 +991,8 @@ describe("visibleCapabilityGroups", () => {
     expect(out).toEqual(input);
   });
 
-  it("exposes CAPABILITY_VISIBLE_KINDS as the allowlist (one-entry revert path)", () => {
-    expect(CAPABILITY_VISIBLE_KINDS).toEqual(["grokbit"]);
+  it("exposes CAPABILITY_VISIBLE_KINDS as the allowlist (suite + user workflows)", () => {
+    expect(CAPABILITY_VISIBLE_KINDS).toEqual(["grokbit", "workflow"]);
   });
 
   it("scope all keeps non-workflow groups", () => {
@@ -962,6 +1002,77 @@ describe("visibleCapabilityGroups", () => {
     ];
     const out = visibleCapabilityGroups(input, { scope: "all" });
     expect(out.map((g: { kind: string }) => g.kind)).toEqual(["grokbit", "skill"]);
+  });
+});
+
+describe("userWorkflowsPanelState", () => {
+  it("returns null when workflow tiles are present", () => {
+    expect(userWorkflowsPanelState({ backend: "grok", hasWorkflowItems: true })).toBeNull();
+  });
+
+  it("Grok empty copy points at rhai / create-workflow", () => {
+    const s = userWorkflowsPanelState({ backend: "grok", hasWorkflowItems: false });
+    expect(s?.showEmpty).toBe(true);
+    expect(s?.title).toBe("User Workflows");
+    expect(s?.message).toMatch(/\.rhai|create-workflow/i);
+    expect(s?.message).not.toMatch(/claude only|grok only/i);
+  });
+
+  it("Claude empty copy points at .claude/workflows, not Grok-only dead-end", () => {
+    const s = userWorkflowsPanelState({ backend: "claude", hasWorkflowItems: false });
+    expect(s?.showEmpty).toBe(true);
+    expect(s?.message).toMatch(/\.claude\/workflows/i);
+    expect(s?.message).not.toMatch(/available on Grok only|Grok only/i);
+  });
+});
+
+describe("withCreateWorkflowTile", () => {
+  it("Grok with no workflow group gets a User Workflows group with create-workflow first", () => {
+    const out = withCreateWorkflowTile(
+      [{ kind: "grokbit", title: "", total: 1, items: [{ kind: "grokbit", name: "grokbit-plan" }] }],
+      { backend: "grok" },
+    );
+    const wf = out.find((g: { kind: string }) => g.kind === "workflow") as {
+      title: string; items: { name: string; invoke: string }[];
+    };
+    expect(wf).toBeDefined();
+    expect(wf.title).toBe("User Workflows");
+    expect(wf.items[0].name).toBe("create-workflow");
+    expect(wf.items[0].invoke).toBe("/create-workflow ");
+  });
+
+  it("prepends create-workflow ahead of saved workflow tiles without duplicating", () => {
+    const input = [{
+      kind: "workflow",
+      title: "User Workflows",
+      total: 1,
+      items: [{ kind: "workflow", name: "review-changes", invoke: "/workflow review-changes " }],
+    }];
+    const out = withCreateWorkflowTile(input, { backend: "grok" });
+    const names = (out[0] as { items: { name: string }[] }).items.map((i) => i.name);
+    expect(names).toEqual(["create-workflow", "review-changes"]);
+    expect((out[0] as { total: number }).total).toBe(2);
+    // Idempotent — a second pass must not double-insert.
+    const again = withCreateWorkflowTile(out, { backend: "grok" });
+    expect((again[0] as { items: unknown[] }).items).toHaveLength(2);
+  });
+
+  it("Claude is unchanged — no /create-workflow skill on that backend", () => {
+    const input = [{ kind: "grokbit", total: 1, items: [{ name: "x" }] }];
+    expect(withCreateWorkflowTile(input, { backend: "claude" })).toEqual(input);
+    expect(withCreateWorkflowTile([], { backend: "claude" })).toEqual([]);
+  });
+
+  it("does not mutate the input groups array or item lists", () => {
+    const items = [{ kind: "workflow", name: "review-changes" }];
+    const input = [{ kind: "workflow", title: "User Workflows", total: 1, items }];
+    withCreateWorkflowTile(input, { backend: "grok" });
+    expect(items).toHaveLength(1);
+    expect(input[0].items).toBe(items);
+  });
+
+  it("does not feature-pin workflow (prepend + fallback keeps create first without hiding scripts)", () => {
+    expect(CAPABILITY_FEATURED.workflow).toBeUndefined();
   });
 });
 

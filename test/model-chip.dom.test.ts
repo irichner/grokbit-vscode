@@ -61,11 +61,10 @@ describe("composer model + effort chip", () => {
   });
 });
 
-// docs/plans/claude-code-backend.md § WP7 — the SAME four controls (Agent /
-// Model / Thinking / Mode) power both this popover and the new-tab "Session
-// setup" welcome card, rendered from the one sessionSetupModel() builder
-// (test/webview-helpers.test.ts covers the builder itself; the welcome card
-// mount is covered separately in test/session-setup.dom.test.ts).
+// docs/plans/claude-code-backend.md § WP7 — Agent / Model / Thinking / Mode
+// via sessionSetupModel() into the shared popover (composer #model-label and
+// top-bar #session-setup-chip). Builder: test/webview-helpers.test.ts; top-bar
+// chip: test/session-setup-chip.dom.test.ts.
 describe("composer quick-settings popover (Agent / Model / Thinking / Mode)", () => {
   function bootReady(backend: "grok" | "claude" = "grok") {
     const h = bootWebview();

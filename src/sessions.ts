@@ -165,15 +165,22 @@ const MIN_NAME_BUDGET = 10;
  *  output (it has no length cap of its own). */
 const MAX_PREFIX_LEN = 14;
 
-/** Leading status/progress head hard cap (design: ≤6 so settings still fit). */
+/** Leading token-count head hard cap (≤6 so Model·effort + name still fit). */
 const MAX_STATUS_HEAD_LEN = 6;
 
 /**
- * Pure view-model status for editor-tab titles — deliberately not
+ * Pure view-model status for editor-tab chrome — deliberately not
  * `SessionStatus`, so this module never imports the Session class.
  * Computed by {@link tabTitleStatusFrom} from live status + unread meta.
+ * Drives colored tab icons; the title head itself is the session token count.
  */
 export type TabTitleStatus = "none" | "working" | "needs-you" | "done-away" | "error-away";
+
+/**
+ * Icon color kind for the native editor tab (VS Code can't color title text).
+ * working → glowing green · needs-you → red · everything else → blue (stopped).
+ */
+export type TabIconKind = "working" | "needs-you" | "stopped";
 
 /**
  * Map live session status + unread badges to a tab-title status.
@@ -195,34 +202,42 @@ export function tabTitleStatusFrom(opts: {
   return "none";
 }
 
+/** Collapse tab title status to the three icon colors the product exposes. Pure. */
+export function tabIconKindFrom(tabStatus?: TabTitleStatus): TabIconKind {
+  if (tabStatus === "working") return "working";
+  if (tabStatus === "needs-you") return "needs-you";
+  return "stopped";
+}
+
 /**
- * Build the leading status/progress head for a tab title.
- * Markers (ASCII-first, design-locked): working `…`, needs-you `?`,
- * done-away `*`, error-away `!`. Progress digits only when working and
- * current ≥ 1 (`…7` or `…3/12`). Pure.
+ * Compact session token total for the editor-tab title head.
+ * Same tiers as the webview `formatTokenCount`, but forced into
+ * {@link MAX_STATUS_HEAD_LEN} (coarser rounding when needed). Pure.
  */
-export function tabStatusHead(
-  tabStatus?: TabTitleStatus,
-  progressCurrent?: number,
-  progressTotal?: number,
-): string {
-  if (!tabStatus || tabStatus === "none") return "";
-  if (tabStatus === "needs-you") return "?";
-  if (tabStatus === "done-away") return "*";
-  if (tabStatus === "error-away") return "!";
-  // working
-  let head = "…";
-  if (typeof progressCurrent === "number" && progressCurrent >= 1) {
-    const cur = Math.min(Math.floor(progressCurrent), 999);
-    if (typeof progressTotal === "number" && progressTotal >= 1) {
-      const tot = Math.min(Math.floor(progressTotal), 99);
-      head = `…${cur}/${tot}`;
-    } else {
-      head = `…${cur}`;
-    }
-  }
-  if (head.length > MAX_STATUS_HEAD_LEN) head = head.slice(0, MAX_STATUS_HEAD_LEN);
-  return head;
+export function formatTabTokenCount(n: number | undefined): string {
+  if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return "";
+  const rounded = Math.round(n);
+  let s: string;
+  if (rounded < 1000) s = String(rounded);
+  else if (rounded < 1_000_000) s = (rounded / 1000).toFixed(1) + "K";
+  else if (rounded < 1_000_000_000) s = (rounded / 1_000_000).toFixed(1) + "M";
+  else s = (rounded / 1_000_000_000).toFixed(1) + "B";
+  if (s.length <= MAX_STATUS_HEAD_LEN) return s;
+  // Edge cases like 999999 → "1000.0K" (7 chars): drop the decimal.
+  if (rounded < 1_000_000) s = Math.round(rounded / 1000) + "K";
+  else if (rounded < 1_000_000_000) s = Math.round(rounded / 1_000_000) + "M";
+  else s = Math.round(rounded / 1_000_000_000) + "B";
+  if (s.length > MAX_STATUS_HEAD_LEN) s = s.slice(0, MAX_STATUS_HEAD_LEN);
+  return s;
+}
+
+/**
+ * Build the leading head for a tab title: the session's current total token
+ * count when known. Status color is on the tab icon ({@link tabIconKindFrom}),
+ * not in the title text (VS Code titles are unstyled). Pure.
+ */
+export function tabStatusHead(totalTokens?: number): string {
+  return formatTabTokenCount(totalTokens);
 }
 
 export interface TabTitleParts {
@@ -240,21 +255,25 @@ export interface TabTitleParts {
   /** Total title budget, status head + prefix + separator + name. */
   maxLen?: number;
   /**
-   * Pure tab status view-model. Omitted / `"none"` → no leading status segment
-   * (idle titles stay byte-compatible with pre-status callers for short names).
+   * Pure tab status view-model — reserved for callers that also pick the tab
+   * icon via {@link tabIconKindFrom}. Title text no longer encodes status
+   * markers (token count does).
    */
   tabStatus?: TabTitleStatus;
-  /** In-turn step count; only rendered when `tabStatus === "working"` and ≥ 1. */
-  progressCurrent?: number;
-  /** Optional known total; omit when unknown (never invent a total). */
-  progressTotal?: number;
+  /**
+   * Session total token count (`client.lastMeta.totalTokens`). When known,
+   * shown as the leading title head (e.g. `12.5K`). Omit when unknown — never
+   * invent a total.
+   */
+  totalTokens?: number;
 }
 
 /**
- * Editor-tab title with optional leading status/progress + a `Model·effort — Name`
- * settings prefix, e.g. `…7 Sonnet·hig — Fix login bug` / idle: `Grok·med — New`.
- * VS Code truncates tab titles from the end, so status + settings survive a
- * narrow tab and the name is what degrades. Pure.
+ * Editor-tab title with optional leading token count + a `Model·effort — Name`
+ * settings prefix, e.g. `12.5K Sonnet·hig — Fix login bug` / no tokens yet:
+ * `Grok·med — New`. VS Code truncates tab titles from the end, so the token
+ * head + settings survive a narrow tab and the name is what degrades. Pure.
+ * Status color is on the tab icon, not the title string.
  */
 export function composeTabTitle({
   name,
@@ -262,13 +281,9 @@ export function composeTabTitle({
   effort,
   backend = "grok",
   maxLen = DEFAULT_SETTINGS_TITLE_MAX,
-  tabStatus,
-  progressCurrent,
-  progressTotal,
+  totalTokens,
 }: TabTitleParts): string {
-  const statusHead = tabStatusHead(tabStatus, progressCurrent, progressTotal);
-  // Over budget: drop progress digits first (recompute bare marker for working).
-  let head = statusHead;
+  let head = tabStatusHead(totalTokens);
   if (head.length > MAX_STATUS_HEAD_LEN) head = head.slice(0, MAX_STATUS_HEAD_LEN);
 
   const eff = shortEffort(effort);
@@ -276,8 +291,7 @@ export function composeTabTitle({
   if (prefix.length > MAX_PREFIX_LEN) prefix = prefix.slice(0, MAX_PREFIX_LEN - 1) + "…";
   const sep = " — ";
   const statusPart = head ? `${head} ` : "";
-  // Never drop needs-you / away markers to free name budget — they are the signal.
-  // Progress may already have been truncated by MAX_STATUS_HEAD_LEN.
+  // Token head is never dropped to free name budget — it is the live signal.
   const collapsed = (name ?? "").replace(/\s+/g, " ").trim();
   const fixedLen = statusPart.length + prefix.length + sep.length;
   const nameBudget = Math.max(MIN_NAME_BUDGET, maxLen - fixedLen);

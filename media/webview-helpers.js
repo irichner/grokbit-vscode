@@ -559,6 +559,49 @@
     return { backend, rows };
   }
 
+  // Short effort tokens for the top-bar Session setup chip — mirrors chat.js
+  // shortEffort (kept local so the pure helper has no host dependency).
+  function shortEffortForChip(e) {
+    if (!e) return "";
+    if (e === "minimal") return "min";
+    if (e === "medium") return "med";
+    if (e === "xhigh") return "xhi";
+    return String(e).slice(0, 3);
+  }
+
+  /**
+   * Pure one-line label for the top-bar Session setup chip
+   * (session-setup-top-bar). Segments: Agent short · model · optional effort · mode short.
+   * Agent shorts mirror updateBackendLabel (Grok/Claude), not full SETUP_AGENT_OPTIONS.
+   * Mode shorts map SETUP_MODE_OPTIONS ids; yolo → "Auto" for density (full "Auto accept"
+   * belongs in the chip title). Empty effort / Claude omits the thinking segment.
+   * Returns { label, title } — title always has full mode + agent wording.
+   */
+  function sessionSetupChipLabel(opts) {
+    opts = opts || {};
+    const backend = opts.backend === "claude" ? "claude" : "grok";
+    const agentShort = backend === "claude" ? "Claude" : "Grok";
+    const agentFull = backend === "claude" ? "Claude Code" : "Grok Build";
+    const modelName = (opts.modelName == null ? "" : String(opts.modelName)).trim() || "Model";
+    const effort = opts.effort ? String(opts.effort) : "";
+    const modeId = opts.modeId || "agent";
+    const modeOpt = SETUP_MODE_OPTIONS.find((o) => o.id === modeId);
+    const modeFull = modeOpt ? modeOpt.label : "Agent";
+    const modeShort = modeId === "yolo" ? "Auto" : modeFull;
+
+    const parts = [agentShort, modelName];
+    if (effort) parts.push(shortEffortForChip(effort));
+    parts.push(modeShort);
+    const label = parts.join(" · ");
+
+    const titleParts = [agentFull, modelName];
+    if (effort) titleParts.push(effortLevelLabel(effort) + " effort");
+    titleParts.push(modeFull);
+    const title = "Session setup — click to change · " + titleParts.join(" · ");
+
+    return { label, title, agentShort, modeShort, modeFull };
+  }
+
   /**
    * Pure view-model for the toggle-shaped rows the Actions popover shows above
    * the discovered capabilities — session state the user can flip in place,
@@ -617,7 +660,9 @@
     command: "Commands",
     skill: "Skills",
     agent: "Agents",
-    grokbit: "Grokbit workflow",
+    // Empty on purpose — panel heading is already "Grokbit Workflows" (mirrors host).
+    grokbit: "",
+    workflow: "User Workflows",
   };
 
   // Longer than this and a row's description is clamped. Primarily a guard on
@@ -690,11 +735,14 @@
       "cold-review", "init-repo", "docx", "pptx", "pdf", "create-workflow",
       "workflow", "deep-research", "always-approve", "alawys-approve",
     ],
+    // No featured list for workflow: withCreateWorkflowTile already prepends
+    // create-workflow, and the FALLBACK first-N path keeps saved scripts visible
+    // without burying them behind "Show all" (a featured-only create pin would).
   };
 
-  // Default allowlist for Grokbit Actions (workflow tiles only). When the host
-  // posts actionsScope "all", visibleCapabilityGroups shows every kind.
-  const CAPABILITY_VISIBLE_KINDS = ["grokbit"];
+  // Default allowlist for Grokbit Actions: bundled suite + backend-native User
+  // Workflows. When the host posts actionsScope "all", every kind shows.
+  const CAPABILITY_VISIBLE_KINDS = ["grokbit", "workflow"];
   /** Suite skill basenames that may appear as workspace forks (local overrides). */
   const SUITE_SKILL_NAMES_LC = [
     "grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document",
@@ -715,6 +763,90 @@
     }
     const allow = new Set(CAPABILITY_VISIBLE_KINDS);
     return groups.filter((g) => g && allow.has(g.kind));
+  }
+
+  /**
+   * Empty-state model for the User Workflows section when discovery found no
+   * tiles (or none are visible). Backend-specific copy — never "Claude can't".
+   * On Grok, `withCreateWorkflowTile` always injects a Create workflow row, so
+   * this empty path is mainly Claude (and a defensive fallback if the inject
+   * helper is absent).
+   * @param {{ backend?: string, hasWorkflowItems?: boolean }} opts
+   * @returns {{ showEmpty: boolean, title: string, message: string } | null}
+   */
+  function userWorkflowsPanelState(opts) {
+    opts = opts || {};
+    if (opts.hasWorkflowItems) return null;
+    const backend = opts.backend === "claude" ? "claude" : "grok";
+    const title = "User Workflows";
+    if (backend === "claude") {
+      return {
+        showEmpty: true,
+        title,
+        message:
+          "No saved Claude workflows yet — save a script under .claude/workflows/ (export const meta = { name, description }) and click Refresh.",
+      };
+    }
+    return {
+      showEmpty: true,
+      title,
+      message:
+        "No saved Grok workflows yet — create one with /create-workflow or drop a .rhai under .grok/workflows/, then Refresh.",
+    };
+  }
+
+  /**
+   * Synthetic Create-workflow tile for the User Workflows section (Grok only).
+   * `/create-workflow` is a Grok Build skill; Claude has no equivalent, so its
+   * empty copy still points at saving a script under `.claude/workflows/`.
+   * Pure — never mutates `groups`.
+   * @param {unknown} groups
+   * @param {{ backend?: string }} [opts]
+   * @returns {unknown[]}
+   */
+  function withCreateWorkflowTile(groups, opts) {
+    opts = opts || {};
+    const list = Array.isArray(groups) ? groups.map((g) => {
+      if (!g || typeof g !== "object") return g;
+      const items = Array.isArray(g.items) ? g.items.slice() : g.items;
+      return { ...g, items };
+    }) : [];
+    if (opts.backend === "claude") return list;
+
+    const tile = {
+      kind: "workflow",
+      name: "create-workflow",
+      description:
+        "Author a new multi-agent workflow, smoke-check it, and save under .grok/workflows/.",
+      invoke: "/create-workflow ",
+      source: "Built in",
+      origin: "synthetic",
+    };
+
+    const idx = list.findIndex((g) => g && g.kind === "workflow");
+    if (idx >= 0) {
+      const group = list[idx];
+      const items = Array.isArray(group.items) ? group.items : [];
+      if (items.some((i) => i && String(i.name || "").toLowerCase() === "create-workflow")) {
+        return list;
+      }
+      const nextItems = [tile, ...items];
+      const prevTotal = typeof group.total === "number" ? group.total : items.length;
+      list[idx] = {
+        ...group,
+        items: nextItems,
+        total: Math.max(prevTotal + 1, nextItems.length),
+      };
+      return list;
+    }
+
+    list.push({
+      kind: "workflow",
+      title: "User Workflows",
+      total: 1,
+      items: [tile],
+    });
+    return list;
   }
 
   /**
@@ -864,9 +996,17 @@
       });
       const total = typeof g.total === "number" && g.total >= items.length ? g.total : items.length;
       const { items: ordered, featuredCount } = partitionFeatured(items, g.kind);
+      // Honor an explicit non-empty host title; otherwise use the kind label
+      // (which may be "" for grokbit — no section header under the panel heading).
+      // Never fall through empty → kind id, or the suite would reappear as "grokbit".
+      // Also drop a host title that only restates the panel heading (legacy payloads).
+      const hostTitle = typeof g.title === "string" ? g.title.trim() : "";
+      const kindLabel = CAPABILITY_KIND_LABELS[g.kind];
+      let title = hostTitle || (kindLabel !== undefined ? kindLabel : g.kind) || "";
+      if (/^grokbit workflows?$/i.test(title)) title = "";
       out.push({
         kind: g.kind,
-        title: g.title || CAPABILITY_KIND_LABELS[g.kind] || g.kind,
+        title,
         items: ordered,
         total,
         remaining: total - items.length,
@@ -1221,6 +1361,25 @@
     return `${Math.min(Math.max(view, 0), count - 1) + 1}/${count}`;
   }
 
+  // Clipboard paste screenshots (docs/plans/paste-screenshots.md) — raw byte
+  // gate before postMessage. Keep in sync with src/pending-images.ts.
+  const PASTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+  const PASTE_IMAGE_MAX_COUNT = 6;
+  const PASTE_IMAGE_MIME = new Set([
+    "image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif",
+  ]);
+
+  function canAcceptPasteImageBytes(byteLength, maxBytes) {
+    const max = typeof maxBytes === "number" ? maxBytes : PASTE_IMAGE_MAX_BYTES;
+    return Number.isFinite(byteLength) && byteLength > 0 && byteLength <= max;
+  }
+
+  function isAllowedPasteImageMime(mimeType) {
+    const m = String(mimeType || "").toLowerCase().trim();
+    if (!m || m.includes("svg")) return false;
+    return PASTE_IMAGE_MIME.has(m);
+  }
+
   const api = {
     FILE_EXTS, looksLikeFileRef, formatRelativeTime, modelDisplayName,
     MIC_STATES, nextMicState, trailingSendPhrase, buildQuestionAnswers,
@@ -1234,11 +1393,14 @@
     SESSION_DOT_LABELS, sessionDotLabel, backendBadgeLabel,
     activityPeek, activityPosText,
     inferPermissionKind, permissionDiffFromRawInput,
-    sessionSetupModel,
+    sessionSetupModel, sessionSetupChipLabel,
     CAPABILITY_KIND_LABELS, capabilityGroupsView, sessionToggleGroup,
     CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK,
     CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups, markLocalSuiteOverrides,
+    userWorkflowsPanelState, withCreateWorkflowTile,
     CAPABILITY_ROW_DESCRIPTION_MAX, truncateCapabilityDescription,
+    PASTE_IMAGE_MAX_BYTES, PASTE_IMAGE_MAX_COUNT, PASTE_IMAGE_MIME,
+    canAcceptPasteImageBytes, isAllowedPasteImageMime,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

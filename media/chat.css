@@ -93,6 +93,65 @@ code {
     var(--vscode-editorWidget-border)) 1;
   flex-shrink: 0;
   position: relative;
+  gap: 2px;
+  min-width: 0;
+}
+/* Session setup chip stays left; utility buttons pack to the right. */
+#history-btn { margin-left: auto; }
+
+/* Top-bar Session setup summary chip (session-setup-top-bar) — one-line door to
+   Agent/Model/Thinking/Mode; opens the shared #session-settings-popover.
+   Styled as a real pill button (border + fill + chevron) so it reads as
+   clickable, not as static status text. Tokens only — VS Code + neon accents. */
+.session-setup-chip {
+  color: var(--vscode-foreground);
+  background: var(--vscode-badge-background, var(--vscode-editorWidget-background));
+  border: 1px solid var(--vscode-editorWidget-border);
+  border-radius: 12px;
+  padding: 3px 8px 3px 10px;
+  max-width: min(50%, 32ch);
+  min-width: 0;
+  flex-shrink: 1;
+  gap: 5px;
+  font-weight: 500;
+  font-size: 11px;
+  line-height: 1.2;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.session-setup-chip:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+  border-color: color-mix(in srgb, var(--neon-cyan) 40%, var(--vscode-editorWidget-border));
+}
+.session-setup-chip:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.session-setup-chip[aria-expanded="true"] {
+  background: var(--vscode-list-hoverBackground, var(--vscode-toolbar-hoverBackground));
+  border-color: color-mix(in srgb, var(--neon-cyan) 50%, var(--vscode-editorWidget-border));
+}
+.session-setup-chip[hidden] { display: none; }
+.session-setup-chip .btn-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+}
+.session-setup-chip .session-setup-chip-chevron {
+  flex-shrink: 0;
+  display: inline-flex;
+  opacity: 0.7;
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+.session-setup-chip:hover .session-setup-chip-chevron,
+.session-setup-chip[aria-expanded="true"] .session-setup-chip-chevron {
+  opacity: 1;
+}
+.session-setup-chip[aria-expanded="true"] .session-setup-chip-chevron {
+  transform: rotate(180deg);
 }
 
 /* ---- toolbar popovers ---- */
@@ -632,6 +691,15 @@ code {
   white-space: pre-wrap;
   word-wrap: break-word;
   position: relative;
+}
+/* Mid-turn queue badge (vibe-coder-wave-1) — theme tokens only; no viewport media queries. */
+.msg-queued-badge {
+  align-self: flex-start;
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.9;
+  letter-spacing: 0.02em;
 }
 .msg.agent {
   background: transparent;
@@ -1857,30 +1925,12 @@ textarea#input {
 .mode-popover-item.disabled:hover { background: transparent; }
 .mode-item-disabled-note { display: block; font-size: 10px; color: var(--vscode-descriptionForeground); opacity: 0.85; margin-top: 3px; line-height: 1.3; white-space: normal; }
 
-/* ---- welcome canvas: full-tab-width flex row ----
-   docs/plans/session-tab-ux-overhaul.md § Approach A1/A2 +
-   docs/plans/actions-panel-layout-and-dynamic-capabilities.md (WP1). The tab
-   uses the whole editor canvas by default — no width setting, no cap.
-
-   This was an auto-fit grid, which GAPPED: auto-fit only collapses EMPTY
-   repetitions, so with exactly two children there were always two equal 1fr
-   tracks of (W − 10)/2, while the setup card is capped at its 420px form
-   measure. The dead space was (W − 10)/2 − 420 — zero up to W ≈ 850px, ~185px
-   at 1200px, ~545px at 1920px. A wrapping flex row instead lets the card
-   freeze at its cap and hands ALL the remaining width to the Actions panel,
-   with no threshold of its own to keep in sync.
-
-   min(100%, …) in the flex-basis is mandatory for the same reason it was
-   mandatory inside minmax(): a bare 300px basis overflows a ~250px
-   split-editor tab. align-items: stretch is deliberate, not the default we
-   inherited — the two panels share a height so the pair reads as one flush
-   rectangle. The extra height lands inside whichever card is shorter
-   (normally the setup card); its content stays top-pinned because it is a
-   flex column with the default justify-content: flex-start, so do NOT add a
-   justify-content or a growing spacer to "fill" it. Stacked layout is
-   unaffected — align-items applies per flex LINE, and a wrapped item is alone
-   on its line. No media queries, ever (body { zoom } makes breakpoints lie —
-   and the source check counts the literal at-rule token, so don't type it). */
+/* ---- welcome canvas: full-tab-width flex host for Grokbit Actions ----
+   Session setup lives in the top-bar chip (and composer model chip popover),
+   not as a welcome tile. The grid remains a wrapping flex row so a future
+   second panel can sit beside Actions without reintroducing auto-fit equal
+   tracks. min(100%, …) on flex-basis keeps a narrow split-editor tab from
+   horizontal scroll. No media queries (body { zoom } makes breakpoints lie). */
 .welcome-grid {
   width: 100%;
   text-align: left; /* .welcome sets text-align: center */
@@ -1889,57 +1939,22 @@ textarea#input {
   gap: 10px;
   align-items: stretch;
 }
-.welcome-grid > .session-setup-card {
-  flex: 1 1 min(100%, 300px);
-  max-width: 420px; /* form measure — see survey */
-}
 .welcome-grid > .capabilities-panel {
   flex: 1 1 min(100%, 300px);
-  min-width: 0; /* absorbs everything the capped card leaves behind */
+  min-width: 0;
 }
 
 /* ---- per-tab session settings (Agent / Model / Thinking / Mode) ----
-   Shared rows rendered from the ONE sessionSetupModel builder (see
-   media/webview-helpers.js) into TWO mounts: the new-tab welcome card
-   (.session-setup-card) and the composer quick-settings popover
-   (.session-settings-popover) — docs/plans/claude-code-backend.md § WP7. */
-
-.session-setup-card {
-  width: 100%;
-  min-width: 0;
-  margin-top: 10px;
-  padding: 10px 12px 12px;
-  text-align: left;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, #444));
-  border-left: 2px solid color-mix(in srgb, var(--neon-cyan) 45%, var(--vscode-editorWidget-border));
-  border-radius: var(--radius, 6px);
-}
-.session-setup-card[hidden] { display: none; }
-.session-setup-heading {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--vscode-descriptionForeground);
-}
-.session-setup-footer {
-  margin: 0;
-  font-size: 10.5px;
-  line-height: 1.4;
-  color: var(--vscode-descriptionForeground);
-}
+   Shared rows from sessionSetupModel (media/webview-helpers.js) into the
+   composer / top-bar #session-settings-popover, opened by #session-setup-chip
+   or #model-label — docs/plans/claude-code-backend.md § WP7 +
+   session-setup-top-bar. */
 
 /* ---- capability browser (slash commands, skills, agents) ----
    Two mounts, one pure builder (capabilityGroupsView in webview-helpers.js):
-   the new-tab welcome canvas (.capabilities-panel, below .session-setup-card)
-   and the top-bar Actions popover (.capabilities-popover, reusing the
-   .toolbar-popover/.history-popover/.studio-popover chrome the Docs popover
-   already uses) — docs/plans/session-tab-ux-overhaul.md § Approach B.
+   the new-tab welcome canvas (.capabilities-panel) and the top-bar Actions
+   popover (.capabilities-popover, reusing the Docs popover chrome) —
+   docs/plans/session-tab-ux-overhaul.md § Approach B.
    Both mounts share .capability-group/.capability-row for the actual rows.
    `#capabilities-btn[hidden]` needs an explicit display:none, the same
    `.toolbar-btn` / `[hidden]` gotcha documented above for `.model-label-btn` —
@@ -1960,32 +1975,32 @@ textarea#input {
   border-radius: var(--radius, 6px);
 }
 .capabilities-panel[hidden] { display: none; }
-/* Heading + one-line explainer above the first group — says what clicking a
-   row actually does, which was previously invisible (docs/plans/
-   session-tab-ux-overhaul.md § Approach B bullet 4). Heading mirrors
-   .session-setup-heading's treatment so the two welcome-canvas cards read as
-   one family; the explainer relies on the .muted utility class for color. */
+/* Heading + one-line explainer on the SAME row — says what clicking a
+   row actually does (docs/plans/session-tab-ux-overhaul.md § Approach B
+   bullet 4). The explainer relies on the .muted utility class for color. */
 .capabilities-heading {
   margin: 0;
+  flex-shrink: 0;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
   color: var(--vscode-descriptionForeground);
 }
-/* Heading row: the heading text plus a Refresh affordance. Discovery already
-   scans the user's own disk on every request, but the welcome canvas renders
-   from a payload that arrived at initialState/reveal time — so a skill the
-   user (or the agent) writes while the canvas is on screen was invisible
-   until they switched tabs and back. The button re-posts the existing
+/* Heading row: title · explainer … Refresh. Discovery already scans the
+   user's own disk on every request, but the welcome canvas renders from a
+   payload that arrived at initialState/reveal time — so a skill the user
+   (or the agent) writes while the canvas is on screen was invisible until
+   they switched tabs and back. The button re-posts the existing
    listCapabilities message; there is no new host plumbing behind it. */
 .capabilities-head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
 }
 .capabilities-refresh {
+  margin-left: auto;
   padding: 0;
   border: none;
   background: none;
@@ -2013,8 +2028,13 @@ textarea#input {
 }
 .capabilities-explainer {
   margin: 0;
-  padding: 0 2px;
+  padding: 0;
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
   line-height: 1.4;
 }
 .capabilities-empty {
@@ -2055,7 +2075,7 @@ textarea#input {
   cursor: pointer;
 }
 /* Tile chrome for discovered workflow rows only — not the Auto-accept
-   switch row (same .capability-row base). Recipe from .session-setup-card. */
+   switch row (same .capability-row base). */
 .capability-row:not(.capability-row-toggle) {
   padding: 10px 12px 12px;
   gap: 4px;
@@ -2403,6 +2423,60 @@ textarea#input {
 .attachment-remove:hover {
   background: var(--vscode-toolbar-hoverBackground);
   color: var(--vscode-foreground);
+}
+.attachment-remove:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
+}
+/* Pasted screenshots — thumbnail tiles in the same #attachments strip. */
+.attachment.attachment-image {
+  padding-left: 3px;
+}
+.attachment.attachment-image img {
+  display: block;
+  max-height: 36px;
+  max-width: 72px;
+  width: auto;
+  height: auto;
+  border-radius: 3px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+.attachment.attachment-image .attachment-remove:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.paste-image-notice {
+  font-size: 11px;
+  line-height: 1.3;
+  padding: 0 2px 2px;
+}
+.paste-image-notice[hidden] { display: none; }
+.paste-image-notice.is-error {
+  color: var(--vscode-errorForeground, #f48771);
+}
+/* User bubble thumbs for sent screenshots */
+.msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.msg-images img {
+  max-height: 96px;
+  max-width: 160px;
+  width: auto;
+  height: auto;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-editorWidget-border);
+  object-fit: contain;
+}
+.msg-image-fallback {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--vscode-editorWidget-background);
 }
 
 /* ---- send button ---- */
