@@ -107,4 +107,65 @@ describe("changed-files strip", () => {
     expect(strip(doc).hidden).toBe(true);
     expect(chips(doc)).toHaveLength(0);
   });
+
+  // Same path, multiple toolCallIds: storage stays per-edit (forget by id) but the
+  // strip must show one chip with summed +/− — not one chip per edit (#dedupe).
+  it("shows one chip with summed metrics when the same path is edited twice", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "userMessage", text: "go", chips: [] });
+    // e1: same fixture as the single-edit test → +2 −1
+    dispatch(window, { type: "toolCall", call: { toolCallId: "e1", kind: "edit", title: "Edit auth" } });
+    dispatch(window, {
+      type: "toolCallUpdate",
+      call: { toolCallId: "e1", content: [diffBlock("src/auth.ts", "a\nb\nc", "a\nB\nc\nd")] },
+    });
+    // e2: append one line → +1 −0
+    dispatch(window, { type: "toolCall", call: { toolCallId: "e2", kind: "edit", title: "Edit auth again" } });
+    dispatch(window, {
+      type: "toolCallUpdate",
+      call: { toolCallId: "e2", content: [diffBlock("src/auth.ts", "a\nB\nc\nd", "a\nB\nc\nd\ne")] },
+    });
+
+    const cs = chips(doc);
+    expect(cs).toHaveLength(1);
+    expect(cs[0].textContent).toContain("auth.ts");
+    expect(cs[0].textContent).toContain("+3");
+    expect(cs[0].textContent).toContain("−1");
+    expect(strip(doc).querySelector(".changed-files-label")!.textContent).toBe("1 file changed");
+  });
+
+  it("drops only the failed edit's metrics when one of two same-path edits fails", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "userMessage", text: "go", chips: [] });
+    dispatch(window, { type: "toolCall", call: { toolCallId: "e1", kind: "edit", title: "Edit auth" } });
+    dispatch(window, {
+      type: "toolCallUpdate",
+      call: { toolCallId: "e1", content: [diffBlock("src/auth.ts", "a\nb\nc", "a\nB\nc\nd")] },
+    });
+    dispatch(window, { type: "toolCall", call: { toolCallId: "e2", kind: "edit", title: "Edit auth again" } });
+    dispatch(window, {
+      type: "toolCallUpdate",
+      call: { toolCallId: "e2", content: [diffBlock("src/auth.ts", "a\nB\nc\nd", "a\nB\nc\nd\ne")] },
+    });
+    expect(chips(doc)).toHaveLength(1);
+
+    // Fail e1 only — e2's +1 remains.
+    dispatch(window, {
+      type: "toolCallUpdate",
+      call: { toolCallId: "e1", status: "failed", content: [{ text: "write blocked by plan mode" }] },
+    });
+    let cs = chips(doc);
+    expect(cs).toHaveLength(1);
+    expect(cs[0].textContent).toContain("+1");
+    expect(cs[0].textContent).not.toContain("−1");
+    expect(strip(doc).querySelector(".changed-files-label")!.textContent).toBe("1 file changed");
+
+    // Fail e2 too — strip empties.
+    dispatch(window, {
+      type: "toolCallUpdate",
+      call: { toolCallId: "e2", status: "failed", content: [{ text: "write blocked by plan mode" }] },
+    });
+    expect(strip(doc).hidden).toBe(true);
+    expect(chips(doc)).toHaveLength(0);
+  });
 });

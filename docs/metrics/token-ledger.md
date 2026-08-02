@@ -1,6 +1,6 @@
 # Token & model usage ledger
 
-**Template version:** 0.1.20  
+**Template version:** 0.1.22  
 **Last updated:** 2026-08-02  
 **Policy:** update **VERSION** + this ledger on **every git commit** (`scripts/prepare_commit_metrics.py` / pre-commit hook).  
 **Source of figures:** session stats (`/context`, `/session-info`, host UI) — never invent.
@@ -13,8 +13,8 @@
 | Total output tokens (measured) | 0 |
 | Total tokens (measured) | 0 |
 | Measured entries | 0 |
-| Unmeasured commit stamps | 21 |
-| All ledger entries | 21 |
+| Unmeasured commit stamps | 23 |
+| All ledger entries | 23 |
 
 ## By model (measured only)
 
@@ -47,6 +47,8 @@
 | 2026-08-01 | commit-2026-08-01 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.18: auto unmeasured (no metrics in env/pending file) [unmeasured] |
 | 2026-08-01 | commit-2026-08-01 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.19: auto unmeasured (no metrics in env/pending file) [unmeasured] |
 | 2026-08-02 | commit-2026-08-02 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.20: auto unmeasured (no metrics in env/pending file) [unmeasured] |
+| 2026-08-02 | commit-2026-08-02 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.21: T1 changed-files-dedupe: path-aggregate strip [unmeasured] |
+| 2026-08-02 | commit-2026-08-02 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.22: auto unmeasured (no metrics in env/pending file) [unmeasured] |
 
 <!-- LEDGER_END -->
 

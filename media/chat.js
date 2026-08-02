@@ -132,10 +132,10 @@
     pendingDiffByToolCallId: new Map(),
     toolItemsByToolCallId: new Map(),
     toolFailuresById: new Map(), // toolCallId → error text, so a single-call group carries it onto the flat
-    // Files edited in the CURRENT turn (toolCallId → { path, adds, dels }), shown
-    // as a scannable strip above the composer and cleared on the next user send.
-    // Only edits grok actually applied land here (a plan-gate-blocked write becomes
-    // a failed tool, which removes it); replayed history never populates it.
+    // Applied edits in the CURRENT turn, keyed by toolCallId so a failed/plan-blocked
+    // write can drop just that edit. The strip UI aggregates by path (sum +/−, one chip
+    // per path) so re-editing the same file does not list it twice. Cleared on the next
+    // user send; replayed history never populates it.
     changedFiles: new Map(),
 
     agentRenderScheduled: false,
@@ -3488,7 +3488,19 @@
 
   function renderChangedFilesStrip() {
     if (!changedFilesEl) return;
-    const files = [...state.changedFiles.values()];
+    // Storage is per toolCallId (for fail/forget). Display is one chip per path with
+    // summed metrics so multi-edit of the same file does not repeat the name.
+    const byPath = new Map();
+    for (const entry of state.changedFiles.values()) {
+      const prev = byPath.get(entry.path);
+      if (prev) {
+        prev.adds += entry.adds;
+        prev.dels += entry.dels;
+      } else {
+        byPath.set(entry.path, { path: entry.path, adds: entry.adds, dels: entry.dels });
+      }
+    }
+    const files = [...byPath.values()];
     if (!files.length) { changedFilesEl.hidden = true; changedFilesEl.innerHTML = ""; return; }
     changedFilesEl.innerHTML = "";
     const label = document.createElement("span");
