@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // Cross-platform entry for the full rebuild:
-//   bump package.json CalVer (YYYY.M.N) → package .vsix → reinstall into VS Code → Marketplace publish
+//   bump package.json CalVer (YYYY.M.N) → package .vsix → reinstall into VS Code
+//   → Marketplace publish → commit + push working tree to origin
 // Invoked as: npm run rebuild
 // Delegates to scripts/install.ps1 (Windows) or scripts/install.sh (elsewhere).
 // Optional args are forwarded:
 //   Windows: -NoPublish | -VsixPath path
 //   Unix:    --no-publish | path/to.vsix
+// -NoPublish / --no-publish skips Marketplace publish and the git commit+push.
 
 "use strict";
 

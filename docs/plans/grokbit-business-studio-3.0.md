@@ -299,7 +299,7 @@ Support **conversational** multi-step business workflows (e.g. approval, reporti
 
 ## E6 — Visual workflow canvas (post-3.0 + ADR)
 
-**Status:** **Out of 3.0.0** — post-3.0 only. **ADR required** before any design or implement work.
+**Status:** **Partial / superseded for Grokbit Create path** — ADR [0004](../adr/0004-workflow-builder-canvas.md) accepted (vanilla pipeline canvas, not React Flow). Product surface: `.grokbit/plans/user-workflows-display-builder/` Workflow Builder (form + phase/agent canvas → Craft with AI). Full Business Studio React Flow / export remains deferred.
 
 ### Goal (future)
 
@@ -307,14 +307,14 @@ Evaluate a visual workflow builder (e.g. React Flow) and optional export integra
 
 ### Non-goals for 3.0.0
 
-- Any React Flow / canvas ship
+- React Flow / freeform graph **as a Business Studio dependency** (Grokbit Workflows builder uses zero-dep vanilla per ADR 0004)
 - Replacing chat-first architecture “because the sketch said so”
 - Bundled automation runtime
 
 ### Gate
 
-- Architecture Decision Record in `docs/` (or project ADR location) covering: dependency cost, webview CSP, test strategy, coexistence with thin client.
-- Explicit product approval to open a post-3.0 epic after 3.0.0 ships (or waiver).
+- Architecture Decision Record in `docs/` (or project ADR location) covering: dependency cost, webview CSP, test strategy, coexistence with thin client. **Done for v1:** `docs/adr/0004-workflow-builder-canvas.md`.
+- Explicit product approval to open a post-3.0 epic after 3.0.0 ships (or waiver) — **partial waiver via user-workflows-display-builder plan approval** for the Create Workflow builder only.
 
 ---
 

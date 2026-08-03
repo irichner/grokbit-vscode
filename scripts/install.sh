@@ -2,14 +2,15 @@
 # Install / rebuild the Grokbit VS Code extension on macOS / Linux / WSL.
 # Usage:  ./scripts/install.sh [path/to/file.vsix] [--no-publish]
 #
-# Default (no vsix argument) = full REBUILD contract (all four, always):
+# Default (no vsix argument) = full REBUILD contract (all five, always):
 #   1. bump package.json CalVer YYYY.M.N  (scripts/bump_extension_version.py)
 #   2. package a fresh .vsix    (npm run package; clears stale grokbit-*.vsix)
 #   3. reinstall into VS Code   (code --install-extension … --force)
 #   4. publish to Marketplace   (npx @vscode/vsce publish --packagePath …)
+#   5. commit + push working tree to origin (current branch; message Rebuild vX.Y.Z)
 # Never package-only — this script always ends with a reinstall.
-# Explicit vsix path skips bump/package/publish and only installs that file.
-# --no-publish skips step 4 (local install only; useful without a PAT).
+# Explicit vsix path skips bump/package/publish/commit and only installs that file.
+# --no-publish skips steps 4–5 (local install only; useful without a PAT).
 #
 # Marketplace auth: set VSCE_PAT (Azure DevOps PAT with Marketplace → Manage),
 # or run `npx @vscode/vsce login Grokbit` once. Without auth, step 4 fails.
@@ -52,6 +53,35 @@ publish_marketplace_vsix() {
     echo "Marketplace publish succeeded."
 }
 
+commit_and_push_rebuild() {
+    # After a successful Marketplace publish: stage everything, commit if dirty,
+    # then push the current branch to origin so source control matches the
+    # just-shipped Marketplace build. Mirrors release.sh's commit/push shape
+    # (no tag / no GitHub Release — those stay on scripts/release.*).
+    cd "$repo_root"
+    version="$(node -p "require('./package.json').version")"
+    [ -n "$version" ] || { echo "Could not read package.json version for commit message." >&2; exit 1; }
+    message="Rebuild v$version"
+    branch="$(git rev-parse --abbrev-ref HEAD)"
+    if [ -z "$branch" ] || [ "$branch" = "HEAD" ]; then
+        echo "Detached HEAD — cannot push rebuild commit. Check out a branch first." >&2
+        exit 1
+    fi
+
+    echo "Committing and pushing rebuild to origin/$branch..."
+    if [ -n "$(git status --porcelain)" ]; then
+        git add -A
+        # Pre-commit may still amend VERSION/token ledger.
+        git commit -m "$message"
+        echo "Committed: $message"
+    else
+        echo "Working tree clean — nothing to commit."
+    fi
+
+    git push origin "$branch"
+    echo "Pushed to origin/$branch."
+}
+
 vsix=""
 no_publish=0
 for arg in "$@"; do
@@ -75,8 +105,8 @@ done
 
 did_full_rebuild=0
 if [ -z "$vsix" ]; then
-    # Rebuild contract: bump → package → reinstall → publish
-    echo "Rebuild: bump version → package → reinstall → publish..."
+    # Rebuild contract: bump → package → reinstall → publish → commit+push
+    echo "Rebuild: bump version → package → reinstall → publish → commit+push..."
     cd "$repo_root"
     python3 scripts/bump_extension_version.py || python scripts/bump_extension_version.py
     # Refresh the development-token ledger BEFORE packaging, so the vsix carries
@@ -111,12 +141,14 @@ if [ "$did_full_rebuild" -eq 1 ] && [ "$no_publish" -eq 0 ]; then
         echo "Local-only rebuild: npm run rebuild -- --no-publish" >&2
         exit 1
     }
+    commit_and_push_rebuild
 elif [ "$did_full_rebuild" -eq 1 ] && [ "$no_publish" -eq 1 ]; then
-    echo "Skipping Marketplace publish (--no-publish)."
+    echo "Skipping Marketplace publish and git commit+push (--no-publish)."
 fi
 
 echo
 echo "Done. Reload VS Code (Ctrl+Shift+P -> 'Developer: Reload Window') and click the Grok icon."
 if [ "$did_full_rebuild" -eq 1 ] && [ "$no_publish" -eq 0 ]; then
     echo "Marketplace: https://marketplace.visualstudio.com/items?itemName=grokbit.grokbit"
+    echo "Source control: working tree committed and pushed to origin."
 fi

@@ -19,12 +19,16 @@
 // choice must survive. It also protects grok, not just Claude — `buildEnv` is
 // shared by both backends, and that's intended: a malicious `.env` is exactly
 // as dangerous redirecting grok's traffic.
+//
+// xAI / Grok credential names (mirrors `XAI_SECRET_ENV_VARS` in
+// `claude-locator.ts` plus voice): a committed `.env` must not override the
+// user's real keys or plant attacker billing credentials into the agent spawn.
 
 /** Env var name PREFIXES that a workspace `.env` may never set — matched
  *  case-insensitively. Vendor-namespaced credential/config vars: letting a
  *  committed `.env` set ANY of these (not just the ones this extension itself
  *  reads) is never legitimate. */
-const DENIED_DOT_ENV_PREFIXES = ["ANTHROPIC_", "CLAUDE_"];
+const DENIED_DOT_ENV_PREFIXES = ["ANTHROPIC_", "CLAUDE_", "XAI_"];
 
 /** Exact env var names a workspace `.env` may never set — matched
  *  case-insensitively (proxy vars are conventionally read in both
@@ -40,6 +44,10 @@ const DENIED_DOT_ENV_EXACT = [
   "NODE_OPTIONS",
   "NODE_EXTRA_CA_CERTS",
   "PATH",
+  // Grok/xAI secrets not covered by the XAI_ prefix alone
+  "GROK_CODE_XAI_API_KEY",
+  "GROK_VOICE_API_KEY",
+  "GROK_API_KEY",
 ];
 
 function isDeniedDotEnvKey(key: string): boolean {

@@ -2122,8 +2122,211 @@ textarea#input {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.capability-row[data-kind="grokbit"] .capability-row-name {
+.capability-row[data-kind="grokbit"] .capability-row-name,
+.capability-row[data-kind="workflow"] .capability-row-name {
   color: var(--neon-green-ink);
+}
+
+/* ── Workflow Builder overlay (form + vanilla pipeline canvas) ── */
+#workflow-builder {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+}
+#workflow-builder[hidden] { display: none !important; }
+.wf-builder-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  flex-shrink: 0;
+}
+.wf-builder-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--neon-green-ink);
+}
+.wf-builder-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px;
+  align-content: flex-start;
+}
+.wf-builder-form {
+  flex: 1 1 min(100%, 280px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.wf-builder-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+.wf-builder-form input,
+.wf-builder-form textarea,
+.wf-builder-form select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border));
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.wf-builder-form textarea { min-height: 72px; resize: vertical; }
+.wf-builder-scope {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.wf-builder-scope button {
+  flex: 1;
+  font: inherit;
+  font-size: 11px;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+}
+.wf-builder-scope button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--neon-green) 18%, var(--vscode-editor-background));
+  color: var(--neon-green-ink);
+  font-weight: 600;
+}
+.wf-builder-canvas {
+  flex: 1 1 min(100%, 320px);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wf-builder-canvas-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+.wf-builder-phases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: stretch;
+}
+.wf-phase-card {
+  flex: 1 1 min(100%, 160px);
+  max-width: 220px;
+  border: 1px solid var(--vscode-widget-border);
+  border-left: 3px solid var(--neon-green);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.wf-phase-card input.wf-phase-title {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 2px 4px;
+  width: 100%;
+}
+.wf-phase-card input.wf-phase-title:focus {
+  border-color: var(--vscode-focusBorder);
+  outline: none;
+}
+.wf-phase-toolbar,
+.wf-agent-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.wf-phase-toolbar button,
+.wf-agent-row button,
+.wf-builder-foot button,
+.wf-builder-head button,
+.wf-builder-canvas-head button {
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-button-border, var(--vscode-widget-border));
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  cursor: pointer;
+}
+.wf-builder-foot button.primary,
+.wf-builder-head button.primary {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border-color: transparent;
+}
+.wf-builder-foot button:disabled,
+.wf-phase-toolbar button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.wf-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.wf-agent-row input,
+.wf-agent-row select {
+  font: inherit;
+  font-size: 11px;
+  flex: 1;
+  min-width: 0;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border));
+  border-radius: 3px;
+  padding: 3px 6px;
+}
+.wf-builder-errors {
+  color: var(--vscode-errorForeground);
+  font-size: 11px;
+  margin: 0;
+  padding: 0 12px;
+}
+.wf-builder-errors[hidden] { display: none !important; }
+.wf-builder-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  flex-shrink: 0;
+}
+.wf-builder-cap-note {
+  font-size: 10.5px;
+  color: var(--vscode-descriptionForeground);
 }
 .capability-row-cmd {
   flex-shrink: 0;
@@ -2761,60 +2964,38 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
 }
 .card button.question-skip:disabled { opacity: 0.4; cursor: default; text-decoration: none; }
 
-/* ---- collapsible user messages ---- */
+/* ---- collapsible user messages (one-line clamp + always-visible expand) ---- */
 
 .msg.user.collapsible .body {
-  max-height: 48px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
   overflow: hidden;
-  position: relative;
+  word-break: break-word;
 }
-.msg.user.collapsible .body::after {
-  content: "";
-  position: absolute;
-  bottom: 0; left: 0; right: 0;
-  height: 28px;
-  background: linear-gradient(to bottom, transparent, var(--vscode-editorWidget-background, var(--vscode-input-background)));
-  pointer-events: none;
-}
-.msg-expand-btn {
-  display: none;
-  position: absolute;
-  bottom: 8px;
-  right: 10px;
-  background: var(--vscode-editorWidget-background, var(--vscode-input-background));
-  border: 1px solid var(--vscode-editorWidget-border);
-  color: var(--vscode-foreground);
-  font-size: 11px;
-  font-family: inherit;
-  padding: 5px 10px;
-  border-radius: 4px;
-  cursor: pointer;
-  z-index: 1;
-  line-height: 1;
-}
-.msg-expand-btn:hover {
-  background: var(--vscode-foreground);
-  color: var(--vscode-editor-background);
-  border-color: var(--vscode-foreground);
-}
-.msg.user.collapsible:hover .msg-expand-btn { display: block; }
+.msg-expand-btn,
 .msg-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  margin-top: 4px;
   background: var(--vscode-editorWidget-background, var(--vscode-input-background));
-  border: 1px solid var(--vscode-editorWidget-border);
+  border: 1px solid var(--vscode-editorWidget-border, transparent);
   color: var(--vscode-foreground);
   font-size: 11px;
   font-family: inherit;
-  padding: 5px 10px;
+  padding: 4px 8px;
   border-radius: 4px;
   cursor: pointer;
-  align-self: flex-end;
-  line-height: 1;
-  margin-top: 4px;
+  line-height: 1.2;
 }
+.msg-expand-btn:hover,
 .msg-collapse-btn:hover {
-  background: var(--vscode-foreground);
-  color: var(--vscode-editor-background);
-  border-color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+.msg-expand-btn[hidden] {
+  display: none;
 }
 
 /* ---- session context banner (shown after Summarize & Restart) ---- */

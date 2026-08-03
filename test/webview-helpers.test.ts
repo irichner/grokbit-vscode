@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain JS module, no types
-import { looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, clampScrollTop, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, formatLauncherMetaTooltip, activityPeek, activityPosText, backendBadgeLabel, inferPermissionKind, permissionDiffFromRawInput, sessionSetupModel, sessionSetupChipLabel, capabilityGroupsView, sessionToggleGroup, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK, CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups, userWorkflowsPanelState, withCreateWorkflowTile, CAPABILITY_ROW_DESCRIPTION_MAX } from "../media/webview-helpers.js";
+import { looksLikeFileRef, isSafeHref, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, clampScrollTop, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, formatLauncherMetaTooltip, activityPeek, activityPosText, backendBadgeLabel, inferPermissionKind, permissionDiffFromRawInput, sessionSetupModel, sessionSetupChipLabel, capabilityGroupsView, sessionToggleGroup, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK, CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups, userWorkflowsPanelState, withCreateWorkflowTile, CAPABILITY_ROW_DESCRIPTION_MAX, capabilityDisplayLabel, capabilityInvokeLabel, defaultWorkflowGraphFromGoal, validateWorkflowBuilderDraft, buildWorkflowCraftBrief, USER_PROMPT_COLLAPSE_MIN_CHARS, userPromptShouldCollapse } from "../media/webview-helpers.js";
 import { buildPrompt } from "../src/prompt-builder";
 import { makeExplicitChip, makeImplicitChip } from "../src/chips";
 
@@ -1026,6 +1026,42 @@ describe("userWorkflowsPanelState", () => {
   });
 });
 
+describe("capabilityDisplayLabel / capabilityInvokeLabel", () => {
+  it("Title Cases workflow kebab names and strips grokbit- suite names", () => {
+    expect(capabilityDisplayLabel("workflow", "create-workflow")).toBe("Create Workflow");
+    expect(capabilityDisplayLabel("workflow", "review-changes")).toBe("Review Changes");
+    expect(capabilityDisplayLabel("grokbit", "grokbit-explore")).toBe("Explore");
+    expect(capabilityDisplayLabel("skill", "create-workflow")).toBe("create-workflow");
+  });
+
+  it("invoke chip is first token of first line only", () => {
+    expect(capabilityInvokeLabel("/create-workflow ")).toBe("/create-workflow");
+    expect(capabilityInvokeLabel("/create-workflow\n\nMy goal: ")).toBe("/create-workflow");
+    expect(capabilityInvokeLabel("/workflow review-changes ")).toBe("/workflow");
+  });
+});
+
+describe("workflow builder pure helpers", () => {
+  it("validate requires a goal", () => {
+    expect(validateWorkflowBuilderDraft({ goal: "" }).ok).toBe(false);
+    expect(validateWorkflowBuilderDraft({ goal: "  ship it  " }).ok).toBe(true);
+  });
+
+  it("buildWorkflowCraftBrief includes goal, scope, and phases", () => {
+    const brief = buildWorkflowCraftBrief({
+      goal: "Review PRs",
+      name: "review-prs",
+      scope: "project",
+      phases: defaultWorkflowGraphFromGoal("Review PRs"),
+    });
+    expect(brief.startsWith("/create-workflow")).toBe(true);
+    expect(brief).toMatch(/Review PRs/);
+    expect(brief).toMatch(/review-prs/);
+    expect(brief).toMatch(/Pipeline structure/);
+    expect(brief).toMatch(/Plan/);
+  });
+});
+
 describe("withCreateWorkflowTile", () => {
   it("Grok with no workflow group gets a User Workflows group with create-workflow first", () => {
     const out = withCreateWorkflowTile(
@@ -1033,12 +1069,13 @@ describe("withCreateWorkflowTile", () => {
       { backend: "grok" },
     );
     const wf = out.find((g: { kind: string }) => g.kind === "workflow") as {
-      title: string; items: { name: string; invoke: string }[];
+      title: string; items: { name: string; invoke: string; openWorkflowBuilder?: boolean }[];
     };
     expect(wf).toBeDefined();
     expect(wf.title).toBe("User Workflows");
     expect(wf.items[0].name).toBe("create-workflow");
     expect(wf.items[0].invoke).toBe("/create-workflow ");
+    expect(wf.items[0].openWorkflowBuilder).toBe(true);
   });
 
   it("prepends create-workflow ahead of saved workflow tiles without duplicating", () => {
@@ -1073,6 +1110,17 @@ describe("withCreateWorkflowTile", () => {
 
   it("does not feature-pin workflow (prepend + fallback keeps create first without hiding scripts)", () => {
     expect(CAPABILITY_FEATURED.workflow).toBeUndefined();
+  });
+
+  it("capabilityGroupsView labels Create Workflow and marks builder action", () => {
+    const groups = withCreateWorkflowTile([], { backend: "grok" });
+    const v = capabilityGroupsView({ groups });
+    const item = v[0].items[0];
+    expect(item.name).toBe("create-workflow");
+    expect(item.label).toBe("Create Workflow");
+    expect(item.invokeLabel).toBe("/create-workflow");
+    expect(item.action).toBe("builder");
+    expect(item.openWorkflowBuilder).toBe(true);
   });
 });
 
@@ -1464,3 +1512,53 @@ describe("capabilityGroupsView — featured partition", () => {
   });
 });
 
+
+
+describe("userPromptShouldCollapse", () => {
+  it("returns false for empty, whitespace, and short single-line prompts", () => {
+    expect(userPromptShouldCollapse("")).toBe(false);
+    expect(userPromptShouldCollapse("   ")).toBe(false);
+    expect(userPromptShouldCollapse("Fix the login bug")).toBe(false);
+    expect(userPromptShouldCollapse("a".repeat(USER_PROMPT_COLLAPSE_MIN_CHARS))).toBe(false);
+  });
+
+  it("returns true when the prompt contains a newline after trim", () => {
+    expect(userPromptShouldCollapse("line one\nline two")).toBe(true);
+    expect(userPromptShouldCollapse("  first\nsecond  ")).toBe(true);
+  });
+
+  it("returns true when trimmed length exceeds USER_PROMPT_COLLAPSE_MIN_CHARS", () => {
+    expect(userPromptShouldCollapse("a".repeat(USER_PROMPT_COLLAPSE_MIN_CHARS + 1))).toBe(true);
+  });
+
+  it("exports a positive min-chars constant", () => {
+    expect(USER_PROMPT_COLLAPSE_MIN_CHARS).toBeGreaterThan(0);
+    expect(USER_PROMPT_COLLAPSE_MIN_CHARS).toBe(120);
+  });
+});
+
+// M1 product-review: agent/user markdown must not inject active URL schemes.
+describe("isSafeHref", () => {
+  it("allows http(s) and vscode schemes", () => {
+    expect(isSafeHref("https://example.com/a")).toBe(true);
+    expect(isSafeHref("http://example.com")).toBe(true);
+    expect(isSafeHref("vscode://file/foo")).toBe(true);
+    expect(isSafeHref("vscode-insiders://file/foo")).toBe(true);
+  });
+
+  it("allows scheme-less relative paths and fragments", () => {
+    expect(isSafeHref("src/foo.ts")).toBe(true);
+    expect(isSafeHref("./docs/README.md")).toBe(true);
+    expect(isSafeHref("#section")).toBe(true);
+  });
+
+  it("rejects javascript, data, vbscript, protocol-relative, and empty", () => {
+    expect(isSafeHref("javascript:alert(1)")).toBe(false);
+    expect(isSafeHref("JAVASCRIPT:alert(1)")).toBe(false);
+    expect(isSafeHref("data:text/html,hi")).toBe(false);
+    expect(isSafeHref("vbscript:msgbox")).toBe(false);
+    expect(isSafeHref("//evil.example/x")).toBe(false);
+    expect(isSafeHref("")).toBe(false);
+    expect(isSafeHref("   ")).toBe(false);
+  });
+});

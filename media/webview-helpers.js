@@ -17,6 +17,25 @@
     return FILE_EXTS.has(m[1].toLowerCase());
   }
 
+  /**
+   * Safe href for chat markdown links (agent/user transcript → DOM).
+   * Allows http(s), vscode / vscode-insiders, fragment-only (#…), and
+   * scheme-less relative paths. Rejects javascript:, data:, vbscript:,
+   * protocol-relative //…, control chars, and any other scheme.
+   */
+  function isSafeHref(url) {
+    const u = String(url == null ? "" : url).trim();
+    if (!u) return false;
+    if (/[\u0000-\u001f\u007f]/.test(u)) return false;
+    if (u.startsWith("//")) return false;
+    if (u.startsWith("#")) return true;
+    const m = u.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+    if (!m) return true; // relative / path-like, no scheme
+    const scheme = m[1].toLowerCase();
+    return scheme === "http" || scheme === "https"
+      || scheme === "vscode" || scheme === "vscode-insiders";
+  }
+
   function formatRelativeTime(ts, now) {
     if (!ts) return "";
     const base = typeof now === "number" ? now : Date.now();
@@ -817,10 +836,12 @@
       kind: "workflow",
       name: "create-workflow",
       description:
-        "Author a new multi-agent workflow, smoke-check it, and save under .grok/workflows/.",
+        "Describe a goal — the AI designs agents, phases, and saves a runnable workflow under .grok/workflows/.",
       invoke: "/create-workflow ",
       source: "Built in",
       origin: "synthetic",
+      // Opens the Workflow Builder overlay instead of only seeding the composer.
+      openWorkflowBuilder: true,
     };
 
     const idx = list.findIndex((g) => g && g.kind === "workflow");
@@ -954,6 +975,144 @@
    * so it carries no `featuredCount` and the renderer's fallback treats it as
    * "show everything."
    */
+  /**
+   * Display label for a capability row. Display-only — `name` stays the identity key.
+   * - grokbit: strip `grokbit-` prefix, capitalize remainder (Explore, Plan, …)
+   * - workflow: kebab-case → Title Case (create-workflow → Create Workflow)
+   * - other kinds: raw name
+   */
+  function capabilityDisplayLabel(kind, name) {
+    const n = name == null ? "" : String(name);
+    if (kind === "grokbit" && n.startsWith("grokbit-")) {
+      return n.slice(8).charAt(0).toUpperCase() + n.slice(9);
+    }
+    if (kind === "workflow" && n) {
+      return n.split("-").filter(Boolean).map((seg) =>
+        seg.charAt(0).toUpperCase() + seg.slice(1).toLowerCase()
+      ).join(" ");
+    }
+    return n;
+  }
+
+  /**
+   * Slash teaching chip — first token of the first line only, so multi-line
+   * craft seeds never pollute the single-line chip UI.
+   */
+  function capabilityInvokeLabel(invoke) {
+    if (typeof invoke !== "string" || !invoke) return undefined;
+    const firstLine = invoke.split(/\r?\n/, 1)[0].trim();
+    const token = firstLine.split(/\s+/, 1)[0];
+    return token || undefined;
+  }
+
+  /** Caps for the Workflow Builder canvas (a11y list, not freeform infinite graph). */
+  const WORKFLOW_BUILDER_MAX_PHASES = 12;
+  const WORKFLOW_BUILDER_MAX_AGENTS_PER_PHASE = 8;
+
+  /**
+   * Default pipeline when the user opens the builder with an empty graph.
+   * @returns {{ title: string, agents: { label: string, capabilityMode: string }[] }[]}
+   */
+  function defaultWorkflowGraphFromGoal(goal) {
+    const g = (goal == null ? "" : String(goal)).trim();
+    const suffix = g ? " for this goal" : "";
+    return [
+      {
+        title: "Plan",
+        agents: [{ label: "planner" + suffix, capabilityMode: "read-only" }],
+      },
+      {
+        title: "Implement",
+        agents: [{ label: "implementer" + suffix, capabilityMode: "read-write" }],
+      },
+      {
+        title: "Verify",
+        agents: [{ label: "verifier" + suffix, capabilityMode: "read-only" }],
+      },
+    ];
+  }
+
+  /**
+   * @param {{ goal?: string, name?: string, scope?: string, constraints?: string, phases?: unknown[] }} draft
+   * @returns {{ ok: boolean, errors: string[] }}
+   */
+  function validateWorkflowBuilderDraft(draft) {
+    draft = draft || {};
+    const errors = [];
+    const goal = (draft.goal == null ? "" : String(draft.goal)).trim();
+    if (!goal) errors.push("Goal is required.");
+    const name = (draft.name == null ? "" : String(draft.name)).trim();
+    if (name && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) {
+      errors.push("Name must be lowercase letters, digits, and hyphens (e.g. review-changes).");
+    }
+    const phases = Array.isArray(draft.phases) ? draft.phases : [];
+    if (phases.length > WORKFLOW_BUILDER_MAX_PHASES) {
+      errors.push("At most " + WORKFLOW_BUILDER_MAX_PHASES + " phases.");
+    }
+    for (let i = 0; i < phases.length; i++) {
+      const p = phases[i] || {};
+      const agents = Array.isArray(p.agents) ? p.agents : [];
+      if (agents.length > WORKFLOW_BUILDER_MAX_AGENTS_PER_PHASE) {
+        errors.push("Phase " + (i + 1) + ": at most " + WORKFLOW_BUILDER_MAX_AGENTS_PER_PHASE + " agents.");
+      }
+    }
+    return { ok: errors.length === 0, errors };
+  }
+
+  /**
+   * Structured brief for /create-workflow (seed-only; never auto-sends).
+   * @param {{ goal?: string, name?: string, scope?: string, constraints?: string, phases?: { title?: string, agents?: { label?: string, capabilityMode?: string }[] }[] }} draft
+   * @returns {string}
+   */
+  function buildWorkflowCraftBrief(draft) {
+    draft = draft || {};
+    const goal = (draft.goal == null ? "" : String(draft.goal)).trim();
+    const name = (draft.name == null ? "" : String(draft.name)).trim();
+    const scope = draft.scope === "user" ? "user" : "project";
+    const constraints = (draft.constraints == null ? "" : String(draft.constraints)).trim();
+    const phases = Array.isArray(draft.phases) ? draft.phases : [];
+    const scopePath = scope === "user"
+      ? "~/.grok/workflows/"
+      : "<repo>/.grok/workflows/";
+    const lines = [
+      "/create-workflow",
+      "",
+      "Please author a multi-agent workflow from this brief. Gather any missing details, then write a smoke-checked .rhai under " + scopePath + (name || "<name>") + ".rhai.",
+      "",
+      "## Goal",
+      goal || "(not provided)",
+    ];
+    if (name) {
+      lines.push("", "## Suggested name", name);
+    }
+    lines.push("", "## Scope", scope === "user" ? "User home (~/.grok/workflows/)" : "Project (.grok/workflows/)");
+    if (constraints) {
+      lines.push("", "## Constraints", constraints);
+    }
+    if (phases.length) {
+      lines.push("", "## Pipeline structure (from the visual builder)");
+      phases.forEach((p, i) => {
+        const title = (p && p.title) ? String(p.title).trim() : ("Phase " + (i + 1));
+        lines.push((i + 1) + ". **" + title + "**");
+        const agents = p && Array.isArray(p.agents) ? p.agents : [];
+        if (!agents.length) {
+          lines.push("   - (no agents listed — invent appropriate ones)");
+        } else {
+          agents.forEach((a) => {
+            const label = (a && a.label) ? String(a.label).trim() : "agent";
+            const mode = (a && a.capabilityMode) ? String(a.capabilityMode).trim() : "read-only";
+            lines.push("   - agent `" + label + "` (capability_mode: " + mode + ")");
+          });
+        }
+      });
+    }
+    lines.push(
+      "",
+      "Design agents, phases, and verification as needed. Prefer project scope unless I said otherwise. After save, tell me how to run it.",
+    );
+    return lines.join("\n");
+  }
+
   function capabilityGroupsView(opts) {
     opts = opts || {};
     const groups = Array.isArray(opts.groups) ? opts.groups : [];
@@ -964,7 +1123,10 @@
         raw = raw || {};
         const invoke = typeof raw.invoke === "string" && raw.invoke ? raw.invoke : undefined;
         const path = typeof raw.path === "string" && raw.path ? raw.path : undefined;
-        const action = invoke ? "invoke" : (path ? "open" : "inert");
+        const openWorkflowBuilder = !!raw.openWorkflowBuilder;
+        const action = openWorkflowBuilder
+          ? "builder"
+          : (invoke ? "invoke" : (path ? "open" : "inert"));
         const source = raw.source || "";
         const hint = typeof raw.hint === "string" && raw.hint.trim() ? truncateCapabilityDescription(raw.hint) : undefined;
         const sourceBadge = typeof raw.sourceBadge === "string" && raw.sourceBadge.trim()
@@ -977,10 +1139,8 @@
         return {
           kind: raw.kind,
           name: raw.name || "",
-          label: raw.kind === "grokbit" && (raw.name || "").startsWith("grokbit-")
-            ? (raw.name.slice(8).charAt(0).toUpperCase() + raw.name.slice(9))
-            : (raw.name || ""),
-          invokeLabel: invoke ? invoke.trim() : undefined,
+          label: capabilityDisplayLabel(raw.kind, raw.name || ""),
+          invokeLabel: capabilityInvokeLabel(invoke),
           description: truncateCapabilityDescription(raw.description),
           hint,
           invoke,
@@ -989,6 +1149,7 @@
           sourceBadge,
           workspaceSource: source.startsWith("Project") || !!sourceBadge,
           action,
+          openWorkflowBuilder,
           inert: action === "inert",
           hasDetail,
           detailPath: hasDetail ? detailPath : undefined,
@@ -1380,8 +1541,24 @@
     return PASTE_IMAGE_MIME.has(m);
   }
 
+  /**
+   * Whether a user prompt should show one-line collapse chrome in the chat bubble.
+   * Deterministic (no layout measurement) so happy-dom tests stay reliable.
+   * Multi-line (any newline after trim) or longer than USER_PROMPT_COLLAPSE_MIN_CHARS.
+   * Layout measurement in the webview may only *add* collapse cases later — never
+   * remove ones this function marks true.
+   */
+  const USER_PROMPT_COLLAPSE_MIN_CHARS = 120;
+
+  function userPromptShouldCollapse(text) {
+    const s = String(text == null ? "" : text).trim();
+    if (!s) return false;
+    if (s.includes("\n")) return true;
+    return s.length > USER_PROMPT_COLLAPSE_MIN_CHARS;
+  }
+
   const api = {
-    FILE_EXTS, looksLikeFileRef, formatRelativeTime, modelDisplayName,
+    FILE_EXTS, looksLikeFileRef, isSafeHref, formatRelativeTime, modelDisplayName,
     MIC_STATES, nextMicState, trailingSendPhrase, buildQuestionAnswers,
     isSubagentToolCall, subagentLabel, shouldStickToBottom, clampScrollTop, splitMath,
     stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext,
@@ -1398,9 +1575,13 @@
     CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK,
     CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups, markLocalSuiteOverrides,
     userWorkflowsPanelState, withCreateWorkflowTile,
+    capabilityDisplayLabel, capabilityInvokeLabel,
+    WORKFLOW_BUILDER_MAX_PHASES, WORKFLOW_BUILDER_MAX_AGENTS_PER_PHASE,
+    defaultWorkflowGraphFromGoal, validateWorkflowBuilderDraft, buildWorkflowCraftBrief,
     CAPABILITY_ROW_DESCRIPTION_MAX, truncateCapabilityDescription,
     PASTE_IMAGE_MAX_BYTES, PASTE_IMAGE_MAX_COUNT, PASTE_IMAGE_MIME,
     canAcceptPasteImageBytes, isAllowedPasteImageMime,
+    USER_PROMPT_COLLAPSE_MIN_CHARS, userPromptShouldCollapse,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

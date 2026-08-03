@@ -95,11 +95,11 @@ describe("Grokbit Actions — the bundled workflow group", () => {
     const { window, doc } = bootWebview();
     sendCapabilities(window, [SUITE_GROUP, ...GROUPS]);
     // Suite group has no section title (duplicates the "Grokbit Workflows" panel
-    // heading). User Workflows (create-workflow tile) still appears after the suite.
+    // heading). User Workflows (Create Workflow tile) still appears after the suite.
     expect(headings(panelOf(doc))).toEqual(["User Workflows"]);
     const panelNames = [...panelOf(doc).querySelectorAll(".capability-row-name")].map((el) => el.textContent);
     expect(panelNames[0]).toBe("Explore");
-    expect(panelNames).toContain("create-workflow");
+    expect(panelNames).toContain("Create Workflow");
     click(window, doc.getElementById("capabilities-btn") as HTMLElement);
     // Session controls first; suite has no header; User Workflows after.
     expect(headings(popoverOf(doc))).toEqual(["Session controls", "User Workflows"]);
@@ -119,7 +119,7 @@ describe("Grokbit Actions — the bundled workflow group", () => {
     const panel = panelOf(doc);
     const names = [...panel.querySelectorAll(".capability-row-name")].map((el) => el.textContent);
     // Suite tiles first; synthetic Create workflow always under User Workflows.
-    expect(names).toEqual(["Explore", "Plan", "Implement", "Test", "Document", "create-workflow"]);
+    expect(names).toEqual(["Explore", "Plan", "Implement", "Test", "Document", "Create Workflow"]);
     expect(panel.querySelector(".capability-expand")).toBeNull();
   });
 
@@ -156,13 +156,13 @@ describe("Grokbit Actions — the bundled workflow group", () => {
   // Provisioning off, or a failed copy: host may still send Skills/Agents/
   // Commands, but the visible-kinds filter drops them — honest empty state,
   // not a heading with no rows and not a vanished panel.
-  it("[R] suite absent (only non-grokbit groups) → User Workflows create-workflow tile, not Skills/Agents/Commands", () => {
+  it("[R] suite absent (only non-grokbit groups) → User Workflows Create Workflow tile, not Skills/Agents/Commands", () => {
     const { window, doc } = bootWebview();
     sendCapabilities(window, NON_GROKBIT_GROUPS);
     expect(headings(panelOf(doc))).toEqual(["User Workflows"]);
     expect(panelOf(doc).hidden).toBe(false);
     const names = [...panelOf(doc).querySelectorAll(".capability-row-name")].map((el) => el.textContent);
-    expect(names).toEqual(["create-workflow"]);
+    expect(names).toEqual(["Create Workflow"]);
     expect(panelOf(doc).textContent).not.toMatch(/No skills installed yet/);
     expect(panelOf(doc).textContent).not.toMatch(/\bSkills\b|\bAgents\b|\bCommands\b/);
   });
@@ -191,11 +191,11 @@ describe("Grokbit Actions — the bundled workflow group", () => {
     expect(headings(panelOf(doc))).toEqual(["User Workflows"]);
     const names = [...panelOf(doc).querySelectorAll(".capability-row-name")].map((el) => el.textContent);
     // Synthetic Create tile leads the User Workflows group (suite rows still sit above).
-    const uwIdx = names.indexOf("create-workflow");
+    const uwIdx = names.indexOf("Create Workflow");
     expect(uwIdx).toBeGreaterThanOrEqual(0);
-    expect(names.slice(uwIdx)).toEqual(["create-workflow", "review-changes"]);
+    expect(names.slice(uwIdx)).toEqual(["Create Workflow", "Review Changes"]);
     const row = [...panelOf(doc).querySelectorAll(".capability-row")].find((r) =>
-      r.querySelector(".capability-row-name")?.textContent === "review-changes",
+      r.querySelector(".capability-row-name")?.textContent === "Review Changes",
     ) as HTMLElement;
     expect(row).toBeDefined();
     posted.length = 0;
@@ -204,18 +204,70 @@ describe("Grokbit Actions — the bundled workflow group", () => {
     expect(posted.some((m) => m.type === "send")).toBe(false);
   });
 
-  it("User Workflows create-workflow tile seeds /create-workflow without auto-send", () => {
+  it("User Workflows Create Workflow tile opens builder (not bare seed) without auto-send", () => {
     const { window, doc, posted } = bootWebview();
     sendCapabilities(window, [SUITE_GROUP]);
     const row = [...panelOf(doc).querySelectorAll(".capability-row")].find((r) =>
-      r.querySelector(".capability-row-name")?.textContent === "create-workflow",
+      r.querySelector(".capability-row-name")?.textContent === "Create Workflow",
     ) as HTMLElement;
     expect(row).toBeDefined();
+    expect(row.getAttribute("data-kind")).toBe("workflow");
     expect(row.querySelector(".capability-row-cmd")?.textContent).toBe("/create-workflow");
     posted.length = 0;
     click(window, row);
-    expect((doc.getElementById("input") as HTMLTextAreaElement).value).toBe("/create-workflow ");
+    const builder = doc.getElementById("workflow-builder");
+    expect(builder).toBeTruthy();
+    expect(builder?.hidden).toBe(false);
+    expect(builder?.textContent).toMatch(/Create Workflow|Goal/i);
+    expect(builder?.textContent).toMatch(/Pipeline canvas|Craft with AI/i);
+    // Composer not auto-filled until Craft; no send.
     expect(posted.some((m) => m.type === "send")).toBe(false);
+  });
+
+  it("Workflow Builder Craft with AI seeds composer without auto-send", () => {
+    const { window, doc, posted } = bootWebview();
+    sendCapabilities(window, [SUITE_GROUP]);
+    const row = [...panelOf(doc).querySelectorAll(".capability-row")].find((r) =>
+      r.querySelector(".capability-row-name")?.textContent === "Create Workflow",
+    ) as HTMLElement;
+    click(window, row);
+    const builder = doc.getElementById("workflow-builder")!;
+    const goal = builder.querySelector("[data-wf-goal]") as HTMLTextAreaElement;
+    expect(goal).toBeTruthy();
+    goal.value = "Review pull requests safely";
+    goal.dispatchEvent(new window.Event("input", { bubbles: true }));
+    const craft = [...builder.querySelectorAll("button")].find((b) => b.textContent === "Craft with AI") as HTMLElement;
+    expect(craft).toBeTruthy();
+    posted.length = 0;
+    click(window, craft);
+    const input = doc.getElementById("input") as HTMLTextAreaElement;
+    expect(input.value).toMatch(/^\/create-workflow/);
+    expect(input.value).toMatch(/Review pull requests safely/);
+    expect(input.value).toMatch(/Pipeline structure/);
+    expect(posted.some((m) => m.type === "send")).toBe(false);
+    expect(builder.hidden).toBe(true);
+  });
+
+  // M3: dialog keyboard — Escape closes without Craft (empty draft = not dirty).
+  it("Workflow Builder Escape closes the overlay and marks aria-modal", () => {
+    const { window, doc } = bootWebview();
+    sendCapabilities(window, [SUITE_GROUP]);
+    const row = [...panelOf(doc).querySelectorAll(".capability-row")].find((r) =>
+      r.querySelector(".capability-row-name")?.textContent === "Create Workflow",
+    ) as HTMLElement;
+    click(window, row);
+    const builder = doc.getElementById("workflow-builder")!;
+    expect(builder.hidden).toBe(false);
+    expect(builder.getAttribute("aria-modal")).toBe("true");
+    // Empty draft is not dirty — Escape should close without confirm.
+    builder.dispatchEvent(new window.KeyboardEvent("keydown", {
+      key: "Escape", bubbles: true, cancelable: true,
+    }));
+    // Listener is on document (capture); also fire on document for happy-dom.
+    doc.dispatchEvent(new window.KeyboardEvent("keydown", {
+      key: "Escape", bubbles: true, cancelable: true,
+    }));
+    expect(builder.hidden).toBe(true);
   });
 
   it("Claude backend empty User Workflows copy is not a Grok-only dead-end", () => {
@@ -223,9 +275,9 @@ describe("Grokbit Actions — the bundled workflow group", () => {
     sendCapabilities(window, [SUITE_GROUP], { backend: "claude" });
     expect(panelOf(doc).textContent).toMatch(/\.claude\/workflows/i);
     expect(panelOf(doc).textContent).not.toMatch(/available on Grok only/i);
-    // No synthetic /create-workflow tile on Claude.
+    // No synthetic Create Workflow tile on Claude.
     const names = [...panelOf(doc).querySelectorAll(".capability-row-name")].map((el) => el.textContent);
-    expect(names).not.toContain("create-workflow");
+    expect(names).not.toContain("Create Workflow");
   });
 });
 
@@ -235,11 +287,11 @@ describe("capability browser — welcome panel", () => {
     sendCapabilities(window, GROUPS);
     const panel = panelOf(doc);
     expect(panel.hidden).toBe(false);
-    // Suite group: no section title; User Workflows (with create-workflow tile) follows.
+    // Suite group: no section title; User Workflows (with Create Workflow tile) follows.
     const headers = [...panel.querySelectorAll(".capability-group-title")].map((el) => el.textContent);
     expect(headers).toEqual(["User Workflows"]);
     const names = [...panel.querySelectorAll(".capability-row-name")].map((el) => el.textContent);
-    expect(names).toEqual(["plan", "new", "explore", "create-workflow"]);
+    expect(names).toEqual(["plan", "new", "explore", "Create Workflow"]);
   });
 
   // [R] The row's primary text is the plain name, with the slash form beside
@@ -384,7 +436,7 @@ describe("capability browser — welcome panel", () => {
     sendCapabilities(window, GROUPS);
     expect(panel.hidden).toBe(false); // visible while still priming — LOCKED, not hidden
     const lockedRows = [...panel.querySelectorAll(".capability-row")];
-    // GROUPS suite (3) + synthetic create-workflow tile
+    // GROUPS suite (3) + synthetic Create Workflow tile
     expect(lockedRows.length).toBe(4);
     for (const r of lockedRows) expect(r.classList.contains("locked")).toBe(true);
     // Refresh follows the rows' lock state: nothing here is actionable yet.
@@ -438,14 +490,14 @@ describe("capability browser — welcome panel", () => {
   // honest empty state, not a vanished panel — hiding here is what makes the
   // feature look broken to a user with nothing installed yet
   // (docs/plans/session-tab-ux-overhaul.md § Approach C / WP2 checklist).
-  it("[R] groups: [] on a live session renders User Workflows create-workflow tile, not a hidden panel", () => {
+  it("[R] groups: [] on a live session renders User Workflows Create Workflow tile, not a hidden panel", () => {
     const { window, doc } = bootWebview();
     sendCapabilities(window, []);
     const panel = panelOf(doc);
     expect(panel.hidden).toBe(false);
     expect(panel.textContent).toMatch(/User Workflows/i);
     const names = [...panel.querySelectorAll(".capability-row-name")].map((el) => el.textContent);
-    expect(names).toEqual(["create-workflow"]);
+    expect(names).toEqual(["Create Workflow"]);
     expect((doc.getElementById("welcome") as HTMLElement).hidden).toBe(false);
   });
 
@@ -595,16 +647,16 @@ describe("capability browser — initialState / showCapabilities gating", () => 
 
 // T5: empty-state + tooltip copy must name workflows, not skills/commands/agents.
 describe("capability browser — empty-state and tooltip wording (T5)", () => {
-  it("both mounts show User Workflows create-workflow tile on Grok empty; chat.js has no old wording", () => {
+  it("both mounts show User Workflows Create Workflow tile on Grok empty; chat.js has no old wording", () => {
     const { window, doc } = bootWebview();
     sendCapabilities(window, []);
     expect(panelOf(doc).textContent).toMatch(/User Workflows/);
     expect([...panelOf(doc).querySelectorAll(".capability-row-name")].map((el) => el.textContent))
-      .toEqual(["create-workflow"]);
+      .toEqual(["Create Workflow"]);
     click(window, doc.getElementById("capabilities-btn") as HTMLElement);
     expect(popoverOf(doc).textContent).toMatch(/User Workflows/);
     expect([...popoverOf(doc).querySelectorAll(".capability-row:not(.capability-row-toggle) .capability-row-name")]
-      .map((el) => el.textContent)).toContain("create-workflow");
+      .map((el) => el.textContent)).toContain("Create Workflow");
 
     const chatSrc = read("../media/chat.js");
     expect(chatSrc).not.toContain("No skills installed yet");
@@ -775,7 +827,7 @@ describe("capability browser — session toggles (auto-accept)", () => {
     const pop = openPopover(doc, window);
     expect(pop.textContent).toMatch(/User Workflows/);
     expect([...pop.querySelectorAll(".capability-row:not(.capability-row-toggle) .capability-row-name")]
-      .map((el) => el.textContent)).toContain("create-workflow");
+      .map((el) => el.textContent)).toContain("Create Workflow");
     expect(switchOf(pop)).not.toBeNull();
   });
 
@@ -801,7 +853,7 @@ describe("capability browser — Refresh affordance", () => {
     sendCapabilities(window, GROUPS);
     const panel = panelOf(doc);
     const before = panel.querySelectorAll(".capability-row").length;
-    // GROUPS suite (3) + synthetic create-workflow tile
+    // GROUPS suite (3) + synthetic Create Workflow tile
     expect(before).toBe(4);
 
     posted.length = 0;
@@ -1024,9 +1076,9 @@ describe("capability browser — featured partition + expand", () => {
       { kind: "grokbit", name: "alpha", description: "Extra workflow.", invoke: "/alpha ", source: "Grokbit", origin: "disk" },
     ],
   }];
-  // Suite featured set; create-workflow is a separate User Workflows tile always present on Grok.
-  const FEATURED_FIVE = ["Explore", "Plan", "Implement", "Test", "Document", "create-workflow"];
-  const ALL_SIX = ["Explore", "Plan", "Implement", "Test", "Document", "alpha", "create-workflow"];
+  // Suite featured set; Create Workflow is a separate User Workflows tile always present on Grok.
+  const FEATURED_FIVE = ["Explore", "Plan", "Implement", "Test", "Document", "Create Workflow"];
+  const ALL_SIX = ["Explore", "Plan", "Implement", "Test", "Document", "alpha", "Create Workflow"];
 
   // Excludes the session-toggle row's own .capability-row-name (it shares the
   // class but is not part of the discovered-groups list under test here).

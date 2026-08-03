@@ -117,6 +117,8 @@ How they work in depth: [docs/grokbit-workflows.md](docs/grokbit-workflows.md) (
 | **Sign out** | Per-backend logout; history stays on disk. |
 | **Telemetry** | Anonymous `session_start` only (install id + mode/model/effort) — never content, code, or paths. Opt out anytime. |
 
+![New session tab — full-width canvas with Grokbit Actions and Session setup](docs/screenshots/NewTab.png)
+
 ![Multiple sessions in the launcher with status dots, each session its own editor tab](docs/screenshots/NewSession.png)
 
 ---
@@ -176,9 +178,9 @@ Or build from source:
 git clone https://github.com/irichner/grokbit-vscode.git
 cd grokbit-vscode
 npm install
-npm run rebuild             # bump → package → reinstall → publish to Marketplace
+npm run rebuild             # bump → package → reinstall → publish → commit+push
 # same as: ./scripts/install.sh  |  Windows: pwsh scripts\install.ps1
-# local only: npm run rebuild -- --no-publish
+# local only (no Marketplace, no git): npm run rebuild -- --no-publish
 # needs VSCE_PAT (Marketplace Manage) or: npx @vscode/vsce login Grokbit
 # in a Grok chat: /rebuild
 ```
@@ -217,6 +219,8 @@ Closing a tab stops that chat’s live process but keeps history on disk (unless
 
 The small line above **New session** reads e.g. `v2026.8.9 · 1.2B tokens`. That is **not your usage** — it is what building Grokbit itself has cost, aggregated across every maintainer and every session, baked into the build and identical for everyone (hover for the exact number and the date it was measured). Your own session's context lives in the composer donut and the status-bar percentage.
 
+![New session tab — full-width canvas with Grokbit Actions and Session setup](docs/screenshots/NewTab.png)
+
 ![Multiple sessions in the launcher with status dots, each session its own editor tab](docs/screenshots/NewSession.png)
 
 </details>
@@ -233,7 +237,7 @@ A compact **Session setup** chip on the **left of the top bar** opens **Agent** 
 
 **Grokbit Actions** is on the welcome canvas of every new session, and any time from the **Grokbit Actions** button in the top bar or "Browse Grokbit Actions…" beside the composer's **+** button.
 
-By default it shows the **bundled Grokbit workflow** as bordered tiles — five skills that ship with the extension and work identically on Grok and Claude Code (see the [capabilities table](#grokbit-actions-bundled-workflow) above) — plus **User Workflows** from the active backend (Grok: `.grok/workflows/*.rhai`; Claude: `.claude/workflows/*.js`).
+By default it shows the **bundled Grokbit workflow** as bordered tiles — five skills that ship with the extension and work identically on Grok and Claude Code (see the [capabilities table](#grokbit-actions-bundled-workflow) above) — plus **User Workflows** from the active backend (Grok: `.grok/workflows/*.rhai`; Claude: `.claude/workflows/*.js`). User Workflow tiles use readable Title Case names (e.g. **Create Workflow**) in the same cyber green as the suite. On Grok, **Create Workflow** opens a **Workflow Builder** (goal form + phase/agent canvas); **Craft with AI** seeds a structured brief for the create-workflow skill — nothing auto-sends.
 
 **How the workflows work (full technical):** roles, loops, caps, artifacts, and human gates for each step — [docs/grokbit-workflows.md](docs/grokbit-workflows.md). In the extension, open a workflow tile’s **Details** control for the same guide in-panel.
 
@@ -310,7 +314,9 @@ The **clock** icon (and the launcher) lists this project’s sessions, newest fi
 - The list loads **100 at a time** and loads more as you scroll (stays fast with thousands of sessions).
 - **Clear all history** removes every session for this project **except** ones that still have an open tab.
 
-![Session history — resume, rename, delete, search, or clear past sessions](docs/screenshots/SessionHistory.png)
+![Session history popover — resume, rename, delete, search, or clear past sessions](docs/screenshots/SessionChatHistory.png)
+
+![Activity-bar launcher — Recent sessions with status dots and backend badges](docs/screenshots/SessionHistory.png)
 
 </details>
 
@@ -364,9 +370,7 @@ While the agent works, each turn's activity rolls into **one compact carousel st
 <details>
 <summary><strong>Model & thinking depth</strong></summary>
 
-Pick the **model** and **reasoning effort** (none → xhigh) from the gear menu or the small model chip in the toolbar. Effort is how deeply Grok “thinks” (more depth = more tokens/time) and is **per tab**, not global. Changing effort restarts that session only (optional summarize-and-restart). Some model switches restart when the CLI requires a different agent type — the extension handles that. Claude has no effort axis; the UI omits it cleanly.
-
-![Model and reasoning-effort controls in the gear popover](docs/screenshots/ModelSelection.png)
+Pick the **model** and **reasoning effort** (none → xhigh) from the **Session setup** chip (top bar), the model chip in the composer toolbar, the gear menu, or the command palette. Effort is how deeply Grok “thinks” (more depth = more tokens/time) and is **per tab**, not global. Changing effort restarts that session only (optional summarize-and-restart). Some model switches restart when the CLI requires a different agent type — the extension handles that. Claude has no effort axis; the UI omits it cleanly.
 
 </details>
 
@@ -384,8 +388,6 @@ Pick the **model** and **reasoning effort** (none → xhigh) from the gear menu 
 - **LaTeX** math renders via MathJax (offline). Hover a display equation to copy or export PNG/SVG.
 - **Mermaid** diagrams render inline (offline, theme-aware). Hover to copy source or export.
 - Normal markdown (code, lists, tables) is fully supported.
-
-![Mermaid diagram rendered inline in the chat](docs/screenshots/v1.4.6%20Mermaid%20diagrams.png)
 
 </details>
 

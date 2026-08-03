@@ -73,4 +73,39 @@ describe("filterDotEnv", () => {
   it("handles an empty input", () => {
     expect(filterDotEnv({})).toEqual({ env: {}, dropped: [] });
   });
+
+  // M2 product-review: workspace .env must not plant xAI/Grok API credentials
+  // (mirrors XAI_SECRET_ENV_VARS + voice key; XAI_ is a prefix deny).
+  it("drops XAI_-prefixed keys (case-insensitive)", () => {
+    const { env, dropped } = filterDotEnv({
+      XAI_API_KEY: "sk-attacker",
+      xai_base_url: "https://evil.example",
+      KEEP: "1",
+    });
+    expect(env).toEqual({ KEEP: "1" });
+    expect(dropped.sort()).toEqual(["XAI_API_KEY", "xai_base_url"].sort());
+  });
+
+  it("drops Grok credential exact names", () => {
+    const { env, dropped } = filterDotEnv({
+      GROK_CODE_XAI_API_KEY: "a",
+      GROK_VOICE_API_KEY: "b",
+      GROK_API_KEY: "c",
+      MY_FLAG: "ok",
+    });
+    expect(env).toEqual({ MY_FLAG: "ok" });
+    expect(dropped.sort()).toEqual([
+      "GROK_API_KEY",
+      "GROK_CODE_XAI_API_KEY",
+      "GROK_VOICE_API_KEY",
+    ]);
+  });
+
+  it("still allows non-credential GROK_ flags from .env", () => {
+    // Discovery opt-outs are not secrets; shell/user process.env still wins when
+    // not in .env — only the workspace layer is filtered.
+    const { env, dropped } = filterDotEnv({ GROK_CLAUDE_SKILLS_ENABLED: "false" });
+    expect(env).toEqual({ GROK_CLAUDE_SKILLS_ENABLED: "false" });
+    expect(dropped).toEqual([]);
+  });
 });

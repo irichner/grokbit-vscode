@@ -910,6 +910,12 @@
     if (locked) {
       // No click handler at all — same treatment as .inert. A hover
       // affordance on something that can't be clicked yet is the bug.
+    } else if (item.action === "builder" || item.openWorkflowBuilder) {
+      row.onclick = (e) => {
+        e.stopPropagation();
+        closePopovers();
+        openWorkflowBuilder();
+      };
     } else if (item.action === "invoke") {
       // Replace, don't append — only the last workflow/skill click should remain
       // in the composer (stacked /cmd1\n/cmd2 is never useful for Actions).
@@ -922,6 +928,365 @@
       row.onclick = (e) => { e.stopPropagation(); vscode.postMessage({ type: "openFile", path: item.path }); closePopovers(); };
     }
     return row;
+  }
+
+  // ── Workflow Builder (goal form + vanilla phase/agent canvas) ─────────
+  // Pure draft helpers live in webview-helpers; this is the overlay DOM only.
+  let workflowBuilderEl = null;
+  let workflowBuilderDraft = null;
+  let workflowBuilderBaseline = null;
+  let workflowBuilderKeyHandler = null;
+  let workflowBuilderPrevFocus = null;
+
+  function cloneWorkflowPhases(phases) {
+    return (Array.isArray(phases) ? phases : []).map((p) => ({
+      title: p && p.title != null ? String(p.title) : "Phase",
+      agents: (p && Array.isArray(p.agents) ? p.agents : []).map((a) => ({
+        label: a && a.label != null ? String(a.label) : "agent",
+        capabilityMode: a && a.capabilityMode ? String(a.capabilityMode) : "read-only",
+      })),
+    }));
+  }
+
+  function workflowBuilderIsDirty() {
+    if (!workflowBuilderDraft || !workflowBuilderBaseline) return false;
+    try {
+      return JSON.stringify(workflowBuilderDraft) !== JSON.stringify(workflowBuilderBaseline);
+    } catch (_) {
+      return true;
+    }
+  }
+
+  function workflowBuilderFocusables() {
+    if (!workflowBuilderEl) return [];
+    const sel = "button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex=\"-1\"])";
+    return [...workflowBuilderEl.querySelectorAll(sel)];
+  }
+
+  function detachWorkflowBuilderKeys() {
+    if (workflowBuilderKeyHandler) {
+      document.removeEventListener("keydown", workflowBuilderKeyHandler, true);
+      workflowBuilderKeyHandler = null;
+    }
+  }
+
+  function closeWorkflowBuilder(force) {
+    if (!workflowBuilderEl || workflowBuilderEl.hidden) return;
+    if (!force && workflowBuilderIsDirty()) {
+      const ok = typeof window.confirm === "function"
+        ? window.confirm("Discard this workflow draft?")
+        : true;
+      if (!ok) return;
+    }
+    detachWorkflowBuilderKeys();
+    workflowBuilderEl.hidden = true;
+    workflowBuilderDraft = null;
+    workflowBuilderBaseline = null;
+    const prev = workflowBuilderPrevFocus;
+    workflowBuilderPrevFocus = null;
+    if (prev && typeof prev.focus === "function") {
+      try { prev.focus(); } catch (_) { /* element may be gone */ }
+    }
+  }
+
+  function openWorkflowBuilder() {
+    if (state.backend === "claude") return;
+    if (!workflowBuilderEl) {
+      workflowBuilderEl = document.createElement("div");
+      workflowBuilderEl.id = "workflow-builder";
+      workflowBuilderEl.setAttribute("role", "dialog");
+      workflowBuilderEl.setAttribute("aria-modal", "true");
+      workflowBuilderEl.setAttribute("aria-label", "Create Workflow");
+      document.body.appendChild(workflowBuilderEl);
+    } else {
+      workflowBuilderEl.setAttribute("aria-modal", "true");
+    }
+    workflowBuilderPrevFocus = document.activeElement;
+    workflowBuilderDraft = {
+      goal: "",
+      name: "",
+      scope: "project",
+      constraints: "",
+      phases: cloneWorkflowPhases(
+        typeof defaultWorkflowGraphFromGoal === "function"
+          ? defaultWorkflowGraphFromGoal("")
+          : [],
+      ),
+    };
+    workflowBuilderBaseline = JSON.parse(JSON.stringify(workflowBuilderDraft));
+    workflowBuilderEl.hidden = false;
+    // Escape closes (dirty confirm); Tab cycles focus inside the dialog (M3 a11y).
+    detachWorkflowBuilderKeys();
+    workflowBuilderKeyHandler = (e) => {
+      if (!workflowBuilderEl || workflowBuilderEl.hidden) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeWorkflowBuilder(false);
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const list = workflowBuilderFocusables();
+      if (!list.length) return;
+      const first = list[0];
+      const last = list[list.length - 1];
+      if (e.shiftKey) {
+        if (document.activeElement === first || !workflowBuilderEl.contains(document.activeElement)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (document.activeElement === last || !workflowBuilderEl.contains(document.activeElement)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", workflowBuilderKeyHandler, true);
+    renderWorkflowBuilder();
+    const goalEl = workflowBuilderEl.querySelector("[data-wf-goal]");
+    if (goalEl && typeof goalEl.focus === "function") goalEl.focus();
+  }
+
+  function renderWorkflowBuilder() {
+    if (!workflowBuilderEl || !workflowBuilderDraft) return;
+    const d = workflowBuilderDraft;
+    const maxP = WORKFLOW_BUILDER_MAX_PHASES || 12;
+    const maxA = WORKFLOW_BUILDER_MAX_AGENTS_PER_PHASE || 8;
+    const phases = Array.isArray(d.phases) ? d.phases : [];
+
+    workflowBuilderEl.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "wf-builder-head";
+    const title = document.createElement("div");
+    title.className = "wf-builder-title";
+    title.textContent = "Create Workflow";
+    head.appendChild(title);
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.textContent = "Close";
+    closeBtn.onclick = () => closeWorkflowBuilder(false);
+    head.appendChild(closeBtn);
+    workflowBuilderEl.appendChild(head);
+
+    const err = document.createElement("p");
+    err.className = "wf-builder-errors";
+    err.hidden = true;
+    err.dataset.wfErrors = "1";
+    workflowBuilderEl.appendChild(err);
+
+    const body = document.createElement("div");
+    body.className = "wf-builder-body";
+
+    const form = document.createElement("div");
+    form.className = "wf-builder-form";
+
+    function field(labelText, control) {
+      const lab = document.createElement("label");
+      lab.textContent = labelText;
+      lab.appendChild(control);
+      form.appendChild(lab);
+      return control;
+    }
+
+    const goal = document.createElement("textarea");
+    goal.dataset.wfGoal = "1";
+    goal.placeholder = "What should this workflow accomplish?";
+    goal.value = d.goal || "";
+    goal.oninput = () => { d.goal = goal.value; };
+    field("Goal (required)", goal);
+
+    const name = document.createElement("input");
+    name.type = "text";
+    name.placeholder = "review-changes";
+    name.value = d.name || "";
+    name.oninput = () => { d.name = name.value; };
+    field("Name (optional, kebab-case)", name);
+
+    const scopeWrap = document.createElement("div");
+    scopeWrap.className = "wf-builder-scope";
+    ["project", "user"].forEach((scopeId) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = scopeId === "project" ? "Project" : "User home";
+      b.setAttribute("aria-pressed", String(d.scope === scopeId));
+      b.onclick = () => {
+        d.scope = scopeId;
+        renderWorkflowBuilder();
+      };
+      scopeWrap.appendChild(b);
+    });
+    field("Save scope", scopeWrap);
+
+    const constraints = document.createElement("textarea");
+    constraints.placeholder = "Optional limits, tools to avoid, fan-out budget…";
+    constraints.value = d.constraints || "";
+    constraints.oninput = () => { d.constraints = constraints.value; };
+    field("Constraints (optional)", constraints);
+
+    body.appendChild(form);
+
+    const canvas = document.createElement("div");
+    canvas.className = "wf-builder-canvas";
+    const cHead = document.createElement("div");
+    cHead.className = "wf-builder-canvas-head";
+    const cTitle = document.createElement("span");
+    cTitle.textContent = "Pipeline canvas";
+    cHead.appendChild(cTitle);
+    const addPhase = document.createElement("button");
+    addPhase.type = "button";
+    addPhase.textContent = "Add phase";
+    addPhase.disabled = phases.length >= maxP;
+    addPhase.onclick = () => {
+      if (phases.length >= maxP) return;
+      phases.push({ title: "Phase " + (phases.length + 1), agents: [{ label: "agent", capabilityMode: "read-only" }] });
+      d.phases = phases;
+      renderWorkflowBuilder();
+    };
+    cHead.appendChild(addPhase);
+    canvas.appendChild(cHead);
+
+    if (phases.length >= maxP) {
+      const note = document.createElement("div");
+      note.className = "wf-builder-cap-note";
+      note.textContent = "Phase limit reached (" + maxP + ").";
+      canvas.appendChild(note);
+    }
+
+    const phaseRow = document.createElement("div");
+    phaseRow.className = "wf-builder-phases";
+    phases.forEach((phase, pi) => {
+      const card = document.createElement("div");
+      card.className = "wf-phase-card";
+      const titleIn = document.createElement("input");
+      titleIn.className = "wf-phase-title";
+      titleIn.value = phase.title || "";
+      titleIn.setAttribute("aria-label", "Phase title");
+      titleIn.oninput = () => { phase.title = titleIn.value; };
+      card.appendChild(titleIn);
+
+      const tools = document.createElement("div");
+      tools.className = "wf-phase-toolbar";
+      const up = document.createElement("button");
+      up.type = "button";
+      up.textContent = "↑";
+      up.title = "Move phase earlier";
+      up.disabled = pi === 0;
+      up.onclick = () => {
+        if (pi === 0) return;
+        const t = phases[pi - 1];
+        phases[pi - 1] = phases[pi];
+        phases[pi] = t;
+        renderWorkflowBuilder();
+      };
+      const down = document.createElement("button");
+      down.type = "button";
+      down.textContent = "↓";
+      down.title = "Move phase later";
+      down.disabled = pi === phases.length - 1;
+      down.onclick = () => {
+        if (pi >= phases.length - 1) return;
+        const t = phases[pi + 1];
+        phases[pi + 1] = phases[pi];
+        phases[pi] = t;
+        renderWorkflowBuilder();
+      };
+      const rm = document.createElement("button");
+      rm.type = "button";
+      rm.textContent = "Remove";
+      rm.onclick = () => {
+        phases.splice(pi, 1);
+        d.phases = phases;
+        renderWorkflowBuilder();
+      };
+      const addAg = document.createElement("button");
+      addAg.type = "button";
+      addAg.textContent = "+ agent";
+      const agents = Array.isArray(phase.agents) ? phase.agents : (phase.agents = []);
+      addAg.disabled = agents.length >= maxA;
+      addAg.onclick = () => {
+        if (agents.length >= maxA) return;
+        agents.push({ label: "agent", capabilityMode: "read-only" });
+        renderWorkflowBuilder();
+      };
+      tools.appendChild(up);
+      tools.appendChild(down);
+      tools.appendChild(addAg);
+      tools.appendChild(rm);
+      card.appendChild(tools);
+
+      const list = document.createElement("div");
+      list.className = "wf-agent-list";
+      agents.forEach((agent, ai) => {
+        const row = document.createElement("div");
+        row.className = "wf-agent-row";
+        const lab = document.createElement("input");
+        lab.type = "text";
+        lab.value = agent.label || "";
+        lab.setAttribute("aria-label", "Agent label");
+        lab.oninput = () => { agent.label = lab.value; };
+        const mode = document.createElement("select");
+        mode.setAttribute("aria-label", "Capability mode");
+        ["read-only", "read-write", "execute", "all"].forEach((m) => {
+          const o = document.createElement("option");
+          o.value = m;
+          o.textContent = m;
+          if ((agent.capabilityMode || "read-only") === m) o.selected = true;
+          mode.appendChild(o);
+        });
+        mode.onchange = () => { agent.capabilityMode = mode.value; };
+        const delA = document.createElement("button");
+        delA.type = "button";
+        delA.textContent = "×";
+        delA.title = "Remove agent";
+        delA.onclick = () => {
+          agents.splice(ai, 1);
+          renderWorkflowBuilder();
+        };
+        row.appendChild(lab);
+        row.appendChild(mode);
+        row.appendChild(delA);
+        list.appendChild(row);
+      });
+      card.appendChild(list);
+      phaseRow.appendChild(card);
+    });
+    canvas.appendChild(phaseRow);
+    body.appendChild(canvas);
+    workflowBuilderEl.appendChild(body);
+
+    const foot = document.createElement("div");
+    foot.className = "wf-builder-foot";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "Cancel";
+    cancel.onclick = () => closeWorkflowBuilder(false);
+    const craft = document.createElement("button");
+    craft.type = "button";
+    craft.className = "primary";
+    craft.textContent = "Craft with AI";
+    craft.onclick = () => {
+      const v = typeof validateWorkflowBuilderDraft === "function"
+        ? validateWorkflowBuilderDraft(d)
+        : { ok: !!(d.goal && String(d.goal).trim()), errors: [] };
+      const errEl = workflowBuilderEl.querySelector("[data-wf-errors]");
+      if (!v.ok) {
+        if (errEl) {
+          errEl.hidden = false;
+          errEl.textContent = (v.errors || ["Fix the form before crafting."]).join(" ");
+        }
+        return;
+      }
+      if (errEl) { errEl.hidden = true; errEl.textContent = ""; }
+      const brief = typeof buildWorkflowCraftBrief === "function"
+        ? buildWorkflowCraftBrief(d)
+        : "/create-workflow\n\nMy goal: " + String(d.goal || "").trim();
+      insertComposerPrompt(brief, { mode: "replace" });
+      // Seed-only — never auto-send (plan default).
+      workflowBuilderBaseline = JSON.parse(JSON.stringify(d));
+      closeWorkflowBuilder(true);
+    };
+    foot.appendChild(cancel);
+    foot.appendChild(craft);
+    workflowBuilderEl.appendChild(foot);
   }
 
   // Heading + one-line explainer, prepended once above the first group — the
@@ -1294,7 +1659,23 @@
 
   // ---------- markdown ----------
 
-  const { looksLikeFileRef, formatRelativeTime, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath, stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext, backendBadgeLabel, capabilityGroupsView, visibleCapabilityGroups, markLocalSuiteOverrides, sessionToggleGroup, userWorkflowsPanelState, withCreateWorkflowTile, canAcceptPasteImageBytes, isAllowedPasteImageMime, PASTE_IMAGE_MAX_COUNT } = globalThis.GrokWebviewHelpers;
+  const {
+    looksLikeFileRef, isSafeHref, formatRelativeTime, modelDisplayName, nextMicState, trailingSendPhrase,
+    buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, splitMath,
+    stripUnsupportedTex, toolFailureText, computeLineDiff, parseAttachmentContext, backendBadgeLabel,
+    capabilityGroupsView, visibleCapabilityGroups, markLocalSuiteOverrides, sessionToggleGroup,
+    userWorkflowsPanelState, withCreateWorkflowTile, canAcceptPasteImageBytes, isAllowedPasteImageMime,
+    PASTE_IMAGE_MAX_COUNT,
+    defaultWorkflowGraphFromGoal, validateWorkflowBuilderDraft, buildWorkflowCraftBrief,
+    WORKFLOW_BUILDER_MAX_PHASES, WORKFLOW_BUILDER_MAX_AGENTS_PER_PHASE,
+  } = globalThis.GrokWebviewHelpers;
+  const userPromptShouldCollapse = (globalThis.GrokWebviewHelpers && globalThis.GrokWebviewHelpers.userPromptShouldCollapse)
+    || function (text) {
+        const s = String(text == null ? "" : text).trim();
+        if (!s) return false;
+        if (s.includes("\n")) return true;
+        return s.length > 120;
+      };
 
   function escapeAttr(s) {
     return String(s == null ? "" : s)
@@ -1683,17 +2064,31 @@
     }).join("");
 
     function inline(t) {
+      const safeHref = typeof isSafeHref === "function"
+        ? isSafeHref
+        : function (url) {
+            const u = String(url == null ? "" : url).trim();
+            if (!u || /[\u0000-\u001f\u007f]/.test(u) || u.startsWith("//")) return false;
+            if (u.startsWith("#")) return true;
+            const m = u.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+            if (!m) return true;
+            const s = m[1].toLowerCase();
+            return s === "http" || s === "https" || s === "vscode" || s === "vscode-insiders";
+          };
       return t
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
         .replace(/`([^`\n]+)`/g, (_, code) => {
           if (looksLikeFileRef(code)) {
+            // File refs are path-like (looksLikeFileRef); never scheme URLs.
             const safe = code.replace(/"/g, "&quot;");
             return `<a href="${safe}" class="file-ref-link"><code>${code}</code></a>`;
           }
           return `<code>${code}</code>`;
         })
         .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, text, url) => {
-          const safe = url.replace(/"/g, "&quot;");
+          // Reject javascript:/data:/etc. — agent content must not drive active schemes.
+          if (!safeHref(url)) return text;
+          const safe = String(url).replace(/"/g, "&quot;");
           return `<a href="${safe}">${text}</a>`;
         })
         .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
@@ -2970,25 +3365,73 @@
     updateSessionSetupChip(); // hide during onboarding cards; restore when cleared
   }
 
+  /**
+   * Wire Show more / Show less on a long user prompt bubble. Idempotent: does
+   * not stack buttons on re-apply (replay chunks, re-layout). Leaves an
+   * already-expanded bubble expanded until the user collapses it.
+   */
   function makeCollapsible(el, container) {
+    if (!el || !container) return;
+    if (el.dataset.collapseWired === "1") {
+      // Re-apply while still collapsed: keep class. If expanded, leave alone.
+      if (!el.classList.contains("collapsible") && !container.querySelector(".msg-collapse-btn")) {
+        /* was unwired mid-stream without chrome — re-collapse */
+        el.classList.add("collapsible");
+        const expandBtn = container.querySelector(".msg-expand-btn");
+        if (expandBtn) {
+          expandBtn.hidden = false;
+          expandBtn.setAttribute("aria-expanded", "false");
+        }
+      }
+      return;
+    }
+    el.dataset.collapseWired = "1";
     el.classList.add("collapsible");
     const expandBtn = document.createElement("button");
+    expandBtn.type = "button";
     expandBtn.className = "msg-expand-btn";
     expandBtn.textContent = "Show more";
+    expandBtn.setAttribute("aria-expanded", "false");
     container.appendChild(expandBtn);
-    expandBtn.onclick = () => {
+    expandBtn.onclick = (ev) => {
+      if (ev) { ev.preventDefault(); ev.stopPropagation(); }
       el.classList.remove("collapsible");
-      expandBtn.style.display = "none";
-      const collapseBtn = document.createElement("button");
-      collapseBtn.className = "msg-collapse-btn";
-      collapseBtn.textContent = "Show less";
-      container.appendChild(collapseBtn);
-      collapseBtn.onclick = () => {
-        el.classList.add("collapsible");
-        expandBtn.style.display = "";
-        collapseBtn.remove();
-      };
+      expandBtn.hidden = true;
+      expandBtn.setAttribute("aria-expanded", "true");
+      let collapseBtn = container.querySelector(".msg-collapse-btn");
+      if (!collapseBtn) {
+        collapseBtn = document.createElement("button");
+        collapseBtn.type = "button";
+        collapseBtn.className = "msg-collapse-btn";
+        collapseBtn.textContent = "Show less";
+        container.appendChild(collapseBtn);
+        collapseBtn.onclick = (ev2) => {
+          if (ev2) { ev2.preventDefault(); ev2.stopPropagation(); }
+          el.classList.add("collapsible");
+          expandBtn.hidden = false;
+          expandBtn.setAttribute("aria-expanded", "false");
+          collapseBtn.remove();
+        };
+      }
     };
+  }
+
+  /** Apply one-line collapse chrome when the pure criterion says the text is long. */
+  function applyUserPromptCollapse(msgEl, text) {
+    if (!msgEl || !msgEl.classList || !msgEl.classList.contains("user")) return;
+    const raw = text != null ? String(text) : String(msgEl._copyText || "");
+    const bubble = msgEl.querySelector(".msg-bubble") || msgEl;
+    if (!userPromptShouldCollapse(raw)) {
+      if (msgEl.dataset.collapseWired === "1") {
+        msgEl.classList.remove("collapsible");
+        bubble.querySelectorAll(".msg-expand-btn, .msg-collapse-btn").forEach((n) => n.remove());
+        delete msgEl.dataset.collapseWired;
+      }
+      return;
+    }
+    // User already expanded — do not re-clamp on replay chunk updates.
+    if (msgEl.dataset.collapseWired === "1" && !msgEl.classList.contains("collapsible")) return;
+    makeCollapsible(msgEl, bubble);
   }
 
   // A file chip for a user message bubble: basename only (split on both separators
@@ -3086,15 +3529,16 @@
       const promptReg = turnPromptRegion(turn);
       (promptReg || messagesEl).appendChild(el);
       if (text) setTurnSummary(turn, text);
+      // In-bubble one-line clamp for long prompts (turn header still collapses
+      // prior Q&A — different surface). Live path has full text now; replay
+      // re-applies after appendUserChunk fills the body.
+      applyUserPromptCollapse(el, text || "");
     } else if (role === "agent") {
       answerParent().appendChild(el);
     } else {
       messagesEl.appendChild(el);
     }
     scrollToBottom();
-    // Long prompt overflow: only inside an expanded prompt body — the turn
-    // header owns expand/collapse of prior Q&A, so we skip makeCollapsible when
-    // the prompt is already summarized in the turn header (always, for turns).
     return body;
   }
 
@@ -4280,6 +4724,15 @@
       state.activeUserEl.appendChild(chipsRow);
     }
     if (state.activeTurnEl) setTurnSummary(state.activeTurnEl, parsed.body);
+    // Replay fills the body after addMessage("user", "") — re-apply collapse
+    // once content is known (activeUserEl is the .body node).
+    const msgEl = state.activeUserEl.closest
+      ? state.activeUserEl.closest(".msg.user")
+      : (state.activeUserEl.parentElement && state.activeUserEl.parentElement.parentElement);
+    if (msgEl) {
+      msgEl._copyText = parsed.body;
+      applyUserPromptCollapse(msgEl, parsed.body);
+    }
     scrollToBottom();
   }
 

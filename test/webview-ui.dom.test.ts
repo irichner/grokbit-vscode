@@ -1225,6 +1225,32 @@ describe("continuous progress indicator (always show something mid-turn)", () =>
   });
 });
 
+// M1: markdown links with dangerous schemes must not become <a href="…">.
+describe("markdown href scheme allowlist", () => {
+  const renderAgent = (text: string) => {
+    const { doc, window } = bootWebview();
+    dispatch(window, { type: "messageChunk", text });
+    dispatch(window, { type: "promptComplete" });
+    return doc.querySelector(".msg.agent") as HTMLElement;
+  };
+
+  it("does not create a link for javascript: URLs", () => {
+    const el = renderAgent("Click [here](javascript:alert(1)) please");
+    const bad = [...el.querySelectorAll("a")].find((a) =>
+      (a.getAttribute("href") || "").toLowerCase().startsWith("javascript:"),
+    );
+    expect(bad).toBeUndefined();
+    expect(el.textContent).toContain("here");
+  });
+
+  it("still creates https links", () => {
+    const el = renderAgent("See [docs](https://example.com/x) now");
+    const a = el.querySelector('a[href="https://example.com/x"]');
+    expect(a).not.toBeNull();
+    expect(a!.textContent).toBe("docs");
+  });
+});
+
 // LaTeX rendering: grok now emits TeX (\(...\) inline, \[...\] display). The
 // webview pulls math out before HTML-escaping and renders it via KaTeX. KaTeX
 // isn't loaded in the happy-dom harness, so renderMarkdown falls back to the
