@@ -359,6 +359,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:perf": "vitest run --config vitest.perf.config.ts",
+    "test:baseline": "vitest run --config vitest.baseline.config.ts",
     "test:live": "tsc -p . && node scripts/live-tests.cjs",
     "telemetry:probe": "tsc -p . && node scripts/telemetry-probe.cjs",
     "metrics:tokens": "python scripts/aggregate_token_usage.py --write",
