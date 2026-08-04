@@ -7,8 +7,20 @@
 // so these cases encode the documented call shape, and the parser's contract is
 // that anything it cannot read is COUNTED, never guessed at.
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
-import { findCallSites, parseAgentArgs, AGENT_PROMPT_MAX_CHARS } from "../src/workflow-inspect";
+import {
+  AGENT_PROMPT_MAX_CHARS,
+  WORKFLOW_AGENT_CAP,
+  extractMetaPhases,
+  findCallSites,
+  parseAgentArgs,
+  parseWorkflowDetail,
+} from "../src/workflow-inspect";
+
+const fixture = (name: string) =>
+  readFileSync(fileURLToPath(new URL(`./fixtures/workflows/${name}`, import.meta.url)), "utf8");
 
 describe("findCallSites", () => {
   it("finds each real agent( call and slices its argument text", () => {
@@ -197,5 +209,175 @@ describe("parseAgentArgs", () => {
     const parsed = parseAgentArgs('"p", opts', "claude-js");
     expect(parsed).toMatchObject({ promptKind: "literal", prompt: "p", hasSchema: false });
     expect(parsed!.label).toBeUndefined();
+  });
+});
+
+describe("extractMetaPhases", () => {
+  it("reads a Rhai phases array with titles and details", () => {
+    const block = `#{
+      name: "w",
+      phases: [
+        #{ title: "Review", detail: "one agent per dimension" },
+        #{ title: "Verify" },
+      ],
+    }`;
+    expect(extractMetaPhases(block, "rhai")).toEqual([
+      { title: "Review", detail: "one agent per dimension" },
+      { title: "Verify", detail: undefined },
+    ]);
+  });
+
+  it("reads a JS phases array", () => {
+    const block = `{ name: 'w', phases: [ { title: 'Scan', detail: 'grep logs' }, { title: 'Fix' } ] }`;
+    expect(extractMetaPhases(block, "claude-js")).toEqual([
+      { title: "Scan", detail: "grep logs" },
+      { title: "Fix", detail: undefined },
+    ]);
+  });
+
+  it("is not fooled by brackets or braces inside strings", () => {
+    const block = `{ phases: [ { title: 'a ] } weird', detail: 'has ] and }' }, { title: 'b' } ] }`;
+    expect(extractMetaPhases(block, "claude-js").map((p) => p.title)).toEqual(["a ] } weird", "b"]);
+  });
+
+  it("returns [] when there is no phases key, or it is unreadable", () => {
+    expect(extractMetaPhases(`{ name: 'w' }`, "claude-js")).toEqual([]);
+    expect(extractMetaPhases(`{ phases: [ { title: 'x' }`, "claude-js")).toEqual([]);
+    expect(extractMetaPhases("", "claude-js")).toEqual([]);
+  });
+
+  it("skips a phase entry with no readable title rather than rendering a blank row", () => {
+    const block = `{ phases: [ { detail: 'no title here' }, { title: 'Real' } ] }`;
+    expect(extractMetaPhases(block, "claude-js")).toEqual([{ title: "Real", detail: undefined }]);
+  });
+});
+
+describe("parseWorkflowDetail — Rhai fixture", () => {
+  const detail = parseWorkflowDetail(fixture("review-changes.rhai"), "rhai");
+
+  it("recovers meta, phases and every agent call", () => {
+    expect(detail.name).toBe("review-changes");
+    expect(detail.description).toBe(
+      "Review changed files across dimensions, then verify each finding",
+    );
+    expect(detail.phases).toEqual([
+      { title: "Review", detail: "one agent per dimension" },
+      { title: "Verify", detail: "adversarially refute each finding" },
+    ]);
+    expect(detail.agentCallSites).toBe(3);
+    expect(detail.agents).toHaveLength(3);
+    expect(detail.opaqueAgentCalls).toBe(0);
+    expect(detail.overflowAgentCalls).toBe(0);
+    expect(detail.truncated).toBe(false);
+  });
+
+  it("does not count the commented-out agent call", () => {
+    expect(detail.agents.some((a) => a.prompt?.includes("commented out"))).toBe(false);
+  });
+
+  it("carries each agent's settings", () => {
+    expect(detail.agents[0]).toMatchObject({
+      index: 1,
+      promptKind: "literal",
+      label: "review:correctness",
+      model: "sonnet",
+      effort: "high",
+      hasSchema: true,
+      inferredPhase: "Review",
+    });
+    expect(detail.agents[0].prompt).toContain("correctness bugs (report each as file:line)");
+    expect(detail.agents[1]).toMatchObject({ label: "review:perf", effort: "low", hasSchema: false });
+    expect(detail.agents[2]).toMatchObject({
+      label: "verify",
+      agentType: "code-reviewer",
+      isolation: "worktree",
+      inferredPhase: "Verify",
+    });
+  });
+});
+
+describe("parseWorkflowDetail — Claude JS fixture", () => {
+  const detail = parseWorkflowDetail(fixture("spot-review-fanout.js"), "claude-js");
+
+  it("recovers meta and phases", () => {
+    expect(detail.name).toBe("spot-review-fanout");
+    expect(detail.description).toBe("Review every rendered spot across four lenses");
+    expect(detail.phases).toEqual([
+      { title: "Review", detail: "four lenses per spot" },
+      { title: "Synthesize", detail: undefined },
+    ]);
+  });
+
+  it("finds agents nested inside pipeline() and marks the template-literal prompt dynamic", () => {
+    expect(detail.agentCallSites).toBe(3);
+    expect(detail.agents[0]).toMatchObject({ promptKind: "dynamic", phase: "Review" });
+    expect(detail.agents[0].prompt).toContain("${lens}");
+    expect(detail.agents[1]).toMatchObject({ promptKind: "literal", model: "haiku" });
+  });
+
+  it("infers a phase from the nearest preceding phase() statement", () => {
+    expect(detail.agents[1].inferredPhase).toBe("Review");
+    expect(detail.agents[2]).toMatchObject({ inferredPhase: "Synthesize", hasSchema: true });
+  });
+});
+
+describe("parseWorkflowDetail — degraded and edge shapes", () => {
+  it("an agent-free script reports zero call sites rather than looking broken", () => {
+    const src = [
+      "export const meta = { name: 'noop', description: 'builds steps dynamically' };",
+      "phase('Run');",
+      "const out = await pipeline(items, (i) => transform(i));",
+    ].join("\n");
+    const d = parseWorkflowDetail(src, "claude-js");
+    expect(d.agentCallSites).toBe(0);
+    expect(d.agents).toEqual([]);
+    expect(d.opaqueAgentCalls).toBe(0);
+    expect(d.overflowAgentCalls).toBe(0);
+    expect(d.name).toBe("noop");
+  });
+
+  it("counts unreadable calls as opaque, distinct from a script with none", () => {
+    const d = parseWorkflowDetail('agent();\nagent( );\nagent("real");', "claude-js");
+    expect(d.agentCallSites).toBe(3);
+    expect(d.agents).toHaveLength(1);
+    expect(d.opaqueAgentCalls).toBe(2);
+    expect(d.overflowAgentCalls).toBe(0);
+  });
+
+  it("counts sites past the cap as overflow, never as opaque", () => {
+    const many = Array.from({ length: WORKFLOW_AGENT_CAP + 5 }, (_, i) => `agent("p${i}");`).join("\n");
+    const d = parseWorkflowDetail(many, "claude-js");
+    expect(d.agentCallSites).toBe(WORKFLOW_AGENT_CAP + 5);
+    expect(d.agents).toHaveLength(WORKFLOW_AGENT_CAP);
+    expect(d.overflowAgentCalls).toBe(5);
+    expect(d.opaqueAgentCalls).toBe(0);
+  });
+
+  it("stamps the host-observed truncated flag through, defaulting to false", () => {
+    const src = 'agent("p");';
+    expect(parseWorkflowDetail(src, "claude-js").truncated).toBe(false);
+    expect(parseWorkflowDetail(src, "claude-js", {}).truncated).toBe(false);
+    expect(parseWorkflowDetail(src, "claude-js", { truncated: true }).truncated).toBe(true);
+  });
+
+  it("still describes the agents when there is no meta block at all", () => {
+    const d = parseWorkflowDetail('phase("Go");\nagent("do it", { label: "x" });', "claude-js");
+    expect(d.name).toBeUndefined();
+    expect(d.description).toBeUndefined();
+    expect(d.phases).toEqual([]);
+    expect(d.agents).toHaveLength(1);
+    expect(d.agents[0]).toMatchObject({ label: "x", inferredPhase: "Go" });
+  });
+
+  it("leaves inferredPhase unset for an agent that precedes every phase() call", () => {
+    const d = parseWorkflowDetail('agent("early");\nphase("Later");\nagent("late");', "claude-js");
+    expect(d.agents[0].inferredPhase).toBeUndefined();
+    expect(d.agents[1].inferredPhase).toBe("Later");
+  });
+
+  it("never throws on junk input", () => {
+    for (const junk of ["", "   ", "}{)(", "let meta = #{", 'agent("unclosed']) {
+      expect(() => parseWorkflowDetail(junk, "rhai")).not.toThrow();
+    }
   });
 });

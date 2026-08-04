@@ -24,7 +24,31 @@
  * say what it could not read instead of quietly showing a shorter list than the
  * file actually contains.
  */
-import { WorkflowScriptFormat, extractMetaStringField } from "./capabilities";
+import {
+  WorkflowScriptFormat,
+  extractMetaStringField,
+  parseClaudeWorkflowMeta,
+  parseRhaiWorkflowMeta,
+} from "./capabilities";
+
+/**
+ * Bytes read for one on-demand workflow detail. Sits beside — deliberately not
+ * shared with — `HOW_IT_WORKS_MAX_BYTES` (suite guides) and
+ * `CAPABILITY_HEAD_BYTES` (the index scan): three reads, three jobs, three
+ * bounds. Over-cap files are parsed truncated rather than refused, because half
+ * an agent list is genuinely useful where a suite guide truncated mid-sentence
+ * is not.
+ */
+export const WORKFLOW_DETAIL_MAX_BYTES = 64 * 1024;
+
+/**
+ * Most agent calls described in one payload. Sites past it are counted in
+ * `overflowAgentCalls` and never folded into `opaqueAgentCalls` — "we stopped
+ * looking" and "we looked and could not read it" are different facts, and a UI
+ * that conflates them tells the user their script is broken when it is merely
+ * long.
+ */
+export const WORKFLOW_AGENT_CAP = 40;
 
 /**
  * Longest prompt text carried per agent. Display truncation is the webview
@@ -329,4 +353,216 @@ export function parseAgentArgs(
   parsed.isolation = extractMetaStringField(block, "isolation");
   parsed.hasSchema = hasOptionKey(block, "schema");
   return parsed;
+}
+
+/** One declared phase from the script's own meta block. */
+export interface WorkflowPhase {
+  title: string;
+  detail?: string;
+}
+
+/** Everything the Details view can say about one workflow script. */
+export interface WorkflowDetail {
+  name?: string;
+  description?: string;
+  phases: WorkflowPhase[];
+  agents: WorkflowAgentCall[];
+  /** Total `agent(` sites found: described + opaque + overflow. */
+  agentCallSites: number;
+  /** Sites read but not parseable. */
+  opaqueAgentCalls: number;
+  /** Sites past {@link WORKFLOW_AGENT_CAP} — never examined, never "opaque". */
+  overflowAgentCalls: number;
+  /** Whether the text handed in was clipped at the read bound. Host-observed. */
+  truncated: boolean;
+}
+
+/**
+ * The `{ … }` body of the script's meta declaration, or `undefined`.
+ *
+ * Locating it duplicates the first few lines of `parseRhaiWorkflowMeta` /
+ * `parseClaudeWorkflowMeta` (`capabilities.ts`) because those return the two
+ * extracted scalars, not the block — and `phases` lives in the block. The
+ * duplication is bounded to *finding* the braces: name and description still
+ * come from those parsers, so there is exactly one implementation of each
+ * extracted field.
+ */
+function findMetaBlock(text: string, format: WorkflowScriptFormat): string | undefined {
+  const s = String(text ?? "");
+  const start =
+    format === "rhai" ? s.search(/let\s+meta\s*=\s*#\{/) : s.search(/export\s+const\s+meta\s*=\s*\{/);
+  if (start < 0) return undefined;
+  const open = s.indexOf("{", start);
+  if (open < 0) return undefined;
+  let depth = 0;
+  for (let i = open; i < s.length; i++) {
+    const q = quoteAt(s, i);
+    if (q) {
+      i = skipString(s, i);
+      continue;
+    }
+    const past = skipComment(s, i);
+    if (past >= 0) {
+      i = past;
+      continue;
+    }
+    if (s[i] === "{") depth++;
+    else if (s[i] === "}") {
+      depth--;
+      if (depth === 0) return s.slice(open, i + 1);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The `phases: [ … ]` array from a meta block, as `{title, detail?}` records.
+ *
+ * Both syntaxes write the same shape — `#{ title: "…", detail: "…" }` in Rhai,
+ * `{ title: '…', detail: '…' }` in JS — so one bracket-balanced, string-aware
+ * walk covers both. A phase with no readable `title` is skipped rather than
+ * rendered as an empty row.
+ */
+export function extractMetaPhases(
+  metaBlock: string,
+  format?: WorkflowScriptFormat,
+): WorkflowPhase[] {
+  const s = String(metaBlock ?? "");
+  const key = s.search(/(?:^|[\s,{])(?:"phases"|'phases'|phases)\s*[:=]/m);
+  if (key < 0) return [];
+  const open = s.indexOf("[", key);
+  if (open < 0) return [];
+
+  // Bracket-balance to the matching `]`, ignoring brackets inside strings.
+  let depth = 0;
+  let close = -1;
+  for (let i = open; i < s.length; i++) {
+    const q = quoteAt(s, i);
+    if (q) {
+      i = skipString(s, i);
+      continue;
+    }
+    const past = skipComment(s, i);
+    if (past >= 0) {
+      i = past;
+      continue;
+    }
+    if (s[i] === "[") depth++;
+    else if (s[i] === "]") {
+      depth--;
+      if (depth === 0) {
+        close = i;
+        break;
+      }
+    }
+  }
+  if (close < 0) return [];
+
+  const body = s.slice(open + 1, close);
+  const out: WorkflowPhase[] = [];
+  for (let i = 0; i < body.length; i++) {
+    const q = quoteAt(body, i);
+    if (q) {
+      i = skipString(body, i);
+      continue;
+    }
+    const past = skipComment(body, i);
+    if (past >= 0) {
+      i = past;
+      continue;
+    }
+    if (body[i] !== "{") continue;
+    let d = 0;
+    let end = -1;
+    for (let k = i; k < body.length; k++) {
+      const kq = quoteAt(body, k);
+      if (kq) {
+        k = skipString(body, k);
+        continue;
+      }
+      if (body[k] === "{") d++;
+      else if (body[k] === "}") {
+        d--;
+        if (d === 0) {
+          end = k;
+          break;
+        }
+      }
+    }
+    if (end < 0) break;
+    const rec = body.slice(i, end + 1);
+    const title = extractMetaStringField(rec, "title");
+    if (title) out.push({ title, detail: extractMetaStringField(rec, "detail") });
+    i = end;
+  }
+  void format;
+  return out;
+}
+
+/**
+ * Describe a whole workflow script: its meta, its declared phases, and every
+ * `agent(...)` call it makes.
+ *
+ * `opts.truncated` is passed in rather than detected: truncation is a read-time
+ * fact about the file, and this function only ever sees text that has already
+ * been sliced. It has exactly one owner (the host, which compared the file size
+ * against {@link WORKFLOW_DETAIL_MAX_BYTES}) and it is stamped onto the result
+ * so the view-model consumes one self-contained object.
+ *
+ * Never throws on malformed input. A script this cannot read yields a detail
+ * whose counts say so — that honest degraded shape is the feature, not a
+ * fallback.
+ */
+export function parseWorkflowDetail(
+  text: string,
+  format: WorkflowScriptFormat,
+  opts?: { truncated?: boolean },
+): WorkflowDetail {
+  const s = String(text ?? "");
+  const meta = format === "rhai" ? parseRhaiWorkflowMeta(s) : parseClaudeWorkflowMeta(s);
+  const block = findMetaBlock(s, format);
+
+  const phaseSites = findCallSites(s, "phase", format);
+  const phaseMarks = phaseSites
+    .map((p) => ({ start: p.start, title: parsePhaseTitle(p.argsText) }))
+    .filter((p): p is { start: number; title: string } => !!p.title);
+
+  const sites = findCallSites(s, "agent", format);
+  const agents: WorkflowAgentCall[] = [];
+  let opaque = 0;
+  const examined = sites.slice(0, WORKFLOW_AGENT_CAP);
+  examined.forEach((site, i) => {
+    const parsed = parseAgentArgs(site.argsText, format);
+    if (!parsed) {
+      opaque++;
+      return;
+    }
+    let inferredPhase: string | undefined;
+    for (const mark of phaseMarks) {
+      if (mark.start < site.start) inferredPhase = mark.title;
+      else break;
+    }
+    agents.push({ index: i + 1, ...parsed, inferredPhase });
+  });
+
+  return {
+    name: meta.name,
+    description: meta.description,
+    phases: block ? extractMetaPhases(block, format) : [],
+    agents,
+    agentCallSites: sites.length,
+    opaqueAgentCalls: opaque,
+    overflowAgentCalls: Math.max(0, sites.length - WORKFLOW_AGENT_CAP),
+    truncated: !!opts?.truncated,
+  };
+}
+
+/** The literal title of a `phase("…")` statement, when it has one. */
+function parsePhaseTitle(argsText: string): string | undefined {
+  const s = String(argsText ?? "").trim();
+  const quote = quoteAt(s, 0);
+  if (!quote) return undefined;
+  const close = skipString(s, 0);
+  if (close >= s.length) return undefined;
+  return unescapeLiteral(s.slice(1, close), quote).trim() || undefined;
 }

@@ -13,8 +13,8 @@ committed first as `5404b93`.
 
 | Task | Status | Attempts | Commit | Created | Notes |
 |---|---|---|---|---|---|
-| T1 | done | 1 | `1e40e37` | `src/workflow-inspect.ts`, `test/workflow-inspect.test.ts` | 24 tests; suite 1603 → 1627 |
-| T2 | pending | — | — | — | depends T1 |
+| T1 | done | 1 | `47a9e20` | `src/workflow-inspect.ts`, `test/workflow-inspect.test.ts` | 24 tests; suite 1603 → 1627 |
+| T2 | done | 1 | `pending` | `test/fixtures/workflows/review-changes.rhai`, `test/fixtures/workflows/spot-review-fanout.js` | 42 tests in file; suite 1627 → 1645 |
 | T3 | pending | — | — | — | depends T1 |
 | T4a | pending | — | — | — | depends T2, T3 |
 | T4b | pending | — | — | — | depends T4a |
