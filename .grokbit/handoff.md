@@ -1,12 +1,13 @@
 # Session handoff
 
 - **Slug:** workflow-details-inspector
-- **Phase reached:** plan approved + baseline captured 2026-08-03 — next is `grokbit-implement` (start at T1, T5 or T9)
-- **Baseline:** `.grokbit/plans/workflow-details-inspector/test/baseline.md` + `test/workflow-details.baseline.ts` (21 tests, green at capture). Run with `npm run test:baseline` — deliberately outside `npm test`/CI (mirrors `test:perf`), so implement's per-task verifies are unaffected. Re-run it after T5, T6, T8, T9.
-- **Plan:** `.grokbit/plans/workflow-details-inspector/plan.md` — 11 tasks (T1, T2, T3, T4a, T4b, T5–T10)
-- **Review status:** design Loop 3 exited 0 BLOCKER / 0 MAJOR (Round 2); plan-level pass MAJOR+MINOR both fixed (T4 split into T4a/T4b; T10 dual-pattern verify)
-- **Baseline required, not waived:** T4b, T5, T6, T7, T8, T9 carry non-`none` baselines — all guarding the shipped suite Details flow or capability-row click behavior
-- **Open assumptions:** A5/A6 (agent-call shape rests on committed fixtures — no real `.rhai`/`.claude/workflows/*.js` exists on this machine; a research capture resolves it), A7 (420px detail body vs. large agent counts). Ledger: `.grokbit/plans/workflow-details-inspector/assumptions.md`
-- **Independent early tasks:** T1, T5, T9. Feature is end-to-end only after T8.
-- **Tree at approval:** `main` @ 7d5e5a4, clean apart from the untracked plan directory. Suite floor: 1603 tests / 78 files green.
-- **Prior session:** product-review-remediation (T1–T4 shipped, since committed)
+- **Phase reached:** implement — 7 of 10 tasks landed and committed; **T7 blocked at the retry cap**, T8 + T10 blocked behind it
+- **Plan:** `.grokbit/plans/workflow-details-inspector/plan.md` · full detail `implement/handoff.md`
+- **Shipped (committed, `7d5e5a4..edb0e08`):** the whole workflow inspector — pure parser, containment resolver, injected-fs host read, `detailKind` wire routing, the detail render, the propagation-boundary fix, and the missing `grokbit-ship` guide
+- **Deliberately not switched on:** T8 (the host stamps) is blocked, so no workflow tile shows a Details button yet and the feature is invisible to users. Every commit leaves a coherent tree
+- **Blocked tasks:** T7 (per-agent edit brief — reverted, three diagnoses recorded), T8 (`depends: T7`), T10 (`depends: T8`)
+- **Open items:** assumptions A5/A6 (no real `.rhai`/`.claude/workflows/*.js` exists on this machine — the committed fixtures are the spec until one is captured), A7 (420px detail body vs. large agent counts). Ledger: `assumptions.md`
+- **Highest-value next check:** a possible defect in *already-committed* T6 code — `state.pendingCapabilityDetail` may hold a detached DOM node across a `setBusy` re-render, which would affect the shipped suite-guide path too. Unconfirmed; see `implement/handoff.md` § Things a test pass should look at hard
+- **Deviations:** 1 counting of 3 (T7's block) — below the re-plan threshold
+- **Suite:** 80 files / 1703 tests green, tsc clean. Opt-in baseline: `npm run test:baseline` → 21 tests, 5 failing, all 5 predicted and INTENDED
+- **Not ours:** `.grokbit/context/`, `.grokbit/docs-manifest.json`, `docs/features-and-use-cases.md`, `docs/Grokbit-Features-and-Use-Cases.docx`, `scripts/_gen_features_use_cases_docx.py`, `scripts/_finalize_features_doc.py` appeared mid-session from outside this pipeline and were left untracked
