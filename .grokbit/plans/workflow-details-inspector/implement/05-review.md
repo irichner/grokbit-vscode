@@ -99,3 +99,32 @@ choice, not an oversight: half an agent list plus an honest "this file was
 longer" line is useful; half a prose document cut mid-sentence is not.
 
 **Verdict: no OUT_OF_SCOPE hunks. Commit approved.**
+
+## T4b — Host wire: `detailKind`-routed `getCapabilityDetail`
+
+Declared files: `src/sidebar.ts` (union member, dispatch, handler). Declared
+`removes: none`.
+
+| Hunk | Classification | Note |
+|---|---|---|
+| Union member gains `detailKind?`/`path?` | IN_SCOPE | Declared |
+| Dispatch extracts both new fields, string-typed or dropped | IN_SCOPE | Declared |
+| `getCapabilityDetail` signature + `detailKind === "workflow"` early return | IN_SCOPE | Declared |
+| New private `postWorkflowDetail` | IN_SCOPE | The branch body; kept a separate method so the suite arm below it is visibly untouched |
+| Import of the three `workflow-inspect` symbols | IN_SCOPE | Required |
+
+Deletions: none. Files touched outside the declared set: none.
+**Suite arm verified byte-for-byte unchanged** — the diff adds an early return
+above `resolveSuiteHowItWorksPath` and appends a method after it; not one line of
+the existing guide flow was edited.
+
+`postWorkflowDetail` builds its `fs` port from the existing `capabilityFs()`
+adapter rather than writing a second `openSync`/`readSync`/`closeSync` block, so
+the bounded positional read still has exactly one implementation in the repo.
+
+**No new tests, and that is the task's own stated position**, not an omission:
+every decision in this branch is unit-tested in T4a, and the round trip is
+asserted by T5/T8's DOM tests. What is left here is input gathering and a
+`postTo`, the same thin-glue status the shipped suite handler has always had.
+
+**Verdict: no OUT_OF_SCOPE hunks. Commit approved.**

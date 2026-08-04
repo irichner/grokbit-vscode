@@ -16,8 +16,8 @@ committed first as `5404b93`.
 | T1 | done | 1 | `47a9e20` | `src/workflow-inspect.ts`, `test/workflow-inspect.test.ts` | 24 tests; suite 1603 → 1627 |
 | T2 | done | 1 | `077acee` | `test/fixtures/workflows/review-changes.rhai`, `test/fixtures/workflows/spot-review-fanout.js` | 42 tests in file; suite 1627 → 1645 |
 | T3 | done | 1 | `6ff6c13` | none | 55 tests in file; suite 1645 → 1658 |
-| T4a | done | 1 | `pending` | none | 70 tests in file; suite 1658 → 1673 |
-| T4b | pending | — | — | — | depends T4a |
+| T4a | done | 1 | `f21d093` | none | 70 tests in file; suite 1658 → 1673 |
+| T4b | done | 1 | `pending` | none | glue only — suite unchanged at 1673 by design |
 | T5 | pending | — | — | — | independent |
 | T6 | pending | — | — | — | depends T5 |
 | T7 | pending | — | — | — | depends T6 |

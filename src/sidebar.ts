@@ -139,6 +139,11 @@ import {
   scanCapabilityRoots,
 } from "./capabilities";
 import {
+  WORKFLOW_DETAIL_MAX_BYTES,
+  readWorkflowDetail,
+  workflowDetailRoots,
+} from "./workflow-inspect";
+import {
   applySuiteKind,
   attachSuiteHowItWorks,
   HOW_IT_WORKS_MAX_BYTES,
@@ -195,7 +200,7 @@ type WebviewMsg =
   | { type: "voiceStop" }
   | { type: "listWorkspaceDocs" }
   | { type: "listCapabilities" }
-  | { type: "getCapabilityDetail"; name: string }
+  | { type: "getCapabilityDetail"; name: string; detailKind?: string; path?: string }
   | { type: "scrollState"; stickToBottom: boolean; scrollTop: number };
 
 const SESSION_META_KEY = "grok.sessionMeta";
@@ -3252,7 +3257,12 @@ See design doc for the full state machine diagram.`;
         this.listCapabilities(session);
         break;
       case "getCapabilityDetail":
-        this.getCapabilityDetail(session, typeof msg.name === "string" ? msg.name : "");
+        this.getCapabilityDetail(
+          session,
+          typeof msg.name === "string" ? msg.name : "",
+          typeof msg.detailKind === "string" ? msg.detailKind : undefined,
+          typeof msg.path === "string" ? msg.path : undefined,
+        );
         break;
       case "voiceStart":
         await this.handleVoiceStart(session);
@@ -3499,11 +3509,29 @@ See design doc for the full state machine diagram.`;
   }
 
   /**
-   * Lazy-load a suite how-it-works guide for the Actions Details panel.
-   * Path is allowlisted to {@link SUITE_SKILL_NAMES} under the extension bundle only.
+   * Lazy-load whatever sits behind a row's Details button.
+   *
+   * Routed on the host-stamped `detailKind` the webview echoes back, NOT on the
+   * presence of `path` — suite items carry a `path` too (their scanned
+   * `SKILL.md`), so a path-presence rule would send every suite click down the
+   * workflow branch. An absent or unrecognized `detailKind` falls through to the
+   * suite flow, which is what every pre-existing client sends.
+   *
+   * The echoed fields are a lookup hint, never authorization: the workflow
+   * branch re-derives which roots are legal from the session's own backend and
+   * checks containment itself.
    */
-  private getCapabilityDetail(session: Session, name: string): void {
+  private getCapabilityDetail(
+    session: Session,
+    name: string,
+    detailKind?: string,
+    requestedPath?: string,
+  ): void {
     if (!this.showCapabilities()) return;
+    if (detailKind === "workflow") {
+      this.postWorkflowDetail(session, name, requestedPath ?? "");
+      return;
+    }
     const resolved = resolveSuiteHowItWorksPath(this.context.extensionPath, name);
     if (!resolved.ok) {
       this.postTo(session, { type: "capabilityDetail", name, error: resolved.error });
@@ -3529,6 +3557,50 @@ See design doc for the full state machine diagram.`;
     } catch {
       this.postTo(session, { type: "capabilityDetail", name: resolved.name, error: "read-failed" });
     }
+  }
+
+  /**
+   * The workflow arm of {@link getCapabilityDetail} — deliberately thin.
+   *
+   * Everything decidable (which roots are legal, the bounded read, truncation,
+   * what each failure means) lives in `workflow-inspect.ts` behind an injected
+   * filesystem, where the suite can actually exercise it; this method only
+   * gathers host inputs and posts the result. The `fs` port is assembled from
+   * the existing `capabilityFs()` adapter so the bounded positional read has
+   * exactly one implementation.
+   */
+  private postWorkflowDetail(session: Session, name: string, requestedPath: string): void {
+    const capFs = this.capabilityFs();
+    const wfFs = {
+      realpathSync: capFs.realpathSync,
+      statSync: (p: string) => fs.statSync(p),
+      readSlice: (p: string, maxBytes: number) => capFs.readHead(p, maxBytes),
+    };
+    const allowedRoots = workflowDetailRoots({
+      roots: CAPABILITY_ROOTS[session.backend],
+      workspaceDir: this.sessionCwd(session),
+      // Same home-dir resolution listCapabilities uses — see its comment for why
+      // this must be the raw home directory, not grokHome/claudeHome.
+      homeDir: process.env.HOME || process.env.USERPROFILE || os.homedir(),
+      env: process.env,
+      fs: wfFs,
+    });
+    const res = readWorkflowDetail({
+      fs: wfFs,
+      requestedPath,
+      allowedRoots,
+      maxBytes: WORKFLOW_DETAIL_MAX_BYTES,
+    });
+    if (!res.ok) {
+      this.postTo(session, { type: "capabilityDetail", name, error: res.error });
+      return;
+    }
+    this.postTo(session, {
+      type: "capabilityDetail",
+      name,
+      workflow: res.workflow,
+      path: res.path,
+    });
   }
 
   /** grok's session store for the current process — see {@link claudeSessionStore}. Constructed
