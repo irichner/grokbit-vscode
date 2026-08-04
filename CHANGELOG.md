@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2026.8.33 — 2026-08-04
+
 ### Added
 
 - **Workspace harness hooks (opt-in).** Vendors GrokForge Python hooks into `resources/hooks/grok/` and can install them into the open workspace `.grok/hooks/` via **Grokbit: Install workspace harness hooks** or `grok.hooks.provision: workspace` (default **off**). Stop gate + protect_paths + change marker; requires `/hooks-trust` and a Python interpreter (the installer probes `python`/`python3`, wires whichever it finds, and warns when neither exists). Dual-stack soft warning when Claude hooks are also present. ([src/hook-suite.ts](src/hook-suite.ts), [src/extension.ts](src/extension.ts), [resources/hooks](resources/hooks))

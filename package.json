@@ -2,7 +2,7 @@
   "name": "grokbit",
   "displayName": "Grokbit",
   "description": "VS Code UI for Grok Build and Claude Code. Native chat tabs, Plan first + inline-diff approvals, Grokbit Actions (explore→plan→implement→test→document) and User Workflows, file chips, resumable history, activity carousel, status-bar HUD, /imagine media, voice, math & Mermaid. Needs the Grok CLI + SuperGrok, X Premium+, or an xAI API key. MIT. Based on grok-build-vscode by Paweł Huryn. Not affiliated with xAI.",
-  "version": "2026.8.33",
+  "version": "2026.8.34",
   "publisher": "Grokbit",
   "author": {
     "name": "Israel Richner",

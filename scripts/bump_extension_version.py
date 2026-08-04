@@ -84,12 +84,72 @@ def bump_package_json_text(
     return new_text, old, new
 
 
+# Keep a Changelog heading for the open work bucket (with or without brackets).
+_UNRELEASED_HEADING = re.compile(
+    r"^##\s+\[?Unreleased\]?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+# Next ## version heading after Unreleased (stops the unreleased body).
+_NEXT_VERSION_HEADING = re.compile(r"^##\s+", re.MULTILINE)
+
+
+def cut_unreleased_changelog(
+    raw: str, version: str, today: date | None = None
+) -> tuple[str, bool]:
+    """Promote a non-empty ``## Unreleased`` body to ``## {version} — {date}``.
+
+    Leaves an empty ``## Unreleased`` bucket on top for the next cycle.
+    Returns ``(new_text, changed)``. No-op when Unreleased is missing or empty,
+    or when a ``## {version}`` section already exists.
+    """
+    d = today or date.today()
+    m = _UNRELEASED_HEADING.search(raw)
+    if not m:
+        return raw, False
+
+    # Already cut for this version (e.g. re-run / manual section).
+    if re.search(
+        rf"^##\s+\[?{re.escape(version)}\]?(?:\s|[—–-]|$)",
+        raw,
+        re.MULTILINE,
+    ):
+        return raw, False
+
+    body_start = m.end()
+    # Skip a single trailing newline after the heading so body is pure content.
+    if body_start < len(raw) and raw[body_start] == "\n":
+        body_start += 1
+    next_h = _NEXT_VERSION_HEADING.search(raw, body_start)
+    body_end = next_h.start() if next_h else len(raw)
+    body = raw[body_start:body_end]
+    # Content = any bullet or ### subsection (not just whitespace).
+    if not re.search(r"(?m)^(?:### |\- |\* )", body):
+        return raw, False
+
+    date_str = d.isoformat()  # YYYY-MM-DD
+    # Normalize body trailing newlines to exactly two before the next section.
+    body_norm = body.rstrip("\n") + "\n\n"
+    replacement = (
+        f"## Unreleased\n\n"
+        f"## {version} — {date_str}\n\n"
+        f"{body_norm}"
+    )
+    # Drop the old Unreleased heading + body; keep everything from the next ##.
+    new_raw = raw[: m.start()] + replacement + raw[body_end:]
+    return new_raw, True
+
+
 def main() -> int:
     p = argparse.ArgumentParser(
         description="Bump package.json to the next CalVer (YYYY.M.N) for rebuilds."
     )
     p.add_argument("--root", type=Path, default=None, help="Repo root (default: parent of scripts/)")
     p.add_argument("--dry-run", action="store_true", help="Print new version without writing")
+    p.add_argument(
+        "--no-changelog",
+        action="store_true",
+        help="Do not cut CHANGELOG.md Unreleased → new version",
+    )
     args = p.parse_args()
     root = (args.root or default_root()).resolve()
     pkg_path = root / "package.json"
@@ -111,6 +171,24 @@ def main() -> int:
     # Preserve original newline style of the file.
     pkg_path.write_text(new_text, encoding="utf-8", newline="")
     print(f"bumped package.json version: {old} → {new}", file=sys.stderr)
+
+    if not args.no_changelog:
+        cl_path = root / "CHANGELOG.md"
+        if cl_path.is_file():
+            cl_raw = cl_path.read_text(encoding="utf-8")
+            cl_new, cl_changed = cut_unreleased_changelog(cl_raw, new)
+            if cl_changed:
+                cl_path.write_text(cl_new, encoding="utf-8", newline="")
+                print(
+                    f"cut CHANGELOG.md: Unreleased → {new} — {date.today().isoformat()}",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    "CHANGELOG.md: Unreleased empty or section already present — left as-is",
+                    file=sys.stderr,
+                )
+
     print(new)
     return 0
 
