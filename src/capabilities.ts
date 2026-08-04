@@ -444,8 +444,10 @@ export function capabilityFromSkillFile(input: CapabilityFileInput): CapabilityI
 // Workflow meta (Grok Rhai + Claude JS) — pure, never executes scripts
 // ---------------------------------------------------------------------------
 
-/** Quoted or bare string value after `key:` / `key =` in a small meta map. */
-function extractMetaStringField(block: string, key: string): string | undefined {
+/** Quoted or bare string value after `key:` / `key =` in a small meta map.
+ *  Exported for `workflow-inspect.ts`, which reads the same shape of options
+ *  block out of an `agent(...)` call. */
+export function extractMetaStringField(block: string, key: string): string | undefined {
   // name: "x" | name: 'x' | name: `x` | "name": "x" | name = "x"
   const re = new RegExp(
     `(?:^|[\\s,{])(?:"${key}"|'${key}'|${key})\\s*[:=]\\s*("(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|\`(?:\\\\.|[^\\\`\\\\])*\`)`,
