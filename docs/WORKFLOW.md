@@ -1,10 +1,18 @@
 # The Verification Loop
 
-> **Note (Grokbit suite):** This file describes the **agentic Claude template**
+> **Note (Grokbit suite):** This file is the **agentic template / GrokForge**
 > loop (explore → plan → implement → verify → review → commit, `/ship`, Stop hooks).
-> It is **not** the documentation for the five bundled Grokbit Actions skills
-> (`/grokbit-explore` … `/grokbit-document`). For those, see
-> **[docs/grokbit-workflows.md](./grokbit-workflows.md)**.
+> It is **not** the procedure for the five bundled **Grokbit Actions** skills
+> (`/grokbit-explore` … `/grokbit-document` / `/grokbit-ship`).
+>
+> **When to use this file vs Grokbit Actions:** use this loop when you are
+> driving `/plan` + `/implement` (and related AGENTS.md accuracy gates) with
+> durable plans under `docs/plans/`. Use **Grokbit Actions** when you want the
+> suite’s `.grokbit/plans/<slug>/` artifact tree and `/grokbit-*` skills.
+> Full when-to-use matrix (both pipelines, chat-only ban):  
+> **[docs/grokbit-workflows.md § When to use which pipeline](./grokbit-workflows.md#when-to-use-which-pipeline)**.
+>
+> **Never implement from a chat-only plan** under either pipeline.
 
 This template is built around one idea: **code is not done when it's written — it's
 done when it's verified.** Everything here (the subagents, the skills, the commands,

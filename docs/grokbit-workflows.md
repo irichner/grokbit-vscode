@@ -4,6 +4,21 @@ Full technical reference for the five bundled **Grokbit Actions** workflows. Sho
 
 Agent procedures remain each skill's `SKILL.md`. This guide is the product-facing layer.
 
+## When to use which pipeline
+
+This repo ships **two coexisting** change pipelines. Pick one deliberately; do not mix mid-feature without a handoff note. **Never implement from a chat-only plan** under either pipeline — durable plan artifacts and human approval are required before code changes when planning was required.
+
+| Situation | Prefer | Why |
+|---|---|---|
+| Product work driven from **Grokbit Actions** tiles (Explore → Plan → Implement → Test → Document / Ship) | **Grokbit suite** — `/grokbit-explore`, `/grokbit-plan`, `/grokbit-implement`, `/grokbit-test`, `/grokbit-document`, `/grokbit-ship` | Artifact tree under `.grokbit/plans/<slug>/`; verify-or-revert tasks; baseline/verify ship gate |
+| Agentic-template loop with GrokForge personas / skills (`/plan`, `/implement`, Stop hooks, `docs/plans/`) | **GrokForge / agentic template** — see [WORKFLOW.md](./WORKFLOW.md) | Durable `docs/plans/<name>.md`; plan critique + implement accuracy protocol in AGENTS.md |
+| “Which plan skill do I run?” | Grokbit Actions → **`/grokbit-plan`**; template loop → **`/plan`** (or feature scaffold that writes `docs/plans/`) | Different artifact roots and approval checkboxes — not interchangeable |
+| Chat-only “here’s my plan, implement it” with no durable file | **Neither — refuse** | Both pipelines reject chat-only / session-only plans as the implement gate |
+
+**Chat-only plans are invalid under both.** A plan that lives only in the conversation is not a review artifact. For Grokbit suite, tick approval on `.grokbit/plans/<slug>/plan.md`. For the agentic template, use durable `docs/plans/<name>.md` and `/plan` Approve (or residual waiver) before `/implement`.
+
+The rest of this document is the Grokbit suite only. For the agentic template loop (explore → plan → implement → verify → review → commit), use **[WORKFLOW.md](./WORKFLOW.md)**.
+
 ## Pipeline overview
 
 ```
