@@ -221,6 +221,11 @@ describe("Grokbit Actions — the bundled workflow group", () => {
     expect(builder?.hidden).toBe(false);
     expect(builder?.textContent).toMatch(/Create Workflow|Goal/i);
     expect(builder?.textContent).toMatch(/Pipeline canvas|Craft with AI/i);
+    // Add phase is a dotted tile in the canvas, not a header text button.
+    const addPhaseTile = builder!.querySelector(".wf-phase-add-tile") as HTMLButtonElement | null;
+    expect(addPhaseTile).toBeTruthy();
+    expect(addPhaseTile?.getAttribute("aria-label")).toBe("Add phase");
+    expect(builder!.querySelector(".wf-builder-canvas-head button")).toBeNull();
     // Name before Goal in DOM; no Constraints field.
     const name = builder!.querySelector("[data-wf-name]") as HTMLInputElement;
     const goal = builder!.querySelector("[data-wf-goal]") as HTMLTextAreaElement;

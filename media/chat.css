@@ -2288,6 +2288,41 @@ textarea#input {
   gap: 6px;
   min-width: 0;
 }
+/* Empty slot tile: add a phase without a header "Add phase" button. */
+.wf-phase-add-tile {
+  flex: 1 1 min(100%, 160px);
+  max-width: 220px;
+  min-height: 88px;
+  min-width: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  border: 1.5px dashed var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 6px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  font: inherit;
+}
+.wf-phase-add-tile:hover {
+  border-color: var(--neon-green);
+  color: var(--neon-green-ink, var(--neon-green));
+  background: color-mix(in srgb, var(--neon-green) 8%, transparent);
+}
+.wf-phase-add-tile:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.wf-phase-add-icon {
+  display: block;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+.wf-phase-add-tile:hover .wf-phase-add-icon {
+  opacity: 1;
+}
 .wf-phase-card input.wf-phase-title {
   font: inherit;
   font-size: 12px;
@@ -2313,8 +2348,7 @@ textarea#input {
 .wf-phase-toolbar button,
 .wf-agent-row button,
 .wf-builder-foot button,
-.wf-builder-head button,
-.wf-builder-canvas-head button {
+.wf-builder-head button {
   font: inherit;
   font-size: 11px;
   padding: 4px 8px;

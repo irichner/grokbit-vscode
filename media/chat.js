@@ -1398,17 +1398,6 @@
     const cTitle = document.createElement("span");
     cTitle.textContent = "Pipeline canvas";
     cHead.appendChild(cTitle);
-    const addPhase = document.createElement("button");
-    addPhase.type = "button";
-    addPhase.textContent = "Add phase";
-    addPhase.disabled = phases.length >= maxP;
-    addPhase.onclick = () => {
-      if (phases.length >= maxP) return;
-      phases.push({ title: "Phase " + (phases.length + 1), agents: [{ label: "agent", capabilityMode: "read-only" }] });
-      d.phases = phases;
-      renderWorkflowBuilder();
-    };
-    cHead.appendChild(addPhase);
     canvas.appendChild(cHead);
 
     if (phases.length >= maxP) {
@@ -1516,6 +1505,23 @@
       card.appendChild(list);
       phaseRow.appendChild(card);
     });
+    // Dotted "add phase" tile sits with the phase cards (not a header button).
+    if (phases.length < maxP) {
+      const addPhase = document.createElement("button");
+      addPhase.type = "button";
+      addPhase.className = "wf-phase-add-tile";
+      addPhase.title = "Add phase";
+      addPhase.setAttribute("aria-label", "Add phase");
+      addPhase.innerHTML =
+        '<svg class="wf-phase-add-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+      addPhase.onclick = () => {
+        if (phases.length >= maxP) return;
+        phases.push({ title: "Phase " + (phases.length + 1), agents: [{ label: "agent", capabilityMode: "read-only" }] });
+        d.phases = phases;
+        renderWorkflowBuilder();
+      };
+      phaseRow.appendChild(addPhase);
+    }
     canvas.appendChild(phaseRow);
     body.appendChild(canvas);
     workflowBuilderEl.appendChild(body);
