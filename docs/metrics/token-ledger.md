@@ -1,6 +1,6 @@
 # Token & model usage ledger
 
-**Template version:** 0.1.45  
+**Template version:** 0.1.47  
 **Last updated:** 2026-08-04  
 **Policy:** update **VERSION** + this ledger on **every git commit** (`scripts/prepare_commit_metrics.py` / pre-commit hook).  
 **Source of figures:** session stats (`/context`, `/session-info`, host UI) — never invent.
@@ -13,8 +13,8 @@
 | Total output tokens (measured) | 0 |
 | Total tokens (measured) | 0 |
 | Measured entries | 0 |
-| Unmeasured commit stamps | 46 |
-| All ledger entries | 46 |
+| Unmeasured commit stamps | 48 |
+| All ledger entries | 48 |
 
 ## By model (measured only)
 
@@ -72,6 +72,8 @@
 | 2026-08-04 | commit-2026-08-04 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.43: auto unmeasured (no metrics in env/pending file) [unmeasured] |
 | 2026-08-04 | commit-2026-08-04 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.44: T3 raise-plan-implement-accuracy: AGENTS Lint+Coverage commands [unmeasured] |
 | 2026-08-04 | commit-2026-08-04 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.45: auto unmeasured (no metrics in env/pending file) [unmeasured] |
+| 2026-08-04 | commit-2026-08-04 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.46: T4 raise-plan-implement-accuracy: supersede coverage-no-tool waiver [unmeasured] |
+| 2026-08-04 | commit-2026-08-04 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.47: auto unmeasured (no metrics in env/pending file) [unmeasured] |
 
 <!-- LEDGER_END -->
 
