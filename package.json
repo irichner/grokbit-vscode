@@ -247,7 +247,10 @@
         },
         "grok.actionsScope": {
           "type": "string",
-          "enum": ["workflow", "all"],
+          "enum": [
+            "workflow",
+            "all"
+          ],
           "enumDescriptions": [
             "Bundled suite tiles plus User Workflows (Grok .rhai / Claude .js)",
             "Suite + User Workflows plus skills, agents, and CLI commands"
@@ -257,13 +260,19 @@
         },
         "grok.skills.provision": {
           "type": "string",
-          "enum": ["auto", "off"],
+          "enum": [
+            "auto",
+            "off"
+          ],
           "default": "auto",
           "markdownDescription": "Install the bundled **Grokbit workflow** skills (`grokbit-explore`, plan, implement, test, document, ship) into `~/.grok/skills` and `~/.claude/skills` so the CLIs can run them, refreshed whenever the extension updates. Because this is a per-user install rather than a per-project one, these skills also appear in Grok and Claude Code sessions started outside this extension. Set to `off` to manage your skills yourself — the Grokbit workflow group then disappears from the Actions menu and nothing else changes."
         },
         "grok.hooks.provision": {
           "type": "string",
-          "enum": ["off", "workspace"],
+          "enum": [
+            "off",
+            "workspace"
+          ],
           "default": "off",
           "markdownDescription": "Install bundled **Grok harness hooks** (Stop lint+unit gate, protect_paths, etc.) into the **open workspace** `.grok/hooks/`. Default **off** so foreign repos are never written without consent. **workspace** auto-installs/refreshes on activation when the version marker differs (backs up existing managed hooks; refuses unknown trees — use **Grokbit: Install workspace harness hooks** to force with backup). Two things are required before the hooks actually fire: **`python` or `python3` on PATH** (the hooks are Python scripts; the installer probes for one and wires whichever it finds, or warns when neither exists) and **`/hooks-trust`** in a Grok session. Hooks are a **backstop only**, not a substitute for plan/implement accuracy. Never required for Claude-only work. See `resources/hooks/README.md`."
         },
@@ -358,6 +367,7 @@
     "watch": "tsc -p . -w",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "test:perf": "vitest run --config vitest.perf.config.ts",
     "test:baseline": "vitest run --config vitest.baseline.config.ts",
     "test:live": "tsc -p . && node scripts/live-tests.cjs",
@@ -372,6 +382,7 @@
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.94.0",
     "@types/ws": "^8.18.1",
+    "@vitest/coverage-v8": "^2.1.9",
     "happy-dom": "^20.9.0",
     "typescript": "^5.4.0",
     "vitest": "^2.1.9"
