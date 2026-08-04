@@ -153,9 +153,9 @@ Successive agentic-template installs each left an `AGENTS.md.bak-before-agentic-
 
 - **Build:** TODO — user must fill
 - **Unit tests:** `npm test`
-- **Coverage:** NONE — no tool in repo
+- **Coverage:** `npm run test:coverage`
 - **Regression / full suite:** `npm test`
-- **Lint:** NONE — no tool in repo
+- **Lint:** `npx tsc -p . --noEmit`
 <!-- END PROJECT_TEST_COMMANDS -->
 
 ## Runtime enforcement (hooks)
