@@ -226,6 +226,15 @@ describe("Grokbit Actions — the bundled workflow group", () => {
       (el) => el.textContent?.trim(),
     );
     expect(phaseBadges).toEqual(["Phase 1", "Phase 2", "Phase 3"]);
+    // Phase delete is upper-right on the card head, not in the bottom toolbar.
+    const phaseCards = [...builder!.querySelectorAll(".wf-phase-card")];
+    expect(phaseCards.length).toBe(3);
+    for (const card of phaseCards) {
+      const headRm = card.querySelector(".wf-phase-head .wf-phase-remove") as HTMLButtonElement | null;
+      expect(headRm).toBeTruthy();
+      expect(headRm?.getAttribute("aria-label")).toMatch(/^Remove phase \d+$/);
+      expect(card.querySelector(".wf-phase-toolbar .wf-phase-remove")).toBeNull();
+    }
     expect(builder!.querySelectorAll(".wf-phase-title-field .wf-field-label").length).toBe(3);
     expect(
       [...builder!.querySelectorAll(".wf-phase-title-field .wf-field-label")].every(

@@ -1420,12 +1420,25 @@
       card.className = "wf-phase-card";
 
       // Visible chrome so phase cards read as "Phase N · name", not bare inputs.
+      // Delete lives upper-right on the card head (not in the bottom toolbar).
       const phaseHead = document.createElement("div");
       phaseHead.className = "wf-phase-head";
       const phaseBadge = document.createElement("span");
       phaseBadge.className = "wf-phase-badge";
       phaseBadge.textContent = "Phase " + (pi + 1);
       phaseHead.appendChild(phaseBadge);
+      const rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "wf-phase-remove";
+      rm.textContent = "×";
+      rm.title = "Remove phase";
+      rm.setAttribute("aria-label", "Remove phase " + (pi + 1));
+      rm.onclick = () => {
+        phases.splice(pi, 1);
+        d.phases = phases;
+        renderWorkflowBuilder();
+      };
+      phaseHead.appendChild(rm);
       card.appendChild(phaseHead);
 
       const titleLab = document.createElement("label");
@@ -1471,16 +1484,6 @@
         phases[pi] = t;
         renderWorkflowBuilder();
       };
-      const rm = document.createElement("button");
-      rm.type = "button";
-      rm.textContent = "Remove";
-      rm.title = "Remove phase";
-      rm.setAttribute("aria-label", "Remove phase " + (pi + 1));
-      rm.onclick = () => {
-        phases.splice(pi, 1);
-        d.phases = phases;
-        renderWorkflowBuilder();
-      };
       const addAg = document.createElement("button");
       addAg.type = "button";
       addAg.textContent = "+ agent";
@@ -1496,7 +1499,6 @@
       tools.appendChild(up);
       tools.appendChild(down);
       tools.appendChild(addAg);
-      tools.appendChild(rm);
       card.appendChild(tools);
 
       const agentsHead = document.createElement("div");
