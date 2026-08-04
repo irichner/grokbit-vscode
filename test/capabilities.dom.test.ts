@@ -221,32 +221,116 @@ describe("Grokbit Actions — the bundled workflow group", () => {
     expect(builder?.hidden).toBe(false);
     expect(builder?.textContent).toMatch(/Create Workflow|Goal/i);
     expect(builder?.textContent).toMatch(/Pipeline canvas|Craft with AI/i);
+    // Name before Goal in DOM; no Constraints field.
+    const name = builder!.querySelector("[data-wf-name]") as HTMLInputElement;
+    const goal = builder!.querySelector("[data-wf-goal]") as HTMLTextAreaElement;
+    expect(name).toBeTruthy();
+    expect(goal).toBeTruthy();
+    expect(
+      name.compareDocumentPosition(goal) & window.Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(builder!.textContent).not.toMatch(/Constraints/i);
+    // Save scope is a roomy segmented control, not a cramped gear switch.
+    const scopeSeg = builder!.querySelector(".wf-builder-scope-seg");
+    expect(scopeSeg).toBeTruthy();
+    expect(scopeSeg?.querySelectorAll(".segmented-btn").length).toBe(2);
+    expect(builder!.querySelector(".wf-builder-scope-toggle .popover-switch")).toBeNull();
     // Composer not auto-filled until Craft; no send.
     expect(posted.some((m) => m.type === "send")).toBe(false);
   });
 
-  it("Workflow Builder Craft with AI seeds composer without auto-send", () => {
+  it("Workflow Builder Craft with AI stays open, auto-sends, and shows working status", () => {
     const { window, doc, posted } = bootWebview();
     sendCapabilities(window, [SUITE_GROUP]);
+    // Session must be idle (not priming-busy) or Craft is disabled.
+    window.dispatchEvent(new window.MessageEvent("message", {
+      data: { type: "setBusy", value: false },
+    }));
     const row = [...panelOf(doc).querySelectorAll(".capability-row")].find((r) =>
       r.querySelector(".capability-row-name")?.textContent === "Create Workflow",
     ) as HTMLElement;
     click(window, row);
     const builder = doc.getElementById("workflow-builder")!;
+    const name = builder.querySelector("[data-wf-name]") as HTMLInputElement;
     const goal = builder.querySelector("[data-wf-goal]") as HTMLTextAreaElement;
+    expect(name).toBeTruthy();
     expect(goal).toBeTruthy();
+    name.value = "review-prs";
+    name.dispatchEvent(new window.Event("input", { bubbles: true }));
     goal.value = "Review pull requests safely";
     goal.dispatchEvent(new window.Event("input", { bubbles: true }));
     const craft = [...builder.querySelectorAll("button")].find((b) => b.textContent === "Craft with AI") as HTMLElement;
     expect(craft).toBeTruthy();
     posted.length = 0;
     click(window, craft);
+    expect(builder.hidden).toBe(false);
+    expect(builder.classList.contains("wf-crafting")).toBe(true);
+    expect(builder.textContent).toMatch(/AI is creating your workflow/i);
+    const send = posted.find((m) => m.type === "send");
+    expect(send).toBeTruthy();
+    expect(String(send?.text || "")).toMatch(/^\/create-workflow/);
+    expect(String(send?.text || "")).toMatch(/Review pull requests safely/);
+    expect(String(send?.text || "")).toMatch(/review-prs/);
+    // Composer is cleared by submitMessage after send.
     const input = doc.getElementById("input") as HTMLTextAreaElement;
-    expect(input.value).toMatch(/^\/create-workflow/);
-    expect(input.value).toMatch(/Review pull requests safely/);
-    expect(input.value).toMatch(/Pipeline structure/);
-    expect(posted.some((m) => m.type === "send")).toBe(false);
-    expect(builder.hidden).toBe(true);
+    expect(input.value).toBe("");
+  });
+
+  it("Workflow Builder applies workflowCraftResult into editable draft", () => {
+    const { window, doc, posted } = bootWebview();
+    sendCapabilities(window, [SUITE_GROUP]);
+    window.dispatchEvent(new window.MessageEvent("message", {
+      data: { type: "setBusy", value: false },
+    }));
+    const row = [...panelOf(doc).querySelectorAll(".capability-row")].find((r) =>
+      r.querySelector(".capability-row-name")?.textContent === "Create Workflow",
+    ) as HTMLElement;
+    click(window, row);
+    const builder = doc.getElementById("workflow-builder")!;
+    const name = builder.querySelector("[data-wf-name]") as HTMLInputElement;
+    const goal = builder.querySelector("[data-wf-goal]") as HTMLTextAreaElement;
+    name.value = "review-prs";
+    name.dispatchEvent(new window.Event("input", { bubbles: true }));
+    goal.value = "Review pull requests safely";
+    goal.dispatchEvent(new window.Event("input", { bubbles: true }));
+    const craft = [...builder.querySelectorAll("button")].find((b) => b.textContent === "Craft with AI") as HTMLElement;
+    click(window, craft);
+    expect(builder.classList.contains("wf-crafting")).toBe(true);
+    // Simulate craft turn end → host result.
+    window.dispatchEvent(new window.MessageEvent("message", {
+      data: { type: "agentEnd" },
+    }));
+    expect(posted.some((m) => m.type === "getWorkflowCraftResult" && m.name === "review-prs")).toBe(true);
+    window.dispatchEvent(new window.MessageEvent("message", {
+      data: {
+        type: "workflowCraftResult",
+        name: "review-prs",
+        ok: true,
+        workflow: {
+          name: "review-prs",
+          description: "from disk",
+          agents: [
+            { label: "planner", inferredPhase: "Plan" },
+            { label: "implementer", inferredPhase: "Build" },
+          ],
+        },
+      },
+    }));
+    expect(builder.hidden).toBe(false);
+    expect(builder.classList.contains("wf-crafting")).toBe(false);
+    const nameAfter = builder.querySelector("[data-wf-name]") as HTMLInputElement;
+    const goalAfter = builder.querySelector("[data-wf-goal]") as HTMLTextAreaElement;
+    expect(nameAfter?.value).toBe("review-prs");
+    expect(goalAfter?.value).toBe("Review pull requests safely");
+    // Phase titles / agent labels live in <input value>, not textContent.
+    const phaseTitles = [...builder.querySelectorAll("input.wf-phase-title")].map(
+      (el) => (el as HTMLInputElement).value,
+    );
+    expect(phaseTitles).toEqual(["Plan", "Build"]);
+    const agentLabels = [...builder.querySelectorAll(".wf-agent-row input[type=\"text\"]")].map(
+      (el) => (el as HTMLInputElement).value,
+    );
+    expect(agentLabels).toEqual(["planner", "implementer"]);
   });
 
   // M3: dialog keyboard — Escape closes without Craft (empty draft = not dirty).

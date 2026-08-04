@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain JS module, no types
-import { looksLikeFileRef, isSafeHref, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, clampScrollTop, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, formatLauncherMetaTooltip, activityPeek, activityPosText, backendBadgeLabel, inferPermissionKind, permissionDiffFromRawInput, sessionSetupModel, sessionSetupChipLabel, capabilityGroupsView, sessionToggleGroup, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK, CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups, userWorkflowsPanelState, withCreateWorkflowTile, CAPABILITY_ROW_DESCRIPTION_MAX, capabilityDisplayLabel, capabilityInvokeLabel, defaultWorkflowGraphFromGoal, validateWorkflowBuilderDraft, buildWorkflowCraftBrief, workflowDetailView, USER_PROMPT_COLLAPSE_MIN_CHARS, userPromptShouldCollapse } from "../media/webview-helpers.js";
+import { looksLikeFileRef, isSafeHref, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, clampScrollTop, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, formatLauncherMetaTooltip, activityPeek, activityPosText, backendBadgeLabel, inferPermissionKind, permissionDiffFromRawInput, sessionSetupModel, sessionSetupChipLabel, capabilityGroupsView, sessionToggleGroup, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK, CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups, userWorkflowsPanelState, withCreateWorkflowTile, CAPABILITY_ROW_DESCRIPTION_MAX, capabilityDisplayLabel, capabilityInvokeLabel, defaultWorkflowGraphFromGoal, validateWorkflowBuilderDraft, buildWorkflowCraftBrief, workflowDetailToBuilderDraft, workflowDetailView, USER_PROMPT_COLLAPSE_MIN_CHARS, userPromptShouldCollapse } from "../media/webview-helpers.js";
 import { buildPrompt } from "../src/prompt-builder";
 import { makeExplicitChip, makeImplicitChip } from "../src/chips";
 
@@ -1042,12 +1042,14 @@ describe("capabilityDisplayLabel / capabilityInvokeLabel", () => {
 });
 
 describe("workflow builder pure helpers", () => {
-  it("validate requires a goal", () => {
-    expect(validateWorkflowBuilderDraft({ goal: "" }).ok).toBe(false);
-    expect(validateWorkflowBuilderDraft({ goal: "  ship it  " }).ok).toBe(true);
+  it("validate requires goal and kebab name", () => {
+    expect(validateWorkflowBuilderDraft({ goal: "", name: "ok-name" }).ok).toBe(false);
+    expect(validateWorkflowBuilderDraft({ goal: "  ship it  ", name: "" }).ok).toBe(false);
+    expect(validateWorkflowBuilderDraft({ goal: "ship it", name: "Bad_Name" }).ok).toBe(false);
+    expect(validateWorkflowBuilderDraft({ goal: "  ship it  ", name: "ship-it" }).ok).toBe(true);
   });
 
-  it("buildWorkflowCraftBrief includes goal, scope, and phases", () => {
+  it("buildWorkflowCraftBrief includes goal, scope, and phases without Constraints section", () => {
     const brief = buildWorkflowCraftBrief({
       goal: "Review PRs",
       name: "review-prs",
@@ -1059,6 +1061,26 @@ describe("workflow builder pure helpers", () => {
     expect(brief).toMatch(/review-prs/);
     expect(brief).toMatch(/Pipeline structure/);
     expect(brief).toMatch(/Plan/);
+    expect(brief).not.toMatch(/## Constraints/);
+  });
+
+  it("workflowDetailToBuilderDraft groups agents by inferred phase", () => {
+    const draft = workflowDetailToBuilderDraft(
+      {
+        name: "review-prs",
+        description: "from file",
+        agents: [
+          { label: "planner", inferredPhase: "Plan" },
+          { label: "coder", inferredPhase: "Implement" },
+        ],
+      },
+      { goal: "Review PRs safely", scope: "project", name: "review-prs" },
+    );
+    expect(draft.name).toBe("review-prs");
+    expect(draft.goal).toBe("Review PRs safely");
+    expect(draft.phases.map((p) => p.title)).toEqual(["Plan", "Implement"]);
+    expect(draft.phases[0].agents[0].label).toBe("planner");
+    expect(draft.phases[1].agents[0].label).toBe("coder");
   });
 });
 

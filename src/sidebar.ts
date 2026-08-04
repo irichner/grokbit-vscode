@@ -201,6 +201,8 @@ type WebviewMsg =
   | { type: "listWorkspaceDocs" }
   | { type: "listCapabilities" }
   | { type: "getCapabilityDetail"; name: string; detailKind?: string; path?: string }
+  /** Workflow Builder craft apply — resolve `{name}.rhai` under allowed roots by scope. */
+  | { type: "getWorkflowCraftResult"; name: string; scope?: "project" | "user" }
   | { type: "scrollState"; stickToBottom: boolean; scrollTop: number };
 
 const SESSION_META_KEY = "grok.sessionMeta";
@@ -3264,6 +3266,13 @@ See design doc for the full state machine diagram.`;
           typeof msg.path === "string" ? msg.path : undefined,
         );
         break;
+      case "getWorkflowCraftResult":
+        this.postWorkflowCraftResult(
+          session,
+          typeof msg.name === "string" ? msg.name : "",
+          msg.scope === "user" ? "user" : "project",
+        );
+        break;
       case "voiceStart":
         await this.handleVoiceStart(session);
         break;
@@ -3600,6 +3609,84 @@ See design doc for the full state machine diagram.`;
       name,
       workflow: res.workflow,
       path: res.path,
+    });
+  }
+
+  /**
+   * Workflow Builder “Craft with AI” apply path — look up `{name}.rhai` under
+   * allowed workflow roots (preferring the chosen scope) without trusting a
+   * client-supplied absolute path. Reuses {@link readWorkflowDetail} containment.
+   */
+  private postWorkflowCraftResult(
+    session: Session,
+    name: string,
+    scope: "project" | "user",
+  ): void {
+    if (!this.showCapabilities()) return;
+    const safeName = String(name || "").trim();
+    // Same kebab rule as the builder validate helper — refuse path injection.
+    if (!safeName || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(safeName)) {
+      this.postTo(session, {
+        type: "workflowCraftResult",
+        name: safeName,
+        ok: false,
+        error: "not-a-workflow-path",
+      });
+      return;
+    }
+    const capFs = this.capabilityFs();
+    const wfFs = {
+      realpathSync: capFs.realpathSync,
+      statSync: (p: string) => fs.statSync(p),
+      readSlice: (p: string, maxBytes: number) => capFs.readHead(p, maxBytes),
+    };
+    const workspaceDir = this.sessionCwd(session);
+    const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
+    const allowedRoots = workflowDetailRoots({
+      roots: CAPABILITY_ROOTS[session.backend],
+      workspaceDir,
+      homeDir,
+      env: process.env,
+      fs: wfFs,
+    });
+    // Prefer the user-chosen scope root first, then any other allowed root.
+    // Match CAPABILITY_ROOTS `dir: ".grok/workflows"` (same as workflowDetailRoots).
+    const preferred = scope === "user"
+      ? path.join(homeDir, ".grok/workflows")
+      : path.join(workspaceDir, ".grok/workflows");
+    let preferredReal: string | null = null;
+    try {
+      preferredReal = wfFs.realpathSync(preferred);
+    } catch {
+      preferredReal = null;
+    }
+    const ordered = preferredReal && allowedRoots.includes(preferredReal)
+      ? [preferredReal, ...allowedRoots.filter((r) => r !== preferredReal)]
+      : [...allowedRoots];
+    for (const root of ordered) {
+      const candidate = path.join(root, `${safeName}.rhai`);
+      const res = readWorkflowDetail({
+        fs: wfFs,
+        requestedPath: candidate,
+        allowedRoots,
+        maxBytes: WORKFLOW_DETAIL_MAX_BYTES,
+      });
+      if (res.ok) {
+        this.postTo(session, {
+          type: "workflowCraftResult",
+          name: safeName,
+          ok: true,
+          workflow: res.workflow,
+          path: res.path,
+        });
+        return;
+      }
+    }
+    this.postTo(session, {
+      type: "workflowCraftResult",
+      name: safeName,
+      ok: false,
+      error: "not-found",
     });
   }
 

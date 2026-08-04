@@ -1035,7 +1035,7 @@
   }
 
   /**
-   * @param {{ goal?: string, name?: string, scope?: string, constraints?: string, phases?: unknown[] }} draft
+   * @param {{ goal?: string, name?: string, scope?: string, phases?: unknown[] }} draft
    * @returns {{ ok: boolean, errors: string[] }}
    */
   function validateWorkflowBuilderDraft(draft) {
@@ -1044,7 +1044,9 @@
     const goal = (draft.goal == null ? "" : String(draft.goal)).trim();
     if (!goal) errors.push("Goal is required.");
     const name = (draft.name == null ? "" : String(draft.name)).trim();
-    if (name && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) {
+    if (!name) {
+      errors.push("Name is required.");
+    } else if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) {
       errors.push("Name must be lowercase letters, digits, and hyphens (e.g. review-changes).");
     }
     const phases = Array.isArray(draft.phases) ? draft.phases : [];
@@ -1062,8 +1064,9 @@
   }
 
   /**
-   * Structured brief for /create-workflow (seed-only; never auto-sends).
-   * @param {{ goal?: string, name?: string, scope?: string, constraints?: string, phases?: { title?: string, agents?: { label?: string, capabilityMode?: string }[] }[] }} draft
+   * Structured brief for /create-workflow. Pure text only — the Craft button
+   * decides whether to auto-send; this helper never posts messages.
+   * @param {{ goal?: string, name?: string, scope?: string, phases?: { title?: string, agents?: { label?: string, capabilityMode?: string }[] }[] }} draft
    * @returns {string}
    */
   function buildWorkflowCraftBrief(draft) {
@@ -1071,7 +1074,6 @@
     const goal = (draft.goal == null ? "" : String(draft.goal)).trim();
     const name = (draft.name == null ? "" : String(draft.name)).trim();
     const scope = draft.scope === "user" ? "user" : "project";
-    const constraints = (draft.constraints == null ? "" : String(draft.constraints)).trim();
     const phases = Array.isArray(draft.phases) ? draft.phases : [];
     const scopePath = scope === "user"
       ? "~/.grok/workflows/"
@@ -1088,9 +1090,6 @@
       lines.push("", "## Suggested name", name);
     }
     lines.push("", "## Scope", scope === "user" ? "User home (~/.grok/workflows/)" : "Project (.grok/workflows/)");
-    if (constraints) {
-      lines.push("", "## Constraints", constraints);
-    }
     if (phases.length) {
       lines.push("", "## Pipeline structure (from the visual builder)");
       phases.forEach((p, i) => {
@@ -1113,6 +1112,88 @@
       "Design agents, phases, and verification as needed. Prefer project scope unless I said otherwise. After save, tell me how to run it.",
     );
     return lines.join("\n");
+  }
+
+  /**
+   * Map a host workflow detail (from parseWorkflowDetail) into an editable
+   * builder draft. Lossy by design — capability modes are not in the script
+   * parse, so agents default to read-only unless prior draft matches by label.
+   * @param {{ name?: string, description?: string, phases?: { title?: string }[], agents?: { label?: string, phase?: string, inferredPhase?: string }[] } | null | undefined} detail
+   * @param {{ goal?: string, name?: string, scope?: string, phases?: unknown[] } | null | undefined} prior
+   * @returns {{ goal: string, name: string, scope: string, phases: { title: string, agents: { label: string, capabilityMode: string }[] }[] }}
+   */
+  function workflowDetailToBuilderDraft(detail, prior) {
+    const p = prior || {};
+    const d = detail || {};
+    const name = (d.name != null && String(d.name).trim())
+      ? String(d.name).trim()
+      : (p.name == null ? "" : String(p.name).trim());
+    const goalFromDesc = d.description != null ? String(d.description).trim() : "";
+    const goal = (p.goal == null ? "" : String(p.goal)).trim() || goalFromDesc;
+    const scope = p.scope === "user" ? "user" : "project";
+
+    const priorModeByLabel = Object.create(null);
+    const priorPhases = Array.isArray(p.phases) ? p.phases : [];
+    priorPhases.forEach((ph) => {
+      const agents = ph && Array.isArray(ph.agents) ? ph.agents : [];
+      agents.forEach((a) => {
+        if (!a || a.label == null) return;
+        const key = String(a.label).trim().toLowerCase();
+        if (key && a.capabilityMode) priorModeByLabel[key] = String(a.capabilityMode);
+      });
+    });
+
+    const phaseOrder = [];
+    const phaseAgents = Object.create(null);
+    function ensurePhase(title) {
+      const t = (title == null ? "" : String(title)).trim() || "Agents";
+      if (!phaseAgents[t]) {
+        phaseAgents[t] = [];
+        phaseOrder.push(t);
+      }
+      return t;
+    }
+
+    const metaPhases = Array.isArray(d.phases) ? d.phases : [];
+    metaPhases.forEach((mp) => {
+      const title = mp && typeof mp === "object" ? mp.title : mp;
+      if (title != null && String(title).trim()) ensurePhase(String(title).trim());
+    });
+
+    const agents = Array.isArray(d.agents) ? d.agents : [];
+    agents.forEach((a) => {
+      if (!a) return;
+      const title = ensurePhase(a.inferredPhase || a.phase || "Agents");
+      const label = (a.label != null && String(a.label).trim()) ? String(a.label).trim() : "agent";
+      const modeKey = label.toLowerCase();
+      const capabilityMode = priorModeByLabel[modeKey] || "read-only";
+      phaseAgents[title].push({ label, capabilityMode });
+    });
+
+    if (!phaseOrder.length) {
+      const fallback = priorPhases.length
+        ? priorPhases.map((ph) => ({
+            title: ph && ph.title != null ? String(ph.title) : "Phase",
+            agents: (ph && Array.isArray(ph.agents) ? ph.agents : []).map((a) => ({
+              label: a && a.label != null ? String(a.label) : "agent",
+              capabilityMode: a && a.capabilityMode ? String(a.capabilityMode) : "read-only",
+            })),
+          }))
+        : defaultWorkflowGraphFromGoal(goal);
+      return { goal, name, scope, phases: fallback };
+    }
+
+    return {
+      goal,
+      name,
+      scope,
+      phases: phaseOrder.map((title) => ({
+        title,
+        agents: phaseAgents[title].length
+          ? phaseAgents[title]
+          : [{ label: "agent", capabilityMode: "read-only" }],
+      })),
+    };
   }
 
   function capabilityGroupsView(opts) {
@@ -1670,6 +1751,7 @@
     capabilityDisplayLabel, capabilityInvokeLabel,
     WORKFLOW_BUILDER_MAX_PHASES, WORKFLOW_BUILDER_MAX_AGENTS_PER_PHASE,
     defaultWorkflowGraphFromGoal, validateWorkflowBuilderDraft, buildWorkflowCraftBrief,
+    workflowDetailToBuilderDraft,
     workflowDetailView,
     CAPABILITY_ROW_DESCRIPTION_MAX, truncateCapabilityDescription,
     PASTE_IMAGE_MAX_BYTES, PASTE_IMAGE_MAX_COUNT, PASTE_IMAGE_MIME,

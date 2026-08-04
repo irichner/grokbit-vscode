@@ -2131,6 +2131,17 @@ textarea#input {
   border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
 }
 #workflow-builder[hidden] { display: none !important; }
+/* Compact craft chrome: top strip only so chat permissions stay clickable. */
+#workflow-builder.wf-crafting {
+  inset: auto;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: auto;
+  max-height: none;
+  border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  box-shadow: 0 4px 16px color-mix(in srgb, #000 25%, transparent);
+}
 .wf-builder-head {
   display: flex;
   align-items: center;
@@ -2145,29 +2156,90 @@ textarea#input {
   font-weight: 600;
   color: var(--neon-green-ink);
 }
+.wf-builder-status {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--neon-green) 12%, var(--vscode-editor-background));
+  border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+}
+.wf-builder-status.error {
+  background: color-mix(in srgb, var(--vscode-inputValidation-errorBorder, #f14c4c) 18%, var(--vscode-editor-background));
+}
 .wf-builder-body {
   flex: 1;
   min-height: 0;
   overflow: auto;
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 12px;
   padding: 12px;
   align-content: flex-start;
 }
 .wf-builder-form {
-  flex: 1 1 min(100%, 280px);
+  flex: 0 0 auto;
+  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
-.wf-builder-form label {
+.wf-builder-form label,
+.wf-builder-name-field {
   display: flex;
   flex-direction: column;
   gap: 4px;
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
+  min-width: 0;
+}
+.wf-field-label {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+.wf-builder-name-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px;
+}
+.wf-builder-name-field {
+  flex: 1 1 min(100%, 200px);
+  min-width: 0;
+}
+.wf-builder-name-input {
+  font: inherit;
+  font-size: 16px !important;
+  font-weight: 600;
+  padding: 10px 12px !important;
+  min-height: 40px;
+}
+/* Save scope sits beside Name with real width — not a 24px gear switch. */
+.wf-builder-scope-toggle {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: min(100%, 220px);
+}
+/* Higher specificity than bare .segmented so width/height win. */
+.segmented.wf-builder-scope-seg {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  border-radius: 6px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.segmented.wf-builder-scope-seg .segmented-btn {
+  flex: 1 1 0;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  min-width: 0;
 }
 .wf-builder-form input,
 .wf-builder-form textarea,
@@ -2180,31 +2252,10 @@ textarea#input {
   border-radius: 4px;
   padding: 6px 8px;
 }
-.wf-builder-form textarea { min-height: 72px; resize: vertical; }
-.wf-builder-scope {
-  display: flex;
-  gap: 0;
-  border: 1px solid var(--vscode-widget-border);
-  border-radius: 4px;
-  overflow: hidden;
-}
-.wf-builder-scope button {
-  flex: 1;
-  font: inherit;
-  font-size: 11px;
-  padding: 6px 8px;
-  border: none;
-  background: transparent;
-  color: var(--vscode-foreground);
-  cursor: pointer;
-}
-.wf-builder-scope button[aria-pressed="true"] {
-  background: color-mix(in srgb, var(--neon-green) 18%, var(--vscode-editor-background));
-  color: var(--neon-green-ink);
-  font-weight: 600;
-}
+.wf-builder-form textarea { min-height: 88px; resize: vertical; }
 .wf-builder-canvas {
-  flex: 1 1 min(100%, 320px);
+  flex: 1 1 auto;
+  width: 100%;
   min-width: 0;
   display: flex;
   flex-direction: column;

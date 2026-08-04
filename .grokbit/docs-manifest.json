@@ -1,0 +1,17 @@
+{
+  "docs": [
+    {
+      "type": "features-use-cases",
+      "path": "docs/features-and-use-cases.md",
+      "docx": "docs/Grokbit-Features-and-Use-Cases.docx",
+      "verified": "2026-08-03",
+      "derived_from": [
+        "README.md@f21d093",
+        "package.json@f21d093",
+        "docs/grokbit-workflows.md@f21d093",
+        "src/skill-suite.ts@f21d093"
+      ],
+      "content_hash": "d82f66b5dbc162f41dec95cad1a2fb0f139816e4f13e2bf653e410fd23d67469"
+    }
+  ]
+}

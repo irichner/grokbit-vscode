@@ -1081,6 +1081,8 @@
   let workflowBuilderBaseline = null;
   let workflowBuilderKeyHandler = null;
   let workflowBuilderPrevFocus = null;
+  /** @type {null | { status: "working" | "failed" | "applying", name: string, scope: string, message?: string }} */
+  let workflowBuilderCraft = null;
 
   function cloneWorkflowPhases(phases) {
     return (Array.isArray(phases) ? phases : []).map((p) => ({
@@ -1124,8 +1126,10 @@
     }
     detachWorkflowBuilderKeys();
     workflowBuilderEl.hidden = true;
+    workflowBuilderEl.classList.remove("wf-crafting");
     workflowBuilderDraft = null;
     workflowBuilderBaseline = null;
+    workflowBuilderCraft = null;
     const prev = workflowBuilderPrevFocus;
     workflowBuilderPrevFocus = null;
     if (prev && typeof prev.focus === "function") {
@@ -1146,11 +1150,11 @@
       workflowBuilderEl.setAttribute("aria-modal", "true");
     }
     workflowBuilderPrevFocus = document.activeElement;
+    workflowBuilderCraft = null;
     workflowBuilderDraft = {
       goal: "",
       name: "",
       scope: "project",
-      constraints: "",
       phases: cloneWorkflowPhases(
         typeof defaultWorkflowGraphFromGoal === "function"
           ? defaultWorkflowGraphFromGoal("")
@@ -1159,6 +1163,7 @@
     };
     workflowBuilderBaseline = JSON.parse(JSON.stringify(workflowBuilderDraft));
     workflowBuilderEl.hidden = false;
+    workflowBuilderEl.classList.remove("wf-crafting");
     // Escape closes (dirty confirm); Tab cycles focus inside the dialog (M3 a11y).
     detachWorkflowBuilderKeys();
     workflowBuilderKeyHandler = (e) => {
@@ -1166,10 +1171,13 @@
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
+        // Escape dismisses the builder UI; an in-flight craft turn is stopped only via Stop.
         closeWorkflowBuilder(false);
         return;
       }
       if (e.key !== "Tab") return;
+      // Compact craft chrome does not trap focus — chat permissions must stay reachable.
+      if (workflowBuilderEl.classList.contains("wf-crafting")) return;
       const list = workflowBuilderFocusables();
       if (!list.length) return;
       const first = list[0];
@@ -1186,18 +1194,85 @@
     };
     document.addEventListener("keydown", workflowBuilderKeyHandler, true);
     renderWorkflowBuilder();
-    const goalEl = workflowBuilderEl.querySelector("[data-wf-goal]");
-    if (goalEl && typeof goalEl.focus === "function") goalEl.focus();
+    const nameEl = workflowBuilderEl.querySelector("[data-wf-name]");
+    if (nameEl && typeof nameEl.focus === "function") nameEl.focus();
+  }
+
+  function requestWorkflowCraftResult() {
+    if (!workflowBuilderCraft || !workflowBuilderCraft.name) return;
+    vscode.postMessage({
+      type: "getWorkflowCraftResult",
+      name: workflowBuilderCraft.name,
+      scope: workflowBuilderCraft.scope === "user" ? "user" : "project",
+    });
+  }
+
+  /** Called from agentEnd / agentError / exit while a craft session is active. */
+  function onWorkflowCraftTurnEnd(kind) {
+    if (!workflowBuilderCraft || !workflowBuilderEl || workflowBuilderEl.hidden) return;
+    if (workflowBuilderCraft.status !== "working" && workflowBuilderCraft.status !== "applying") return;
+    if (kind === "error") {
+      workflowBuilderCraft = {
+        ...workflowBuilderCraft,
+        status: "failed",
+        message: "The AI turn failed. Edit the draft and try Craft with AI again.",
+      };
+      renderWorkflowBuilder();
+      return;
+    }
+    // Success path: ask host to load the written .rhai by name + scope.
+    workflowBuilderCraft = {
+      ...workflowBuilderCraft,
+      status: "applying",
+      message: "Loading the proposed workflow…",
+    };
+    renderWorkflowBuilder();
+    requestWorkflowCraftResult();
+  }
+
+  function applyWorkflowCraftResult(msg) {
+    if (!workflowBuilderCraft || !workflowBuilderDraft || !workflowBuilderEl || workflowBuilderEl.hidden) return;
+    if (workflowBuilderCraft.status !== "applying" && workflowBuilderCraft.status !== "working") return;
+    if (msg && msg.ok === false) {
+      workflowBuilderCraft = {
+        ...workflowBuilderCraft,
+        status: "failed",
+        message: msg.error === "not-found"
+          ? "Workflow not found on disk yet — wait a moment, or edit the draft and Craft again."
+          : "Could not load the proposed workflow. Edit the draft and try again.",
+      };
+      renderWorkflowBuilder();
+      return;
+    }
+    const prior = workflowBuilderDraft;
+    const detail = msg && msg.workflow && typeof msg.workflow === "object" ? msg.workflow : null;
+    const next = typeof workflowDetailToBuilderDraft === "function"
+      ? workflowDetailToBuilderDraft(detail, prior)
+      : prior;
+    workflowBuilderDraft = {
+      goal: next.goal != null ? String(next.goal) : (prior.goal || ""),
+      name: next.name != null ? String(next.name) : (prior.name || ""),
+      scope: next.scope === "user" ? "user" : "project",
+      phases: cloneWorkflowPhases(next.phases),
+    };
+    workflowBuilderBaseline = JSON.parse(JSON.stringify(workflowBuilderDraft));
+    workflowBuilderCraft = null;
+    renderWorkflowBuilder();
   }
 
   function renderWorkflowBuilder() {
     if (!workflowBuilderEl || !workflowBuilderDraft) return;
     const d = workflowBuilderDraft;
+    const craft = workflowBuilderCraft;
+    const crafting = !!(craft && (craft.status === "working" || craft.status === "applying"));
     const maxP = WORKFLOW_BUILDER_MAX_PHASES || 12;
     const maxA = WORKFLOW_BUILDER_MAX_AGENTS_PER_PHASE || 8;
     const phases = Array.isArray(d.phases) ? d.phases : [];
 
+    workflowBuilderEl.classList.toggle("wf-crafting", crafting);
+    workflowBuilderEl.setAttribute("aria-modal", crafting ? "false" : "true");
     workflowBuilderEl.innerHTML = "";
+
     const head = document.createElement("div");
     head.className = "wf-builder-head";
     const title = document.createElement("div");
@@ -1206,10 +1281,30 @@
     head.appendChild(title);
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
-    closeBtn.textContent = "Close";
+    closeBtn.textContent = crafting ? "Hide" : "Close";
     closeBtn.onclick = () => closeWorkflowBuilder(false);
     head.appendChild(closeBtn);
     workflowBuilderEl.appendChild(head);
+
+    if (craft && (craft.status === "working" || craft.status === "applying" || craft.status === "failed")) {
+      const banner = document.createElement("div");
+      banner.className = "wf-builder-status" + (craft.status === "failed" ? " error" : "");
+      banner.dataset.wfCraftStatus = craft.status;
+      banner.setAttribute("role", "status");
+      if (craft.status === "working") {
+        banner.textContent = "AI is creating your workflow… You can approve permissions in the chat below.";
+      } else if (craft.status === "applying") {
+        banner.textContent = craft.message || "Loading the proposed workflow…";
+      } else {
+        banner.textContent = craft.message || "Craft failed.";
+      }
+      workflowBuilderEl.appendChild(banner);
+    }
+
+    // Compact craft chrome: status + dismiss only so chat stays interactive.
+    if (crafting) {
+      return;
+    }
 
     const err = document.createElement("p");
     err.className = "wf-builder-errors";
@@ -1223,48 +1318,76 @@
     const form = document.createElement("div");
     form.className = "wf-builder-form";
 
-    function field(labelText, control) {
+    function field(labelText, control, opts) {
       const lab = document.createElement("label");
-      lab.textContent = labelText;
+      if (opts && opts.className) lab.className = opts.className;
+      const span = document.createElement("span");
+      span.className = "wf-field-label";
+      span.textContent = labelText;
+      lab.appendChild(span);
       lab.appendChild(control);
       form.appendChild(lab);
       return control;
     }
 
+    // Name row: large required name + save-scope toggle
+    const nameRow = document.createElement("div");
+    nameRow.className = "wf-builder-name-row";
+    const nameLab = document.createElement("label");
+    nameLab.className = "wf-builder-name-field";
+    const nameLbl = document.createElement("span");
+    nameLbl.className = "wf-field-label";
+    nameLbl.textContent = "Name (required, kebab-case)";
+    nameLab.appendChild(nameLbl);
+    const name = document.createElement("input");
+    name.type = "text";
+    name.className = "wf-builder-name-input";
+    name.dataset.wfName = "1";
+    name.placeholder = "review-changes";
+    name.setAttribute("aria-required", "true");
+    name.value = d.name || "";
+    name.oninput = () => { d.name = name.value; };
+    nameLab.appendChild(name);
+    nameRow.appendChild(nameLab);
+
+    // Roomier segmented Project | User control (not the gear's 24px switch).
+    const scopeLab = document.createElement("div");
+    scopeLab.className = "wf-builder-scope-toggle";
+    const scopeTitle = document.createElement("span");
+    scopeTitle.className = "wf-field-label";
+    scopeTitle.textContent = "Save scope";
+    scopeLab.appendChild(scopeTitle);
+    const scopeSeg = document.createElement("div");
+    scopeSeg.className = "segmented wf-builder-scope-seg";
+    scopeSeg.setAttribute("role", "group");
+    scopeSeg.setAttribute("aria-label", "Save scope");
+    for (const opt of [
+      { id: "project", label: "Project", title: "Project (.grok/workflows/)" },
+      { id: "user", label: "User home", title: "User home (~/.grok/workflows/)" },
+    ]) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      const selected = (d.scope === "user" ? "user" : "project") === opt.id;
+      btn.className = "segmented-btn" + (selected ? " active" : "");
+      btn.textContent = opt.label;
+      btn.title = opt.title;
+      btn.setAttribute("aria-pressed", String(selected));
+      btn.onclick = () => {
+        d.scope = opt.id;
+        renderWorkflowBuilder();
+      };
+      scopeSeg.appendChild(btn);
+    }
+    scopeLab.appendChild(scopeSeg);
+    nameRow.appendChild(scopeLab);
+    form.appendChild(nameRow);
+
     const goal = document.createElement("textarea");
     goal.dataset.wfGoal = "1";
-    goal.placeholder = "What should this workflow accomplish?";
+    goal.placeholder = "What should this workflow accomplish? Include any limits or constraints here.";
     goal.value = d.goal || "";
     goal.oninput = () => { d.goal = goal.value; };
     field("Goal (required)", goal);
-
-    const name = document.createElement("input");
-    name.type = "text";
-    name.placeholder = "review-changes";
-    name.value = d.name || "";
-    name.oninput = () => { d.name = name.value; };
-    field("Name (optional, kebab-case)", name);
-
-    const scopeWrap = document.createElement("div");
-    scopeWrap.className = "wf-builder-scope";
-    ["project", "user"].forEach((scopeId) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.textContent = scopeId === "project" ? "Project" : "User home";
-      b.setAttribute("aria-pressed", String(d.scope === scopeId));
-      b.onclick = () => {
-        d.scope = scopeId;
-        renderWorkflowBuilder();
-      };
-      scopeWrap.appendChild(b);
-    });
-    field("Save scope", scopeWrap);
-
-    const constraints = document.createElement("textarea");
-    constraints.placeholder = "Optional limits, tools to avoid, fan-out budget…";
-    constraints.value = d.constraints || "";
-    constraints.oninput = () => { d.constraints = constraints.value; };
-    field("Constraints (optional)", constraints);
 
     body.appendChild(form);
 
@@ -1403,14 +1526,21 @@
     cancel.type = "button";
     cancel.textContent = "Cancel";
     cancel.onclick = () => closeWorkflowBuilder(false);
-    const craft = document.createElement("button");
-    craft.type = "button";
-    craft.className = "primary";
-    craft.textContent = "Craft with AI";
-    craft.onclick = () => {
+    const craftBtn = document.createElement("button");
+    craftBtn.type = "button";
+    craftBtn.className = "primary";
+    craftBtn.textContent = "Craft with AI";
+    craftBtn.dataset.wfCraft = "1";
+    // Disable while another turn is busy (not our craft session).
+    const craftOwnsTurn = !!(workflowBuilderCraft && (workflowBuilderCraft.status === "working" || workflowBuilderCraft.status === "applying"));
+    craftBtn.disabled = !!(state.busy && !craftOwnsTurn);
+    if (craftBtn.disabled) {
+      craftBtn.title = "Wait for the current turn to finish";
+    }
+    craftBtn.onclick = () => {
       const v = typeof validateWorkflowBuilderDraft === "function"
         ? validateWorkflowBuilderDraft(d)
-        : { ok: !!(d.goal && String(d.goal).trim()), errors: [] };
+        : { ok: !!(d.goal && String(d.goal).trim() && d.name && String(d.name).trim()), errors: [] };
       const errEl = workflowBuilderEl.querySelector("[data-wf-errors]");
       if (!v.ok) {
         if (errEl) {
@@ -1419,17 +1549,29 @@
         }
         return;
       }
+      if (state.busy) {
+        if (errEl) {
+          errEl.hidden = false;
+          errEl.textContent = "Wait for the current turn to finish before crafting.";
+        }
+        return;
+      }
       if (errEl) { errEl.hidden = true; errEl.textContent = ""; }
       const brief = typeof buildWorkflowCraftBrief === "function"
         ? buildWorkflowCraftBrief(d)
         : "/create-workflow\n\nMy goal: " + String(d.goal || "").trim();
-      insertComposerPrompt(brief, { mode: "replace" });
-      // Seed-only — never auto-send (plan default).
+      workflowBuilderCraft = {
+        status: "working",
+        name: String(d.name || "").trim(),
+        scope: d.scope === "user" ? "user" : "project",
+      };
       workflowBuilderBaseline = JSON.parse(JSON.stringify(d));
-      closeWorkflowBuilder(true);
+      renderWorkflowBuilder();
+      // Auto-send — stay on Create Workflow surface (compact chrome while working).
+      submitMessage(brief);
     };
     foot.appendChild(cancel);
-    foot.appendChild(craft);
+    foot.appendChild(craftBtn);
     workflowBuilderEl.appendChild(foot);
   }
 
@@ -1811,6 +1953,7 @@
     userWorkflowsPanelState, withCreateWorkflowTile, canAcceptPasteImageBytes, isAllowedPasteImageMime,
     PASTE_IMAGE_MAX_COUNT,
     defaultWorkflowGraphFromGoal, validateWorkflowBuilderDraft, buildWorkflowCraftBrief,
+    workflowDetailToBuilderDraft,
     WORKFLOW_BUILDER_MAX_PHASES, WORKFLOW_BUILDER_MAX_AGENTS_PER_PHASE,
     workflowDetailView,
   } = globalThis.GrokWebviewHelpers;
@@ -6769,6 +6912,7 @@
         updateSendButton();
         updateComposerPlaceholder();
         flushVoiceQueue(); // don't strand messages dictated during this turn
+        onWorkflowCraftTurnEnd("error");
         break;
       case "agentEnd":
         hideGrokking(); // turn ended (defensive — content normally clears it first)
@@ -6777,6 +6921,7 @@
         updateSendButton();
         updateComposerPlaceholder();
         flushVoiceQueue(); // send anything dictated while Grok was responding
+        onWorkflowCraftTurnEnd("end");
         break;
       case "exit":
         hideGrokking();
@@ -6785,6 +6930,10 @@
         state.voiceQueue = []; // session is dead — drop anything queued for it
         updateSendButton();
         updateComposerPlaceholder();
+        onWorkflowCraftTurnEnd("error");
+        break;
+      case "workflowCraftResult":
+        applyWorkflowCraftResult(msg);
         break;
       case "setBusy":
         // Host-driven busy state for flows where there's no natural agentEnd
