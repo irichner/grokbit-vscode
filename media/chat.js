@@ -2712,16 +2712,6 @@
     gearPopover.hidden = false;
   }
 
-  // Open the gear popover straight to the Version & about panel (used by the
-  // welcome screen's "about" link). No-op if it's already showing About.
-  function openAboutPanel() {
-    if (!gearPopover.hidden && state.gearView === "about") return;
-    closePopovers();
-    renderAboutPanel(true);
-    positionPopover(gearPopover, gearBtn);
-    gearPopover.hidden = false;
-  }
-
   function openModePopover() {
     if (!modePopover.hidden) { closePopovers(); return; }
     modePopover.innerHTML = "";
@@ -6801,9 +6791,6 @@
   if (backendLabelBtn) backendLabelBtn.onclick = (e) => { e.stopPropagation(); openBackendPopover(); };
   if (backendPopover) backendPopover.addEventListener("click", (e) => e.stopPropagation());
 
-  // Welcome screen's "about" link → open the gear popover's Version & about panel.
-  const welcomeAboutLink = $("welcome-about-link");
-  if (welcomeAboutLink) welcomeAboutLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openAboutPanel(); };
   addBtn.onclick = (e) => { e.stopPropagation(); openAddPopover(); };
   historyBtn.onclick = (e) => { e.stopPropagation(); openHistoryPopover(); };
   if (docsBtn) docsBtn.onclick = (e) => { e.stopPropagation(); openDocsPopover(); };

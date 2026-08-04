@@ -1395,22 +1395,23 @@ describe("capabilityGroupsView — featured partition", () => {
   // steps of the workflow silently hide behind a "Show all" link.
   it("[R] every bundled suite skill is featured, in SUITE_SKILL_NAMES pipeline order", () => {
     expect(CAPABILITY_FEATURED.grokbit).toEqual([
-      "grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document",
+      "grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document", "grokbit-ship",
     ]);
     const v = capabilityGroupsView({
       groups: [{
-        kind: "grokbit", title: "Grokbit workflow", total: 5,
+        kind: "grokbit", title: "Grokbit workflow", total: 6,
         items: [
           { kind: "grokbit", name: "grokbit-test", invoke: "/grokbit-test " },
           { kind: "grokbit", name: "grokbit-document", invoke: "/grokbit-document " },
           { kind: "grokbit", name: "grokbit-plan", invoke: "/grokbit-plan " },
           { kind: "grokbit", name: "grokbit-implement", invoke: "/grokbit-implement " },
           { kind: "grokbit", name: "grokbit-explore", invoke: "/grokbit-explore " },
+          { kind: "grokbit", name: "grokbit-ship", invoke: "/grokbit-ship " },
         ],
       }],
     });
     expect(v[0].items.map((i) => i.name)).toEqual([
-      "grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document",
+      "grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document", "grokbit-ship",
     ]);
     expect(v[0].featuredCount).toBe(v[0].items.length);
   });

@@ -2,8 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- **Workspace harness hooks (opt-in).** Vendors GrokForge Python hooks into `resources/hooks/grok/` and can install them into the open workspace `.grok/hooks/` via **Grokbit: Install workspace harness hooks** or `grok.hooks.provision: workspace` (default **off**). Stop gate + protect_paths + change marker; requires `/hooks-trust` and a Python interpreter (the installer probes `python`/`python3`, wires whichever it finds, and warns when neither exists). Dual-stack soft warning when Claude hooks are also present. ([src/hook-suite.ts](src/hook-suite.ts), [src/extension.ts](src/extension.ts), [resources/hooks](resources/hooks))
+- **Ship pipeline Action.** Bundled `grokbit-ship` suite skill orchestrates explore → plan → **human checkpoint** → implement → test (Ultimate `/ship` pattern). ([resources/skills/grokbit-ship](resources/skills/grokbit-ship), [src/skill-suite.ts](src/skill-suite.ts))
+- **Open latest plan / release-readiness.** Commands **Grokbit: Open latest plan artifact** and **Open release-readiness.md** for thin SHIP evidence surfaces. ([src/extension.ts](src/extension.ts), [src/grok-hooks-policy.ts](src/grok-hooks-policy.ts))
+
 ### Changed
 
+- **Welcome canvas drops the "About Grokbit" byline.** Version & about is still one click away under the gear menu, so the link was a second door to the same panel on the one screen with the least room for chrome. ([media/chat.js](media/chat.js), [src/sidebar.ts](src/sidebar.ts))
 - **Marketplace overview highlights all capabilities.** README leads with an always-visible capabilities matrix (sessions, dual agents, safety, Grokbit Actions, context/files, activity, awareness, models/media/voice, rich chat & power tools) instead of burying features only in collapsed details. Settings table gains Claude / Actions / launcher knobs. Short package description expanded to match. ([README.md](README.md), [package.json](package.json))
 - **Marketplace description rewritten for accuracy.** Short listing covers Claude Code, plan-first + inline diffs, file attach, Grokbit Actions, media, and voice. Keywords add `claude` / `claude-code` / `plan-mode`. ([package.json](package.json), [README.md](README.md))
 - **Grokbit Actions shows only the bundled workflow, as readable tiles.** The welcome canvas and top-bar Actions popover no longer list Skills / Agents / Commands — only `grokbit-plan` → `implement` → `test` → `document`, as bordered tiles with multi-line, sentence-complete descriptions (host cap 280, webview sentence-aware trim at 260). Host discovery is unchanged; a pure `visibleCapabilityGroups` allowlist filters at both mounts. Empty states and the button tooltip name workflows, not skills. ([media/webview-helpers.js](media/webview-helpers.js), [media/chat.js](media/chat.js), [media/chat.css](media/chat.css), [src/capabilities.ts](src/capabilities.ts), [src/sidebar.ts](src/sidebar.ts))

@@ -5346,7 +5346,6 @@ See design doc for the full state machine diagram.`;
         <div id="capabilities-panel" class="capabilities-panel" hidden></div>
       </div>
       <div id="welcome-onboarding"></div>
-      <p class="welcome-byline muted"><a href="#" id="welcome-about-link" class="muted-link">About Grokbit</a></p>
     </div>
   </main>
 

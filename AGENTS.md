@@ -157,3 +157,9 @@ A previous root `AGENTS.md` was backed up to `AGENTS.md.bak-before-agentic-templ
 - **Regression / full suite:** `npm test`
 - **Lint:** NONE — no tool in repo
 <!-- END PROJECT_TEST_COMMANDS -->
+
+## Runtime enforcement (hooks)
+
+Optional Grok harness hooks (bundled in the extension as `resources/hooks/grok/`) may be installed into **workspace** `.grok/hooks/` via **Grokbit: Install workspace harness hooks** or `grok.hooks.provision: workspace`. They are a **backstop only** (Stop lint+unit when files changed; protect secrets/hooks layer) — never a substitute for `/plan` → `/implement` accuracy protocol. Requires `/hooks-trust` and `python`/`python3` on PATH. If Claude hooks are also present, expect dual-stack risk (see CLAUDE.md Known limits).
+
+Note that `protect_paths` makes **this file human-edit-only** once hooks are trusted: it is the Stop gate's own command source, so an agent editing it could silently neuter the gate. `.grok/` is gitignored, so a provisioned hooks tree is per-machine — each maintainer installs it themselves.

@@ -334,7 +334,7 @@ code {
 /* .welcome sets display:flex, which would otherwise beat the UA
    [hidden]{display:none} rule (author styles win) — same gotcha as
    .toolbar-popover[hidden]. Without this, clearWelcome() left the
-   Grokbit title + About link painted after the first send. */
+   Grokbit title painted after the first send. */
 .welcome[hidden] { display: none; }
 .welcome h2 {
   margin: 0;
@@ -343,14 +343,6 @@ code {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-}
-.welcome-byline { margin: 4px 0 0; font-size: 11px; }
-.muted-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-.muted-link:hover { opacity: 0.8; }
-.muted-link:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
-  outline-offset: 2px;
-  border-radius: 2px;
 }
 
 /* Studio E2 — Docs top-bar button + popover */

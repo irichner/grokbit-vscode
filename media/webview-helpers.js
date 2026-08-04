@@ -741,7 +741,9 @@
   // grokbit-actions-and-bundled-skill-suite.md § D4). A user who still has
   // them installed keeps them; they just no longer outrank their own skills.
   const CAPABILITY_FEATURED = {
-    grokbit: ["grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document"],
+    // Keep in pipeline order with SUITE_SKILL_NAMES (src/skill-suite.ts).
+    // Ship is the orchestrator tile (Ultimate /ship pattern); phase tiles coexist.
+    grokbit: ["grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document", "grokbit-ship"],
     skill: [
       "cold-review", "init-repo", "docx", "pptx", "pdf", "create-workflow",
       "workflow", "deep-research", "always-approve", "alawys-approve",
@@ -764,7 +766,7 @@
   const CAPABILITY_VISIBLE_KINDS = ["grokbit", "workflow"];
   /** Suite skill basenames that may appear as workspace forks (local overrides). */
   const SUITE_SKILL_NAMES_LC = [
-    "grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document",
+    "grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document", "grokbit-ship",
   ];
 
   /**

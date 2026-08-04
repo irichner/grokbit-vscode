@@ -1,0 +1,62 @@
+{
+  "_comment": "Grok harness hook wiring, installed by the Grokbit VS Code extension (Grokbit: Install workspace harness hooks, or grok.hooks.provision: workspace). Auto-discovered from .grok/hooks/*.json once this project is trusted -- run /hooks-trust, or the hooks never fire. Commands need a Python interpreter on PATH; the extension probes for python/python3 at install time and rewrites the interpreter below to whichever it found. Command paths are relative to the workspace root -- confirmed by live probe (see README.md) to be the hook process's own cwd on this CLI; ${GROK_WORKSPACE_ROOT} / $CLAUDE_PROJECT_DIR expansion in command strings was tested and did NOT fire, despite being documented. To uninstall, delete .grok/hooks/. Lineage: GrokForge agentic-team template, ADR 0001.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \".grok/hooks/session_start.py\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "write|search_replace",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \".grok/hooks/protect_paths.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "write|search_replace",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \".grok/hooks/mark_changed.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \".grok/hooks/verify_on_stop.py\"",
+            "timeout": 600
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \".grok/hooks/record_session_tokens.py\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

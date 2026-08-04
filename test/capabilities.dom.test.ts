@@ -76,14 +76,15 @@ describe("Grokbit Actions — the bundled workflow group", () => {
   const SUITE_GROUP = {
     kind: "grokbit",
     title: "Grokbit workflow",
-    total: 5,
-    featuredCount: 5,
+    total: 6,
+    featuredCount: 6,
     items: [
       { kind: "grokbit", name: "grokbit-explore", description: "Map first.", invoke: "/grokbit-explore ", path: "/home/u/.grok/skills/grokbit-explore/SKILL.md", source: "Grokbit", origin: "disk" },
       { kind: "grokbit", name: "grokbit-plan", description: "Plan first.", invoke: "/grokbit-plan ", path: "/home/u/.grok/skills/grokbit-plan/SKILL.md", source: "Grokbit", origin: "disk" },
       { kind: "grokbit", name: "grokbit-implement", description: "Verify or revert.", invoke: "/grokbit-implement ", path: "/home/u/.grok/skills/grokbit-implement/SKILL.md", source: "Grokbit", origin: "disk" },
       { kind: "grokbit", name: "grokbit-test", description: "Baseline, then verify.", invoke: "/grokbit-test ", path: "/home/u/.grok/skills/grokbit-test/SKILL.md", source: "Grokbit", origin: "disk" },
       { kind: "grokbit", name: "grokbit-document", description: "Derive, then check.", invoke: "/grokbit-document ", path: "/home/u/.grok/skills/grokbit-document/SKILL.md", source: "Grokbit", origin: "disk" },
+      { kind: "grokbit", name: "grokbit-ship", description: "Full pipeline with plan checkpoint.", invoke: "/grokbit-ship ", path: "/home/u/.grok/skills/grokbit-ship/SKILL.md", source: "Grokbit", origin: "disk" },
     ],
   };
 
@@ -112,14 +113,14 @@ describe("Grokbit Actions — the bundled workflow group", () => {
   });
 
   // [R] Every member is featured, so the group must render whole. A "Show all"
-  // link here would hide the last steps of a five-step pipeline.
-  it("[R] renders all five steps with no expand link", () => {
+  // link here would hide the last steps of a six-step pipeline (incl. Ship).
+  it("[R] renders all suite steps with no expand link", () => {
     const { window, doc } = bootWebview();
     sendCapabilities(window, [SUITE_GROUP]);
     const panel = panelOf(doc);
     const names = [...panel.querySelectorAll(".capability-row-name")].map((el) => el.textContent);
     // Suite tiles first; synthetic Create workflow always under User Workflows.
-    expect(names).toEqual(["Explore", "Plan", "Implement", "Test", "Document", "Create Workflow"]);
+    expect(names).toEqual(["Explore", "Plan", "Implement", "Test", "Document", "Ship", "Create Workflow"]);
     expect(panel.querySelector(".capability-expand")).toBeNull();
   });
 

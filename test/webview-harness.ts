@@ -37,7 +37,6 @@ export const BODY = `
         <div id="capabilities-panel" class="capabilities-panel" hidden></div>
       </div>
       <div id="welcome-onboarding"></div>
-      <p class="welcome-byline muted"><a href="#" id="welcome-about-link" class="muted-link">About Grokbit</a></p>
     </div>
   </main>
   <footer class="composer">

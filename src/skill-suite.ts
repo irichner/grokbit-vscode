@@ -31,7 +31,7 @@ import { CapabilityItem, CapabilityKind } from "./capabilities";
 
 /**
  * The bundled skills in pipeline order (explore → plan → implement → test →
- * document), not alphabetical — the group doubles as the workflow's own
+ * document → ship), not alphabetical — the group doubles as the workflow's own
  * documentation, so the order is the teaching. Nothing here sorts: the rendered
  * order comes from `CAPABILITY_FEATURED.grokbit` in `media/webview-helpers.js`,
  * whose `partitionFeatured` already reorders matched items into its configured
@@ -50,6 +50,8 @@ export const SUITE_SKILL_NAMES: readonly string[] = [
   "grokbit-implement",
   "grokbit-test",
   "grokbit-document",
+  /** Full pipeline with human checkpoint after plan (Ultimate /ship pattern). */
+  "grokbit-ship",
 ];
 
 /** Directory inside the extension (relative to its root) holding the suite. */

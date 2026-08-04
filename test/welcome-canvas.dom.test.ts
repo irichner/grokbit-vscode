@@ -36,9 +36,10 @@ describe("welcome canvas chrome (simplified)", () => {
     expect(grid.querySelector("#capabilities-panel")).toBeTruthy();
   });
 
-  it("keeps About byline below the cards", () => {
+  it("has no About Grokbit byline on the welcome canvas", () => {
     const { doc } = bootWebview();
-    expect(doc.getElementById("welcome-about-link")).toBeTruthy();
+    expect(doc.getElementById("welcome-about-link")).toBeNull();
+    expect(doc.querySelector(".welcome-byline")).toBeNull();
   });
 
   // The 74e923a removal of the starter cards / task chips stays removed.
@@ -72,7 +73,7 @@ describe("welcome canvas chrome (simplified)", () => {
     expect(css).toMatch(/\.welcome\[hidden\]\s*\{\s*display:\s*none\s*;?\s*\}/);
   });
 
-  it("hides the whole welcome (About + title) on first user message", () => {
+  it("hides the whole welcome (title + Actions) on first user message", () => {
     // happy-dom does not load media/chat.css (see chat-turn-containers /
     // chat-layout); shipped paint hide is proven by the CSS source rule above.
     // This case proves clearWelcome still sets the hidden attribute that rule keys off.
@@ -87,14 +88,12 @@ describe("welcome canvas chrome (simplified)", () => {
 
     const welcome = doc.getElementById("welcome") as HTMLElement;
     expect(welcome.hidden).toBe(false);
-    expect(doc.getElementById("welcome-about-link")).toBeTruthy();
     expect(welcome.querySelector("h2")?.textContent).toBe("Grokbit");
 
     dispatch(window, { type: "userMessage", text: "hello", chips: [] });
 
     expect(welcome.hidden).toBe(true);
-    // About + title remain under #welcome — they must not paint when [hidden] is set.
-    expect(welcome.contains(doc.getElementById("welcome-about-link")!)).toBe(true);
+    // Title remains under #welcome — it must not paint when [hidden] is set.
     expect(welcome.querySelector("h2")?.textContent).toBe("Grokbit");
   });
 });
