@@ -2404,6 +2404,109 @@ textarea#input {
   color: var(--vscode-foreground);
   text-align: left;
 }
+/* A parsed workflow needs more room than a guide paragraph. Fixed px, never vh
+   and never a media query: `body` carries the chat zoom, so viewport units and
+   breakpoints both lie at any non-default font scale (ADR 0002). */
+.capability-row-detail-body.workflow-detail {
+  max-height: 420px;
+}
+.workflow-detail-desc {
+  margin-bottom: 6px;
+  color: var(--vscode-descriptionForeground);
+}
+.workflow-detail-phases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.workflow-detail-phase {
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10.5px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+.workflow-agent {
+  border-top: 1px solid var(--vscode-widget-border);
+}
+.workflow-agent-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 0;
+  border: none;
+  background: none;
+  color: var(--vscode-foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.workflow-agent-summary:hover {
+  color: var(--vscode-textLink-foreground);
+}
+.workflow-agent-summary:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.workflow-agent-summary-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-agent-chevron {
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground);
+  transition: transform 0.12s ease;
+}
+.workflow-agent.expanded .workflow-agent-chevron {
+  transform: rotate(90deg);
+}
+.workflow-agent-body {
+  padding: 0 0 8px 14px;
+}
+.workflow-agent-prompt-label {
+  margin-bottom: 3px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 10.5px;
+}
+.workflow-agent-prompt {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-widget-border);
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editor-background));
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.workflow-agent-prompt.dynamic {
+  border-style: dashed;
+}
+.workflow-agent-settings {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 0;
+  font-size: 11px;
+}
+.workflow-agent-settings dt {
+  color: var(--vscode-descriptionForeground);
+}
+.workflow-agent-settings dd {
+  margin: 0;
+}
+.workflow-detail-note {
+  margin-top: 6px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 10.5px;
+}
 .capability-row-detail-body h1,
 .capability-row-detail-body h2,
 .capability-row-detail-body h3 {

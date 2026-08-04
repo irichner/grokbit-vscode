@@ -896,7 +896,15 @@
             if (isWorkflowDetail && item.detailPath) req.path = item.detailPath;
             vscode.postMessage(req);
             // Cache pending target so capabilityDetail handler can fill this node.
-            state.pendingCapabilityDetail = { name: item.name, body: detailBody, path: item.detailPath };
+            // detailKind rides along because the host's error replies are
+            // shape-identical for both branches ({name, error}) — only the
+            // request knows whether "couldn't read it" means a guide or a script.
+            state.pendingCapabilityDetail = {
+              name: item.name,
+              body: detailBody,
+              path: item.detailPath,
+              detailKind: item.detailKind,
+            };
           } else {
             detailBody.hidden = true;
             detailBody.textContent = "";
@@ -948,6 +956,122 @@
       row.onclick = (e) => { e.stopPropagation(); vscode.postMessage({ type: "openFile", path: item.path }); closePopovers(); };
     }
     return row;
+  }
+
+  /** Muted one-liner for a failed detail load, in the vocabulary of whichever
+   *  thing the user actually clicked. The host cannot tell us which — both
+   *  branches reply `{name, error}` — so the pending request is what knows. */
+  function capabilityDetailErrorText(error, isWorkflow) {
+    if (isWorkflow) {
+      if (error === "not-a-workflow-path") return "That file isn't a workflow this session can open.";
+      return "Couldn't read this workflow file.";
+    }
+    if (error === "not-a-suite-skill") return "No guide for this item.";
+    if (error === "too-large") return "Guide is too large to show here — use Open in editor.";
+    return "Could not load the guide.";
+  }
+
+  /**
+   * Render a parsed workflow into an open detail body.
+   *
+   * `createElement` + `textContent` only, never `innerHTML`: every string here
+   * — prompts, labels, phase titles — comes out of a file in the user's repo
+   * that this extension deliberately does not execute, and rendering it as
+   * markup would be a strange way to honour that.
+   */
+  function renderWorkflowDetail(body, detail, ctx) {
+    const view = workflowDetailView(detail);
+
+    if (view.description) {
+      const desc = document.createElement("div");
+      desc.className = "workflow-detail-desc";
+      desc.textContent = view.description;
+      body.appendChild(desc);
+    }
+
+    if (view.phases.length) {
+      const phases = document.createElement("div");
+      phases.className = "workflow-detail-phases";
+      for (const p of view.phases) {
+        const chip = document.createElement("span");
+        chip.className = "workflow-detail-phase";
+        chip.textContent = p.title;
+        if (p.detail) chip.title = p.detail;
+        phases.appendChild(chip);
+      }
+      body.appendChild(phases);
+    }
+
+    for (const agent of view.agents) {
+      body.appendChild(buildWorkflowAgentBlock(agent, detail, ctx));
+    }
+
+    for (const line of [view.emptyLine, view.opaqueLine, view.overflowLine, view.truncatedLine]) {
+      if (!line) continue;
+      const note = document.createElement("div");
+      note.className = "workflow-detail-note";
+      note.textContent = line;
+      body.appendChild(note);
+    }
+  }
+
+  /** One collapsible agent: summary button + hidden body (prompt + settings). */
+  function buildWorkflowAgentBlock(agent, detail, ctx) {
+    const block = document.createElement("div");
+    block.className = "workflow-agent";
+
+    const summary = document.createElement("button");
+    summary.type = "button";
+    summary.className = "workflow-agent-summary";
+    summary.setAttribute("aria-expanded", "false");
+    const chev = document.createElement("span");
+    chev.className = "workflow-agent-chevron";
+    chev.textContent = "›";
+    const text = document.createElement("span");
+    text.className = "workflow-agent-summary-text";
+    text.textContent = agent.summary;
+    summary.appendChild(chev);
+    summary.appendChild(text);
+
+    const agentBody = document.createElement("div");
+    agentBody.className = "workflow-agent-body";
+    agentBody.hidden = true;
+
+    const promptLabel = document.createElement("div");
+    promptLabel.className = "workflow-agent-prompt-label";
+    promptLabel.textContent = agent.promptLabel;
+    agentBody.appendChild(promptLabel);
+
+    const pre = document.createElement("pre");
+    pre.className = "workflow-agent-prompt";
+    if (agent.promptIsDynamic) pre.classList.add("dynamic");
+    pre.textContent = agent.promptText;
+    agentBody.appendChild(pre);
+
+    if (agent.settings.length) {
+      const list = document.createElement("dl");
+      list.className = "workflow-agent-settings";
+      for (const s of agent.settings) {
+        const dt = document.createElement("dt");
+        dt.textContent = s.label;
+        const dd = document.createElement("dd");
+        dd.textContent = s.value;
+        list.appendChild(dt);
+        list.appendChild(dd);
+      }
+      agentBody.appendChild(list);
+    }
+
+    summary.onclick = () => {
+      const open = agentBody.hidden;
+      agentBody.hidden = !open;
+      summary.setAttribute("aria-expanded", open ? "true" : "false");
+      block.classList.toggle("expanded", open);
+    };
+
+    block.appendChild(summary);
+    block.appendChild(agentBody);
+    return block;
   }
 
   // ── Workflow Builder (goal form + vanilla phase/agent canvas) ─────────
@@ -1688,6 +1812,7 @@
     PASTE_IMAGE_MAX_COUNT,
     defaultWorkflowGraphFromGoal, validateWorkflowBuilderDraft, buildWorkflowCraftBrief,
     WORKFLOW_BUILDER_MAX_PHASES, WORKFLOW_BUILDER_MAX_AGENTS_PER_PHASE,
+    workflowDetailView,
   } = globalThis.GrokWebviewHelpers;
   const userPromptShouldCollapse = (globalThis.GrokWebviewHelpers && globalThis.GrokWebviewHelpers.userPromptShouldCollapse)
     || function (text) {
@@ -6118,14 +6243,23 @@
         const pending = state.pendingCapabilityDetail;
         const body = pending && pending.name === msg.name ? pending.body : null;
         if (!body) break;
+        const isWorkflowDetail = pending.detailKind === "workflow";
         body.hidden = false;
         body.textContent = "";
+        // A workflow needs more room than a guide paragraph: fixed px, never vh
+        // or a media query, since `body` carries the chat zoom (ADR 0002).
+        body.classList.toggle("workflow-detail", isWorkflowDetail);
         if (msg.error) {
-          body.textContent = msg.error === "not-a-suite-skill"
-            ? "No guide for this item."
-            : msg.error === "too-large"
-              ? "Guide is too large to show here — use Open in editor."
-              : "Could not load the guide.";
+          body.textContent = capabilityDetailErrorText(msg.error, isWorkflowDetail);
+          break;
+        }
+        // Branch on what the payload CARRIES, never on a kind string.
+        if (msg.workflow && typeof msg.workflow === "object") {
+          try {
+            renderWorkflowDetail(body, msg.workflow, { path: msg.path, name: msg.name });
+          } catch {
+            body.textContent = "Could not display this workflow.";
+          }
           break;
         }
         const md = typeof msg.markdown === "string" ? msg.markdown : "";

@@ -19,7 +19,7 @@ committed first as `5404b93`.
 | T4a | done | 1 | `f21d093` | none | 70 tests in file; suite 1658 → 1673 |
 | T4b | done | 1 | `pending` | none | glue only — suite unchanged at 1673 by design |
 | T5 | done | 2 | `pending` | `test/workflow-detail.dom.test.ts` | 14 new tests; suite 1673 → 1687. Attempt 1 failed on my own test's row lookup, not on the code |
-| T6 | pending | — | — | — | depends T5 |
+| T6 | done | 1 | `pending` | none | 16 new tests; suite 1687 → 1703 |
 | T7 | pending | — | — | — | depends T6 |
 | T8 | pending | — | — | — | depends T4b, T7 |
 | T9 | pending | — | — | — | independent |

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain JS module, no types
-import { looksLikeFileRef, isSafeHref, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, clampScrollTop, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, formatLauncherMetaTooltip, activityPeek, activityPosText, backendBadgeLabel, inferPermissionKind, permissionDiffFromRawInput, sessionSetupModel, sessionSetupChipLabel, capabilityGroupsView, sessionToggleGroup, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK, CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups, userWorkflowsPanelState, withCreateWorkflowTile, CAPABILITY_ROW_DESCRIPTION_MAX, capabilityDisplayLabel, capabilityInvokeLabel, defaultWorkflowGraphFromGoal, validateWorkflowBuilderDraft, buildWorkflowCraftBrief, USER_PROMPT_COLLAPSE_MIN_CHARS, userPromptShouldCollapse } from "../media/webview-helpers.js";
+import { looksLikeFileRef, isSafeHref, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, clampScrollTop, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, formatLauncherMetaTooltip, activityPeek, activityPosText, backendBadgeLabel, inferPermissionKind, permissionDiffFromRawInput, sessionSetupModel, sessionSetupChipLabel, capabilityGroupsView, sessionToggleGroup, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK, CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups, userWorkflowsPanelState, withCreateWorkflowTile, CAPABILITY_ROW_DESCRIPTION_MAX, capabilityDisplayLabel, capabilityInvokeLabel, defaultWorkflowGraphFromGoal, validateWorkflowBuilderDraft, buildWorkflowCraftBrief, workflowDetailView, USER_PROMPT_COLLAPSE_MIN_CHARS, userPromptShouldCollapse } from "../media/webview-helpers.js";
 import { buildPrompt } from "../src/prompt-builder";
 import { makeExplicitChip, makeImplicitChip } from "../src/chips";
 
@@ -1491,6 +1491,77 @@ describe("capabilityGroupsView — featured partition", () => {
     expect(v[0].items[0].hasDetail).toBe(true);
     expect(v[0].items[0].detailPath).toContain("how-it-works.md");
     expect(v[0].items[0].label).toBe("Plan");
+  });
+
+  it("workflowDetailView — the honesty split is what the empty line is for", () => {
+    // Genuinely no agent calls: a legitimate workflow shape, not a failure.
+    expect(workflowDetailView({ agents: [], agentCallSites: 0 }).emptyLine).toBe(
+      "No agent calls found — this workflow may build its steps as it runs.",
+    );
+    // Calls found, none readable: a different fact, and saying "no agents"
+    // here would be a lie about the user's own file.
+    expect(workflowDetailView({ agents: [], agentCallSites: 4, opaqueAgentCalls: 4 }).emptyLine).toBe(
+      "Couldn't read this workflow's 4 agent calls.",
+    );
+    expect(workflowDetailView({ agents: [], agentCallSites: 1, opaqueAgentCalls: 1 }).emptyLine).toBe(
+      "Couldn't read this workflow's 1 agent call.",
+    );
+  });
+
+  it("workflowDetailView — opaque, overflow and truncated are separate statements", () => {
+    const v = workflowDetailView({
+      agents: [{ index: 1, promptKind: "literal", prompt: "p", hasSchema: false }],
+      agentCallSites: 6,
+      opaqueAgentCalls: 1,
+      overflowAgentCalls: 4,
+      truncated: true,
+    });
+    expect(v.emptyLine).toBeUndefined();
+    expect(v.opaqueLine).toBe("1 agent call couldn't be read.");
+    expect(v.overflowLine).toBe("4 more agent calls not shown.");
+    expect(v.truncatedLine).toBe("This file was longer than we read — later agents may be missing.");
+  });
+
+  it("workflowDetailView — suppresses the opaque line when nothing rendered, so one problem reads as one line", () => {
+    const v = workflowDetailView({ agents: [], agentCallSites: 2, opaqueAgentCalls: 2 });
+    expect(v.emptyLine).toBeTruthy();
+    expect(v.opaqueLine).toBeUndefined();
+  });
+
+  it("workflowDetailView — summarises an agent, falling back to its position when unlabelled", () => {
+    const v = workflowDetailView({
+      agents: [
+        { index: 1, promptKind: "literal", prompt: "p", label: "worker", inferredPhase: "Build", model: "sonnet", effort: "high", hasSchema: true },
+        { index: 2, promptKind: "dynamic", prompt: "`${x}`", hasSchema: false },
+      ],
+      agentCallSites: 2,
+    });
+    expect(v.agents[0].summary).toBe("worker · Build · sonnet · high · schema ✓");
+    expect(v.agents[0].promptLabel).toBe("Prompt");
+    expect(v.agents[1].summary).toBe("agent 2");
+    expect(v.agents[1].promptIsDynamic).toBe(true);
+    expect(v.agents[1].promptLabel).toBe("Prompt (built at run time — showing the script's own text)");
+  });
+
+  it("workflowDetailView — an explicit phase option wins over the inferred one", () => {
+    const v = workflowDetailView({
+      agents: [{ index: 1, promptKind: "literal", prompt: "p", phase: "Explicit", inferredPhase: "Inferred", hasSchema: false }],
+      agentCallSites: 1,
+    });
+    expect(v.agents[0].summary).toBe("agent 1 · Explicit");
+    expect(v.agents[0].settings).toContainEqual({ label: "Phase", value: "Explicit" });
+  });
+
+  it("workflowDetailView — survives a malformed or empty payload", () => {
+    for (const junk of [undefined, {}, { agents: null, phases: "nope" }]) {
+      const v = workflowDetailView(junk as never);
+      expect(v.agents).toEqual([]);
+      expect(v.phases).toEqual([]);
+      expect(v.emptyLine).toBeTruthy();
+    }
+    // A phase with no title is dropped rather than rendered blank.
+    expect(workflowDetailView({ phases: [{ title: "" }, { title: "Real" }], agents: [], agentCallSites: 0 }).phases)
+      .toEqual([{ title: "Real" }]);
   });
 
   it("passes through detailKind so the row can echo it back to the host", () => {

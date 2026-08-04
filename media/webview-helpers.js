@@ -1188,6 +1188,87 @@
     return out;
   }
 
+  /** "1 agent call" / "3 agent calls" — the plural lives here, not in the DOM. */
+  function plural(n, one, many) {
+    return n === 1 ? `${n} ${one}` : `${n} ${many}`;
+  }
+
+  /**
+   * View-model for one parsed workflow script. Every user-facing string is
+   * decided here rather than in the DOM code, so the wording is unit-testable
+   * and the renderer stays a dumb builder — the same division of labour
+   * `capabilityGroupsView` already has.
+   *
+   * The honesty split is the point of `emptyLine`. Three states look identical
+   * to a naive renderer and mean completely different things: a workflow that
+   * genuinely has no `agent()` calls because it builds its steps at run time, a
+   * workflow whose calls were found but could not be read, and one that was
+   * only partly read. Saying "no agents" for the second is a lie about the
+   * user's file, and it is the lie that makes the feature look broken.
+   */
+  function workflowDetailView(detail) {
+    const d = detail || {};
+    const agentsIn = Array.isArray(d.agents) ? d.agents : [];
+    const sites = typeof d.agentCallSites === "number" ? d.agentCallSites : agentsIn.length;
+    const opaque = typeof d.opaqueAgentCalls === "number" ? d.opaqueAgentCalls : 0;
+    const overflow = typeof d.overflowAgentCalls === "number" ? d.overflowAgentCalls : 0;
+
+    const agents = agentsIn.map((a) => {
+      const phase = a.phase || a.inferredPhase || "";
+      const bits = [a.label || `agent ${a.index}`];
+      if (phase) bits.push(phase);
+      if (a.model) bits.push(a.model);
+      if (a.effort) bits.push(a.effort);
+      if (a.agentType) bits.push(a.agentType);
+      if (a.isolation) bits.push(a.isolation);
+      if (a.hasSchema) bits.push("schema ✓");
+      const dynamic = a.promptKind === "dynamic";
+      const settings = [];
+      if (phase) settings.push({ label: "Phase", value: phase });
+      if (a.model) settings.push({ label: "Model", value: a.model });
+      if (a.effort) settings.push({ label: "Thinking", value: a.effort });
+      if (a.agentType) settings.push({ label: "Agent type", value: a.agentType });
+      if (a.isolation) settings.push({ label: "Isolation", value: a.isolation });
+      if (a.hasSchema) settings.push({ label: "Structured output", value: "yes" });
+      return {
+        index: a.index,
+        label: a.label || "",
+        summary: bits.join(" · "),
+        promptLabel: dynamic
+          ? "Prompt (built at run time — showing the script's own text)"
+          : "Prompt",
+        promptText: a.prompt || "(no prompt text found)",
+        promptIsDynamic: dynamic,
+        settings,
+      };
+    });
+
+    let emptyLine;
+    if (!agents.length) {
+      emptyLine = sites === 0
+        ? "No agent calls found — this workflow may build its steps as it runs."
+        : `Couldn't read this workflow's ${plural(sites, "agent call", "agent calls")}.`;
+    }
+
+    return {
+      description: typeof d.description === "string" && d.description.trim() ? d.description.trim() : undefined,
+      phases: Array.isArray(d.phases) ? d.phases.filter((p) => p && p.title) : [],
+      agents,
+      emptyLine,
+      // Only when some agents DID render — otherwise emptyLine already said it,
+      // and two lines making the same point read as two separate problems.
+      opaqueLine: agents.length && opaque > 0
+        ? `${plural(opaque, "agent call", "agent calls")} couldn't be read.`
+        : undefined,
+      overflowLine: overflow > 0
+        ? `${plural(overflow, "more agent call", "more agent calls")} not shown.`
+        : undefined,
+      truncatedLine: d.truncated
+        ? "This file was longer than we read — later agents may be missing."
+        : undefined,
+    };
+  }
+
   // Starter action cards for the empty-session welcome screen. Pure so unit tests
   // can assert the catalog without booting the webview. `voiceConfigured` swaps
   // the dictate card for a setup hint when the STT key is missing.
@@ -1589,6 +1670,7 @@
     capabilityDisplayLabel, capabilityInvokeLabel,
     WORKFLOW_BUILDER_MAX_PHASES, WORKFLOW_BUILDER_MAX_AGENTS_PER_PHASE,
     defaultWorkflowGraphFromGoal, validateWorkflowBuilderDraft, buildWorkflowCraftBrief,
+    workflowDetailView,
     CAPABILITY_ROW_DESCRIPTION_MAX, truncateCapabilityDescription,
     PASTE_IMAGE_MAX_BYTES, PASTE_IMAGE_MAX_COUNT, PASTE_IMAGE_MIME,
     canAcceptPasteImageBytes, isAllowedPasteImageMime,

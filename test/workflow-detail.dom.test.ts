@@ -227,6 +227,190 @@ describe("detail request echo", () => {
   });
 });
 
+const DETAIL = {
+  name: "review-changes",
+  description: "Review changed files across dimensions",
+  phases: [{ title: "Review", detail: "one agent per dimension" }, { title: "Verify" }],
+  agents: [
+    {
+      index: 1,
+      promptKind: "literal",
+      prompt: "Review the working diff for correctness bugs.",
+      label: "review:correctness",
+      inferredPhase: "Review",
+      model: "sonnet",
+      effort: "high",
+      hasSchema: true,
+    },
+    {
+      index: 2,
+      promptKind: "dynamic",
+      prompt: "`Review the ${lens} lens`",
+      phase: "Verify",
+      hasSchema: false,
+    },
+  ],
+  agentCallSites: 2,
+  opaqueAgentCalls: 0,
+  overflowAgentCalls: 0,
+  truncated: false,
+};
+
+function openWorkflowDetail(workflow: Record<string, unknown>) {
+  const h = openDetails(WORKFLOW_GROUP, "Review Changes");
+  dispatch(h.window, {
+    type: "capabilityDetail",
+    name: "review-changes",
+    path: "/ws/.grok/workflows/review-changes.rhai",
+    workflow,
+  });
+  return h;
+}
+
+describe("workflow detail render", () => {
+  it("shows the description, one chip per phase, and one collapsed block per agent", () => {
+    const { body } = openWorkflowDetail(DETAIL);
+    expect(body.classList.contains("workflow-detail")).toBe(true);
+    expect(body.querySelector(".workflow-detail-desc")?.textContent).toBe(
+      "Review changed files across dimensions",
+    );
+    const chips = Array.from(body.querySelectorAll(".workflow-detail-phase")).map(
+      (c) => c.textContent,
+    );
+    expect(chips).toEqual(["Review", "Verify"]);
+    const blocks = body.querySelectorAll(".workflow-agent");
+    expect(blocks).toHaveLength(2);
+    for (const b of Array.from(blocks)) {
+      expect((b.querySelector(".workflow-agent-body") as HTMLElement).hidden).toBe(true);
+      expect(b.querySelector(".workflow-agent-summary")!.getAttribute("aria-expanded")).toBe("false");
+    }
+  });
+
+  it("summarises each agent on one line", () => {
+    const { body } = openWorkflowDetail(DETAIL);
+    const summaries = Array.from(body.querySelectorAll(".workflow-agent-summary-text")).map(
+      (s) => s.textContent,
+    );
+    expect(summaries[0]).toBe("review:correctness · Review · sonnet · high · schema ✓");
+    // No label in the script, so it falls back to its position.
+    expect(summaries[1]).toBe("agent 2 · Verify");
+  });
+
+  it("expands and collapses an agent, revealing its prompt and settings", () => {
+    const { window, body } = openWorkflowDetail(DETAIL);
+    const block = body.querySelector(".workflow-agent") as HTMLElement;
+    const summary = block.querySelector(".workflow-agent-summary") as HTMLElement;
+    const agentBody = block.querySelector(".workflow-agent-body") as HTMLElement;
+
+    click(window, summary);
+    expect(agentBody.hidden).toBe(false);
+    expect(summary.getAttribute("aria-expanded")).toBe("true");
+    expect(block.classList.contains("expanded")).toBe(true);
+    expect(block.querySelector(".workflow-agent-prompt")?.textContent).toBe(
+      "Review the working diff for correctness bugs.",
+    );
+    const settings = Array.from(block.querySelectorAll(".workflow-agent-settings dt")).map(
+      (d) => d.textContent,
+    );
+    expect(settings).toContain("Model");
+    expect(settings).toContain("Structured output");
+
+    click(window, summary);
+    expect(agentBody.hidden).toBe(true);
+    expect(summary.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("labels a computed prompt as built at run time", () => {
+    const { window, body } = openWorkflowDetail(DETAIL);
+    const second = body.querySelectorAll(".workflow-agent")[1] as HTMLElement;
+    click(window, second.querySelector(".workflow-agent-summary") as HTMLElement);
+    expect(second.querySelector(".workflow-agent-prompt-label")?.textContent).toBe(
+      "Prompt (built at run time — showing the script's own text)",
+    );
+    expect(second.querySelector(".workflow-agent-prompt")?.classList.contains("dynamic")).toBe(true);
+  });
+
+  it("renders a prompt containing markup as inert text, never as markup", () => {
+    const nasty = '<script>alert(1)</script><img src=x onerror=alert(2)>';
+    const { window, body } = openWorkflowDetail({
+      ...DETAIL,
+      agents: [{ index: 1, promptKind: "literal", prompt: nasty, hasSchema: false }],
+      agentCallSites: 1,
+    });
+    click(window, body.querySelector(".workflow-agent-summary") as HTMLElement);
+    expect(body.querySelector("script")).toBeNull();
+    expect(body.querySelector("img")).toBeNull();
+    expect(body.querySelector(".workflow-agent-prompt")?.textContent).toBe(nasty);
+  });
+
+  it("says a workflow builds its steps at run time when there are genuinely no agent calls", () => {
+    const { body } = openWorkflowDetail({
+      ...DETAIL,
+      agents: [],
+      agentCallSites: 0,
+    });
+    expect(body.querySelector(".workflow-detail-note")?.textContent).toBe(
+      "No agent calls found — this workflow may build its steps as it runs.",
+    );
+  });
+
+  it("says it could not read them when calls were found but none parsed", () => {
+    const { body } = openWorkflowDetail({
+      ...DETAIL,
+      agents: [],
+      agentCallSites: 3,
+      opaqueAgentCalls: 3,
+    });
+    const notes = Array.from(body.querySelectorAll(".workflow-detail-note")).map((n) => n.textContent);
+    expect(notes).toContain("Couldn't read this workflow's 3 agent calls.");
+    // Not both — one problem, one line.
+    expect(notes).toHaveLength(1);
+  });
+
+  it("distinguishes unreadable calls from calls past the cap, and flags a truncated read", () => {
+    const { body } = openWorkflowDetail({
+      ...DETAIL,
+      opaqueAgentCalls: 1,
+      overflowAgentCalls: 4,
+      truncated: true,
+    });
+    const notes = Array.from(body.querySelectorAll(".workflow-detail-note")).map((n) => n.textContent);
+    expect(notes).toEqual([
+      "1 agent call couldn't be read.",
+      "4 more agent calls not shown.",
+      "This file was longer than we read — later agents may be missing.",
+    ]);
+  });
+
+  it("renders a host error as one muted line in workflow wording", () => {
+    const h = openDetails(WORKFLOW_GROUP, "Review Changes");
+    dispatch(h.window, {
+      type: "capabilityDetail",
+      name: "review-changes",
+      error: "not-a-workflow-path",
+    });
+    expect(h.body.textContent).toBe("That file isn't a workflow this session can open.");
+    dispatch(h.window, { type: "capabilityDetail", name: "review-changes", error: "read-failed" });
+    expect(h.body.textContent).toBe("Couldn't read this workflow file.");
+  });
+
+  it("leaves the suite markdown path and its error wording untouched", () => {
+    const h = openDetails(SUITE_GROUP, "/grokbit-explore");
+    dispatch(h.window, {
+      type: "capabilityDetail",
+      name: "grokbit-explore",
+      markdown: "## Purpose\n\nRead-only orientation.",
+    });
+    expect(h.body.classList.contains("workflow-detail")).toBe(false);
+    expect(h.body.textContent).toContain("Purpose");
+    expect(h.body.innerHTML).not.toContain("## Purpose");
+
+    const h2 = openDetails(SUITE_GROUP, "/grokbit-explore");
+    dispatch(h2.window, { type: "capabilityDetail", name: "grokbit-explore", error: "too-large" });
+    expect(h2.body.textContent).toBe("Guide is too large to show here — use Open in editor.");
+  });
+});
+
 describe("detail control labelling", () => {
   it("a workflow row describes what it will show", () => {
     const { btn, row } = openDetails(WORKFLOW_GROUP, "Review Changes");

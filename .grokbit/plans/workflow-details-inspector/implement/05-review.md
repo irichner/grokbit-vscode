@@ -127,7 +127,7 @@ every decision in this branch is unit-tested in T4a, and the round trip is
 asserted by T5/T8's DOM tests. What is left here is input gathering and a
 `postTo`, the same thin-glue status the shipped suite handler has always had.
 
-**Verdict: no OUT_OF_SCOPE hunks. Commit approved.**
+**Verdict: no OUT_OF_SCOPE hunks. Commit approved.** *(T4b)*
 
 ## T5 — Propagation boundary + request echo + detail-kind titles
 
@@ -157,5 +157,32 @@ read-the-guide-lose-your-composer bug, and `03-design.md` § UI structure declar
 the fix rather than claiming the suite path is byte-identical. The baseline
 records the old behavior (B1.4/B1.5), so verify will classify it INTENDED
 against that citation.
+
+**Verdict: no OUT_OF_SCOPE hunks. Commit approved.**
+
+## T6 — Workflow detail render + degraded states + CSS
+
+Declared files: `media/webview-helpers.js`, `media/chat.js` (handler region),
+`media/chat.css`, `test/webview-helpers.test.ts`, `test/workflow-detail.dom.test.ts`.
+Declared `removes: none`.
+
+| Hunk | Classification | Note |
+|---|---|---|
+| `workflowDetailView` + `plural` + export | IN_SCOPE | Declared |
+| `renderWorkflowDetail`, `buildWorkflowAgentBlock`, `capabilityDetailErrorText` | IN_SCOPE | The declared render, kept out of the message handler so the handler stays a router |
+| `capabilityDetail` handler: payload branch, `.workflow-detail` class, error routing | IN_SCOPE | Declared |
+| `pendingCapabilityDetail` gains `detailKind` (outside the cited line region, same declared file) | INCIDENTAL | Necessary, not incidental to intent: both host branches reply `{name, error}`, so nothing else can tell whether "couldn't read it" should say *guide* or *workflow script*. Kept because the alternative is wrong copy on every workflow error |
+| `.workflow-*` CSS + `.workflow-detail` max-height | IN_SCOPE | Declared |
+| 16 tests (6 pure, 10 DOM) | IN_SCOPE | The verify targets |
+
+Deletions: none. Files touched outside the declared set: none.
+
+CSS conforms to the standing rules: VS Code tokens only, no `@media`, no `vh`,
+fixed-px bounds (`test/chat-layout.dom.test.ts` re-run and green). The prompt
+`<pre>` is bounded and scrolls rather than stretching the body.
+
+**Security posture held:** every string from the parsed script reaches the DOM
+through `textContent`, never `innerHTML` — asserted directly with a prompt
+containing `<script>` and an `onerror` image.
 
 **Verdict: no OUT_OF_SCOPE hunks. Commit approved.**
