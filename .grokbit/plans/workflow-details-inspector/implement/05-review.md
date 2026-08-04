@@ -98,7 +98,7 @@ branch refuses an over-cap guide with `"too-large"`. This is the design's Axis A
 choice, not an oversight: half an agent list plus an honest "this file was
 longer" line is useful; half a prose document cut mid-sentence is not.
 
-**Verdict: no OUT_OF_SCOPE hunks. Commit approved.**
+**Verdict: no OUT_OF_SCOPE hunks. Commit approved.** *(T4a)*
 
 ## T4b — Host wire: `detailKind`-routed `getCapabilityDetail`
 
@@ -126,5 +126,36 @@ the bounded positional read still has exactly one implementation in the repo.
 every decision in this branch is unit-tested in T4a, and the round trip is
 asserted by T5/T8's DOM tests. What is left here is input gathering and a
 `postTo`, the same thin-glue status the shipped suite handler has always had.
+
+**Verdict: no OUT_OF_SCOPE hunks. Commit approved.**
+
+## T5 — Propagation boundary + request echo + detail-kind titles
+
+Declared files: `media/chat.js` (the `:857-909` region), `media/webview-helpers.js`
+(`capabilityGroupsView`), `test/workflow-detail.dom.test.ts` (new),
+`test/webview-helpers.test.ts`. Declared `removes: none`.
+
+| Hunk | Classification | Note |
+|---|---|---|
+| `detailWrap` click boundary + `isWorkflowDetail` local | IN_SCOPE | The Round-1 BLOCKER fix |
+| Both button `title`s made detail-kind-aware | IN_SCOPE | Declared in the changed-surfaces inventory |
+| Request echo built as an object, omitting absent fields | IN_SCOPE | Declared; omitting rather than sending `undefined` keeps the wire shape exact and the assertions honest |
+| `capabilityGroupsView` forwards a validated `detailKind` | IN_SCOPE | Declared |
+| 12 DOM cases + 2 helper cases | IN_SCOPE | The verify targets |
+
+Deletions: none. Files touched outside the declared set: none.
+
+**The two existing per-button `stopPropagation` calls were deliberately left in
+place.** The wrap boundary makes them redundant, and removing dead code is
+exactly the opportunistic tidying the scope rule forbids — they are also a
+sensible belt-and-braces for anyone who later moves a button out of the wrap.
+
+**Declared behavior change, now covered by a test.** The boundary also changes a
+*shipped* suite row: clicking the rendered guide body no longer seeds
+`/grokbit-explore` and closes the popover. That is the latent
+read-the-guide-lose-your-composer bug, and `03-design.md` § UI structure declares
+the fix rather than claiming the suite path is byte-identical. The baseline
+records the old behavior (B1.4/B1.5), so verify will classify it INTENDED
+against that citation.
 
 **Verdict: no OUT_OF_SCOPE hunks. Commit approved.**

@@ -18,7 +18,7 @@ committed first as `5404b93`.
 | T3 | done | 1 | `6ff6c13` | none | 55 tests in file; suite 1645 → 1658 |
 | T4a | done | 1 | `f21d093` | none | 70 tests in file; suite 1658 → 1673 |
 | T4b | done | 1 | `pending` | none | glue only — suite unchanged at 1673 by design |
-| T5 | pending | — | — | — | independent |
+| T5 | done | 2 | `pending` | `test/workflow-detail.dom.test.ts` | 14 new tests; suite 1673 → 1687. Attempt 1 failed on my own test's row lookup, not on the code |
 | T6 | pending | — | — | — | depends T5 |
 | T7 | pending | — | — | — | depends T6 |
 | T8 | pending | — | — | — | depends T4b, T7 |

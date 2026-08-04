@@ -1493,6 +1493,57 @@ describe("capabilityGroupsView — featured partition", () => {
     expect(v[0].items[0].label).toBe("Plan");
   });
 
+  it("passes through detailKind so the row can echo it back to the host", () => {
+    const view = (detailKind?: string) =>
+      capabilityGroupsView({
+        groups: [{
+          kind: "workflow", title: "User Workflows", total: 1,
+          items: [{
+            kind: "workflow",
+            name: "review-changes",
+            description: "Review a diff",
+            invoke: "/workflow review-changes ",
+            path: "/ws/.grok/workflows/review-changes.rhai",
+            hasDetail: true,
+            detailPath: "/ws/.grok/workflows/review-changes.rhai",
+            detailKind,
+            source: "Project (.grok)",
+            origin: "disk",
+          }],
+        }],
+      })[0].items.find((i: { name: string }) => i.name === "review-changes");
+
+    expect(view("workflow").detailKind).toBe("workflow");
+    expect(view("guide").detailKind).toBe("guide");
+    // An unrecognized or absent kind becomes undefined, so the host falls
+    // through to its suite flow — the same outcome a client that predates the
+    // field produces, rather than a value nothing knows how to route.
+    expect(view("something-new").detailKind).toBeUndefined();
+    expect(view(undefined).detailKind).toBeUndefined();
+  });
+
+  it("omits detailKind when hasDetail is false, exactly as it omits detailPath", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "workflow", title: "User Workflows", total: 1,
+        items: [{
+          kind: "workflow",
+          name: "w",
+          invoke: "/workflow w ",
+          hasDetail: false,
+          detailPath: "/ws/.grok/workflows/w.rhai",
+          detailKind: "workflow",
+          source: "Project (.grok)",
+          origin: "disk",
+        }],
+      }],
+    });
+    const row = v[0].items.find((i: { name: string }) => i.name === "w");
+    expect(row.hasDetail).toBe(false);
+    expect(row.detailKind).toBeUndefined();
+    expect(row.detailPath).toBeUndefined();
+  });
+
   it("omits detailPath when hasDetail is false even if detailPath was sent", () => {
     const v = capabilityGroupsView({
       groups: [{

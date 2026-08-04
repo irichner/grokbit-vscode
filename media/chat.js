@@ -858,13 +858,24 @@
     // suite how-it-works guides; renderer only cares about the flag.
     let detailBody = null;
     if (item.hasDetail) {
+      const isWorkflowDetail = item.detailKind === "workflow";
       const detailWrap = document.createElement("div");
       detailWrap.className = "capability-row-detail-wrap";
+      // ONE propagation boundary for everything inside the detail area. The two
+      // buttons below stop propagation themselves, but the body between them
+      // did not — so a click on the rendered guide text, on the padding, or
+      // (once there is one) in an edit field reached the row's own invoke
+      // handler and silently replaced the composer with /whatever. Reading a
+      // detail must never seed a command; the boundary is what guarantees that
+      // for every element added here, not just the ones that remembered to.
+      detailWrap.addEventListener("click", (e) => e.stopPropagation());
       const detailBtn = document.createElement("button");
       detailBtn.type = "button";
       detailBtn.className = "capability-row-details";
       detailBtn.textContent = "Details";
-      detailBtn.title = "How this workflow works (roles, loops, caps)";
+      detailBtn.title = isWorkflowDetail
+        ? "What this workflow runs (agents, phases, prompts)"
+        : "How this workflow works (roles, loops, caps)";
       detailBody = document.createElement("div");
       detailBody.className = "capability-row-detail-body";
       detailBody.hidden = true;
@@ -876,7 +887,14 @@
             detailBody.hidden = false;
             detailBody.textContent = "Loading…";
             detailBtn.setAttribute("aria-expanded", "true");
-            vscode.postMessage({ type: "getCapabilityDetail", name: item.name });
+            // Echo the host's own stamp back so it can route without guessing.
+            // `path` rides along only for a workflow: suite guides resolve from
+            // their allowlisted name, and sending a path they ignore would
+            // invite a future reader to think it mattered.
+            const req = { type: "getCapabilityDetail", name: item.name };
+            if (item.detailKind) req.detailKind = item.detailKind;
+            if (isWorkflowDetail && item.detailPath) req.path = item.detailPath;
+            vscode.postMessage(req);
             // Cache pending target so capabilityDetail handler can fill this node.
             state.pendingCapabilityDetail = { name: item.name, body: detailBody, path: item.detailPath };
           } else {
@@ -897,7 +915,9 @@
         openEd.type = "button";
         openEd.className = "capability-row-details secondary";
         openEd.textContent = "Open in editor";
-        openEd.title = "Open the full how-it-works guide as a file";
+        openEd.title = isWorkflowDetail
+          ? "Open the workflow script in the editor"
+          : "Open the full how-it-works guide as a file";
         openEd.onclick = (e) => {
           e.stopPropagation();
           vscode.postMessage({ type: "openFile", path: item.detailPath });

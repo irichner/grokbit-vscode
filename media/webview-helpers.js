@@ -1138,6 +1138,14 @@
         const detailPath = typeof raw.detailPath === "string" && raw.detailPath
           ? raw.detailPath
           : undefined;
+        // Which flavor of detail sits behind the button — the host stamps it,
+        // the row echoes it back so the host can route without re-deriving.
+        // Validated to the known values: an unrecognized one becomes undefined
+        // and the host falls through to its suite flow, which is the same
+        // outcome a client that predates the field produces.
+        const detailKind = raw.detailKind === "guide" || raw.detailKind === "workflow"
+          ? raw.detailKind
+          : undefined;
         return {
           kind: raw.kind,
           name: raw.name || "",
@@ -1155,6 +1163,7 @@
           inert: action === "inert",
           hasDetail,
           detailPath: hasDetail ? detailPath : undefined,
+          detailKind: hasDetail ? detailKind : undefined,
         };
       });
       const total = typeof g.total === "number" && g.total >= items.length ? g.total : items.length;
