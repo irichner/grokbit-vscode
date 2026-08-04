@@ -78,3 +78,24 @@ request costs nothing. Classified IN_SCOPE — it is the same check, applied whe
 it is load-bearing — and recorded because it is stricter than what was written.
 
 **Verdict: no OUT_OF_SCOPE hunks. Commit approved.**
+
+## T4a — Injected-fs workflow-detail read helper
+
+Declared files: `src/workflow-inspect.ts`, `test/workflow-inspect.test.ts`.
+Declared `removes: none`.
+
+| Hunk | Classification | Note |
+|---|---|---|
+| `WorkflowInspectFsLike` port, `workflowDetailRoots`, `readWorkflowDetail`, result types | IN_SCOPE | The task's stated intent |
+| `node:path` + `CapabilityRootSpec`/`rootEnabled` imports | IN_SCOPE | Required by root computation; `node:path` is a pure import, consistent with `capabilities.ts` |
+| 15 added test cases (root filtering, env switch, symlink escape, dedupe, cap/truncation, every error mapping) | IN_SCOPE | Exactly the list the task's verify enumerates |
+
+Deletions: none. Files touched outside the declared set: none.
+
+**Deliberate divergence from the suite branch, recorded.** An over-cap workflow
+is read to the cap and parsed with `truncated: true`, where the suite-guide
+branch refuses an over-cap guide with `"too-large"`. This is the design's Axis A3
+choice, not an oversight: half an agent list plus an honest "this file was
+longer" line is useful; half a prose document cut mid-sentence is not.
+
+**Verdict: no OUT_OF_SCOPE hunks. Commit approved.**

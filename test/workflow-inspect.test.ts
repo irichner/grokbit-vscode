@@ -20,7 +20,9 @@ import {
   findCallSites,
   parseAgentArgs,
   parseWorkflowDetail,
+  readWorkflowDetail,
   resolveWorkflowDetailPath,
+  workflowDetailRoots,
 } from "../src/workflow-inspect";
 
 const fixture = (name: string) =>
@@ -489,6 +491,196 @@ describe("resolveWorkflowDetailPath", () => {
     expect(resolve("", { realpath: spy })).toEqual({ ok: false, error: "not-a-workflow-path" });
     expect(resolve("   ", { realpath: spy })).toEqual({ ok: false, error: "not-a-workflow-path" });
     expect(called).toBe(0);
+  });
+});
+
+describe("workflowDetailRoots + readWorkflowDetail (the host branch, injected fs)", () => {
+  const SEP = path.sep === "\\";
+  const WS = SEP ? "C:\\ws" : "/ws";
+  const HOME = SEP ? "C:\\Users\\me" : "/home/me";
+  const WS_GROK = path.join(WS, ".grok", "workflows");
+  const HOME_GROK = path.join(HOME, ".grok", "workflows");
+
+  interface FakeSpec {
+    /** requested path → resolved path (identity when absent). */
+    links?: Record<string, string>;
+    /** resolved path → contents. */
+    files?: Record<string, string>;
+    /** resolved paths that exist as directories. */
+    dirs?: string[];
+    /** paths whose realpath throws, as a missing file/dir does. */
+    missing?: string[];
+  }
+
+  function fakeFs(spec: FakeSpec) {
+    const links = spec.links ?? {};
+    const files = spec.files ?? {};
+    const dirs = new Set(spec.dirs ?? []);
+    const missing = new Set(spec.missing ?? []);
+    const readCalls: Array<{ path: string; maxBytes: number }> = [];
+    return {
+      readCalls,
+      realpathSync(p: string): string {
+        if (missing.has(p)) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        return links[p] ?? p;
+      },
+      statSync(p: string) {
+        if (files[p] !== undefined) {
+          return { isFile: () => true, size: Buffer.byteLength(files[p], "utf8") };
+        }
+        if (dirs.has(p)) return { isFile: () => false, size: 0 };
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      },
+      readSlice(p: string, maxBytes: number): string {
+        readCalls.push({ path: p, maxBytes });
+        const c = files[p];
+        if (c === undefined) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        return Buffer.from(c, "utf8").subarray(0, maxBytes).toString("utf8");
+      },
+    };
+  }
+
+  const grokRoots = CAPABILITY_ROOTS.grok;
+  const rootsOf = (fs: { realpathSync(p: string): string }, env: Record<string, string | undefined> = {}) =>
+    workflowDetailRoots({ roots: grokRoots, workspaceDir: WS, homeDir: HOME, env, fs });
+
+  it("returns only the workflow roots, realpath'd, both tiers", () => {
+    const fs = fakeFs({ dirs: [WS, HOME, WS_GROK, HOME_GROK] });
+    expect(rootsOf(fs)).toEqual([WS_GROK, HOME_GROK]);
+  });
+
+  it("never returns a skills or agents root", () => {
+    const fs = fakeFs({ dirs: [WS, HOME, WS_GROK, HOME_GROK, path.join(WS, ".grok", "skills")] });
+    for (const r of rootsOf(fs)) expect(r.endsWith("workflows")).toBe(true);
+  });
+
+  it("drops a root the env switch disables — discovery off means read off", () => {
+    const fs = fakeFs({ dirs: [WS, HOME, WS_GROK, HOME_GROK] });
+    expect(rootsOf(fs, { GROK_WORKFLOWS: "false" })).toEqual([]);
+  });
+
+  it("drops a root that does not resolve", () => {
+    const fs = fakeFs({ dirs: [WS, HOME, HOME_GROK], missing: [WS_GROK] });
+    expect(rootsOf(fs)).toEqual([HOME_GROK]);
+  });
+
+  it("drops a root that escapes its own base via a symlink", () => {
+    const escaped = SEP ? "D:\\elsewhere\\workflows" : "/elsewhere/workflows";
+    const fs = fakeFs({ dirs: [WS, HOME, HOME_GROK], links: { [WS_GROK]: escaped } });
+    expect(rootsOf(fs)).toEqual([HOME_GROK]);
+  });
+
+  it("dedupes when two roots resolve to the same directory", () => {
+    const fs = fakeFs({ dirs: [WS, HOME, WS_GROK, HOME_GROK], links: { [HOME_GROK]: WS_GROK } });
+    expect(rootsOf(fs)).toEqual([WS_GROK]);
+  });
+
+  const SCRIPT = 'let meta = #{ name: "w", description: "d" };\nphase("Go");\nagent("do it", #{ label: "a" });';
+
+  it("reads, parses and returns the resolved path", () => {
+    const file = path.join(WS_GROK, "w.rhai");
+    const fs = fakeFs({ dirs: [WS, HOME, WS_GROK], files: { [file]: SCRIPT } });
+    const res = readWorkflowDetail({ fs, requestedPath: file, allowedRoots: rootsOf(fs) });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.path).toBe(file);
+    expect(res.workflow.name).toBe("w");
+    expect(res.workflow.agents).toHaveLength(1);
+    expect(res.workflow.agents[0]).toMatchObject({ label: "a", inferredPhase: "Go" });
+    expect(res.workflow.truncated).toBe(false);
+    expect(fs.readCalls[0].maxBytes).toBe(Buffer.byteLength(SCRIPT, "utf8"));
+  });
+
+  it("reads an over-cap file up to the cap and stamps truncated through to the parse", () => {
+    const file = path.join(WS_GROK, "big.rhai");
+    const big = 'agent("first");\n' + "// filler ".repeat(200);
+    const fs = fakeFs({ dirs: [WS, HOME, WS_GROK], files: { [file]: big } });
+    const res = readWorkflowDetail({
+      fs,
+      requestedPath: file,
+      allowedRoots: rootsOf(fs),
+      maxBytes: 40,
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.workflow.truncated).toBe(true);
+    expect(res.workflow.agentCallSites).toBe(1);
+    expect(fs.readCalls[0].maxBytes).toBe(40);
+  });
+
+  it("does not mark a file that exactly fills the cap as truncated", () => {
+    const file = path.join(WS_GROK, "exact.rhai");
+    const body = "x".repeat(40);
+    const fs = fakeFs({ dirs: [WS, HOME, WS_GROK], files: { [file]: body } });
+    const res = readWorkflowDetail({ fs, requestedPath: file, allowedRoots: rootsOf(fs), maxBytes: 40 });
+    expect(res.ok && res.workflow.truncated).toBe(false);
+  });
+
+  it("still succeeds, degraded, on a file it cannot parse", () => {
+    const file = path.join(WS_GROK, "junk.rhai");
+    const fs = fakeFs({ dirs: [WS, HOME, WS_GROK], files: { [file]: ")(}{ nonsense" } });
+    const res = readWorkflowDetail({ fs, requestedPath: file, allowedRoots: rootsOf(fs) });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.workflow.agentCallSites).toBe(0);
+    expect(res.workflow.name).toBeUndefined();
+  });
+
+  it("maps a file deleted between scan and click to read-failed", () => {
+    const file = path.join(WS_GROK, "gone.rhai");
+    const fs = fakeFs({ dirs: [WS, HOME, WS_GROK], missing: [file] });
+    expect(readWorkflowDetail({ fs, requestedPath: file, allowedRoots: rootsOf(fs) })).toEqual({
+      ok: false,
+      error: "read-failed",
+    });
+  });
+
+  it("maps a stat failure and a read failure to read-failed", () => {
+    const file = path.join(WS_GROK, "ghost.rhai");
+    // Resolves (not in `missing`) but has no entry in `files`/`dirs`, so stat throws.
+    const fs = fakeFs({ dirs: [WS, HOME, WS_GROK] });
+    expect(readWorkflowDetail({ fs, requestedPath: file, allowedRoots: rootsOf(fs) })).toEqual({
+      ok: false,
+      error: "read-failed",
+    });
+  });
+
+  it("refuses a directory whose name merely ends in .rhai", () => {
+    const dir = path.join(WS_GROK, "notafile.rhai");
+    const fs = fakeFs({ dirs: [WS, HOME, WS_GROK, dir] });
+    expect(readWorkflowDetail({ fs, requestedPath: dir, allowedRoots: rootsOf(fs) })).toEqual({
+      ok: false,
+      error: "not-a-workflow-path",
+    });
+  });
+
+  it("refuses a path outside the allowed roots and a non-workflow extension", () => {
+    const outside = path.join(WS, "src", "secret.rhai");
+    const wrongExt = path.join(WS_GROK, "notes.md");
+    const fs = fakeFs({
+      dirs: [WS, HOME, WS_GROK],
+      files: { [outside]: SCRIPT, [wrongExt]: SCRIPT },
+    });
+    const roots = rootsOf(fs);
+    expect(readWorkflowDetail({ fs, requestedPath: outside, allowedRoots: roots })).toEqual({
+      ok: false,
+      error: "not-a-workflow-path",
+    });
+    expect(readWorkflowDetail({ fs, requestedPath: wrongExt, allowedRoots: roots })).toEqual({
+      ok: false,
+      error: "not-a-workflow-path",
+    });
+  });
+
+  it("refuses everything when no root survived filtering", () => {
+    const file = path.join(WS_GROK, "w.rhai");
+    const fs = fakeFs({ dirs: [WS, HOME, WS_GROK], files: { [file]: SCRIPT } });
+    const roots = rootsOf(fs, { GROK_WORKFLOWS: "0" });
+    expect(roots).toEqual([]);
+    expect(readWorkflowDetail({ fs, requestedPath: file, allowedRoots: roots })).toEqual({
+      ok: false,
+      error: "not-a-workflow-path",
+    });
   });
 });
 

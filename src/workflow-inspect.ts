@@ -24,12 +24,16 @@
  * say what it could not read instead of quietly showing a shorter list than the
  * file actually contains.
  */
+import * as path from "node:path";
+
 import {
+  CapabilityRootSpec,
   WorkflowScriptFormat,
   extractMetaStringField,
   isPathContained,
   parseClaudeWorkflowMeta,
   parseRhaiWorkflowMeta,
+  rootEnabled,
 } from "./capabilities";
 
 /**
@@ -631,6 +635,129 @@ export function resolveWorkflowDetailPath(
   if (!contained) return { ok: false, error: "not-a-workflow-path" };
 
   return { ok: true, path: real, format };
+}
+
+// ---------------------------------------------------------------------------
+// The host's read, behind an injected filesystem port
+// ---------------------------------------------------------------------------
+
+/**
+ * The filesystem this module needs, injected — the `CapabilityFsLike` /
+ * `FsLike` / `HookFsLike` idiom every other policy module here uses. It exists
+ * so the *whole* behavior of the host's detail branch (which roots are legal,
+ * how much is read, what each failure maps to) is unit-testable without a disk,
+ * leaving `sidebar.ts` holding nothing but input gathering and a `postTo`.
+ */
+export interface WorkflowInspectFsLike {
+  realpathSync(p: string): string;
+  statSync(p: string): { isFile(): boolean; size: number };
+  /** Read at most `maxBytes` from the start of the file, decoded as UTF-8. */
+  readSlice(p: string, maxBytes: number): string;
+}
+
+export interface WorkflowDetailRootsInput {
+  /** Usually `CAPABILITY_ROOTS[session.backend]` — filtered here, not by the caller. */
+  roots: readonly CapabilityRootSpec[];
+  workspaceDir: string;
+  homeDir: string;
+  env: Record<string, string | undefined>;
+  fs: Pick<WorkflowInspectFsLike, "realpathSync">;
+}
+
+/**
+ * The realpath'd workflow directories this session may read, ready to hand to
+ * {@link resolveWorkflowDetailPath}.
+ *
+ * Three filters, each load-bearing:
+ *
+ * 1. **Workflow roots only** — a Details click must never become a read channel
+ *    into the skills or agents trees.
+ * 2. **`rootEnabled`** — the same `disabledByEnv` switches the scan honors. A
+ *    user who turned workflow discovery off would otherwise find the directory
+ *    still readable through this door, which is the kind of asymmetry nobody
+ *    discovers until it matters.
+ * 3. **The scan's own base-contains-root check** on realpaths — a checked-in
+ *    repo can commit `.grok/workflows` *as* a symlink pointing anywhere.
+ *
+ * Anything that fails to resolve is dropped rather than passed through: fail
+ * closed, exactly as `scanCapabilityRoots` does with the same inputs.
+ */
+export function workflowDetailRoots(input: WorkflowDetailRootsInput): string[] {
+  const { roots, workspaceDir, homeDir, env, fs } = input;
+  const out: string[] = [];
+  for (const root of roots ?? []) {
+    if (root.kind !== "workflow") continue;
+    if (!rootEnabled(root, env)) continue;
+    const base = root.base === "home" ? homeDir : workspaceDir;
+    const dir = path.join(base, root.dir);
+    let realBase: string;
+    let realDir: string;
+    try {
+      realBase = fs.realpathSync(base);
+      realDir = fs.realpathSync(dir);
+    } catch {
+      continue; // missing or unreadable — same treatment the scan gives it
+    }
+    if (!isPathContained(realBase, realDir)) continue;
+    if (!out.includes(realDir)) out.push(realDir);
+  }
+  return out;
+}
+
+export interface ReadWorkflowDetailInput {
+  fs: WorkflowInspectFsLike;
+  /** Untrusted path echoed from a rendered row. */
+  requestedPath: string;
+  /** From {@link workflowDetailRoots}. */
+  allowedRoots: readonly string[];
+  /** Override the read bound (tests); defaults to {@link WORKFLOW_DETAIL_MAX_BYTES}. */
+  maxBytes?: number;
+}
+
+export type WorkflowDetailReadResult =
+  | { ok: true; workflow: WorkflowDetail; path: string }
+  | { ok: false; error: WorkflowPathError };
+
+/**
+ * Resolve, read (bounded) and describe one workflow script.
+ *
+ * An over-cap file is read up to the cap and parsed anyway, with
+ * `workflow.truncated` set — deliberately unlike the suite-guide branch, which
+ * refuses an over-cap guide outright. Half an agent list plus an honest "this
+ * file was longer" line is useful; half a prose document cut mid-sentence is
+ * not. Truncation is observed here, at the only place that can see the file's
+ * real size, and handed to the parser rather than guessed at downstream.
+ */
+export function readWorkflowDetail(input: ReadWorkflowDetailInput): WorkflowDetailReadResult {
+  const { fs, requestedPath, allowedRoots } = input;
+  const cap = input.maxBytes ?? WORKFLOW_DETAIL_MAX_BYTES;
+
+  const resolved = resolveWorkflowDetailPath({
+    requestedPath,
+    allowedRoots,
+    realpath: (p) => fs.realpathSync(p),
+  });
+  if (!resolved.ok) return { ok: false, error: resolved.error };
+
+  let size: number;
+  try {
+    const st = fs.statSync(resolved.path);
+    // A directory (or device) whose name merely ends in .rhai is not a script.
+    if (!st.isFile()) return { ok: false, error: "not-a-workflow-path" };
+    size = st.size;
+  } catch {
+    return { ok: false, error: "read-failed" };
+  }
+
+  let text: string;
+  try {
+    text = fs.readSlice(resolved.path, Math.min(size, cap));
+  } catch {
+    return { ok: false, error: "read-failed" };
+  }
+
+  const workflow = parseWorkflowDetail(text, resolved.format, { truncated: size > cap });
+  return { ok: true, workflow, path: resolved.path };
 }
 
 /** The literal title of a `phase("…")` statement, when it has one. */
