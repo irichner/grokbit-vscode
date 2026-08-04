@@ -5,6 +5,12 @@
 .claude/**
 .github/**
 .grok/**
+# Agent plan artifacts (intent/survey/design/review + source snapshots). These
+# are committed on purpose — CLAUDE.md cites several as a feature's SoT — but
+# they are internal development history, not extension payload. Until this
+# exclusion existed the vsix shipped ~340 of these files / 3.0 MB to every
+# Marketplace user, most of the download.
+.grokbit/**
 .tmp-workflow/**
 mcps/**
 research/**
@@ -32,8 +38,12 @@ TESTS.md
 VERSION
 docs/**
 !docs/screenshots/**
-# Accidental shell redirects / empty junk
+# Accidental shell redirects / empty junk. These are gitignored too, but vsce
+# packages the working tree and ignores .gitignore whenever this file exists —
+# so anything gitignored-but-present locally still needs an entry here.
 $null
+nul
+x[1])
 # Dependencies — only ship runtime deps we explicitly re-include
 node_modules/**
 !node_modules/ws/**

@@ -145,7 +145,7 @@ Also follow these existing contributor files (do not ignore product invariants):
 
 ## Preserved notes
 
-A previous root `AGENTS.md` was backed up to `AGENTS.md.bak-before-agentic-template-20260725` before this install. Merge any project-specific lead rules from that backup if needed.
+Successive agentic-template installs each left an `AGENTS.md.bak-before-agentic-template-*` copy in the repo root. Those have been deleted — git history is the backup. Recover an earlier revision with `git log --oneline -- AGENTS.md` if a project-specific lead rule needs merging back.
 ## Project Test Commands
 
 <!-- BEGIN PROJECT_TEST_COMMANDS -->

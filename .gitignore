@@ -28,3 +28,24 @@ dist/
 build/
 .venv/
 target/
+
+# Editor / tooling backups. The agentic-template installer writes
+# `<file>.bak-agentic-*` / `AGENTS.md.bak-before-agentic-template-*` copies on
+# every run; git history is the backup, so they never belong in a commit.
+# `.grokbit/**/snapshots/` is the one deliberate exception — those .bak files
+# are a plan's recorded before-state, not installer collateral.
+*.bak
+*.bak-*
+*.orig
+*~
+!.grokbit/plans/**/snapshots/*
+
+# Shell-redirect artifacts. A PowerShell `2>$null` / `mkdir -p` run through the
+# wrong shell creates a literal `$null` file (or `nul` on cmd) in the repo root
+# instead of discarding output — both have been committed here before.
+$null
+nul
+
+# Scratch space for temp copies of tracked files (a `.tmp-workflow/ci.yml`
+# stash of the real CI workflow was committed and then went stale).
+.tmp-workflow/
