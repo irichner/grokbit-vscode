@@ -3,11 +3,11 @@
 Where reality diverged from the plan. The Orchestrator counts every row with
 `counts: yes`; **at three, stop and re-plan** (Loop I5).
 
-Counting total so far: **0 of 3.**
+Counting total so far: **1 of 3.**
 
 | # | Task | What diverged | counts | Disposition |
 |---|---|---|---|---|
-| — | — | none yet | — | — |
+| 1 | T7 | Blocked at the Loop I2 retry cap — the `verify:`-named "draft-stash survives a `setBusy` re-render" case never passed. Code reverted to clean. | **yes** | Recorded in `progress.md` § Blocked task detail with all three diagnoses and a narrow re-plan recommendation. T8 and T10 are blocked behind it. |
 
 ## Non-counting notes
 

@@ -185,4 +185,30 @@ fixed-px bounds (`test/chat-layout.dom.test.ts` re-run and green). The prompt
 through `textContent`, never `innerHTML` — asserted directly with a prompt
 containing `<script>` and an `onerror` image.
 
+**Verdict: no OUT_OF_SCOPE hunks. Commit approved.** *(T6)*
+
+## T7 — Per-agent edit brief + draft stash
+
+**No audit — the task was reverted at the Loop I2 cap before any commit.** See
+`progress.md` § Blocked task detail. The working tree was restored to the T6
+commit and the suite re-verified green (1703), so there is no diff to classify.
+
+## T9 — `grokbit-ship` how-it-works guide
+
+Declared files: `resources/skills/grokbit-ship/references/how-it-works.md` (new).
+Declared `removes: none`.
+
+| Hunk | Classification | Note |
+|---|---|---|
+| New guide file | IN_SCOPE | The whole task |
+
+Deletions: none. Files touched outside the declared set: none. **No code change
+at all** — `attachSuiteHowItWorks` is existence-driven, so the file appearing is
+the entire mechanism.
+
+Content derived from `grokbit-ship/SKILL.md` and the phases it orchestrates,
+matching the five existing guides' section structure (Purpose / Pipeline / Roles
+/ Loops and caps / Cap behavior / Artifacts / Human gates / Failure modes / Next
+step / Provenance) and their voice.
+
 **Verdict: no OUT_OF_SCOPE hunks. Commit approved.**
