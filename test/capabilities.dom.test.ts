@@ -221,10 +221,25 @@ describe("Grokbit Actions — the bundled workflow group", () => {
     expect(builder?.hidden).toBe(false);
     expect(builder?.textContent).toMatch(/Create Workflow|Goal/i);
     expect(builder?.textContent).toMatch(/Pipeline canvas|Craft with AI/i);
+    // Pipeline phase cards carry visible labels (Phase N, Phase name, Agents).
+    const phaseBadges = [...builder!.querySelectorAll(".wf-phase-badge")].map(
+      (el) => el.textContent?.trim(),
+    );
+    expect(phaseBadges).toEqual(["Phase 1", "Phase 2", "Phase 3"]);
+    expect(builder!.querySelectorAll(".wf-phase-title-field .wf-field-label").length).toBe(3);
+    expect(
+      [...builder!.querySelectorAll(".wf-phase-title-field .wf-field-label")].every(
+        (el) => el.textContent === "Phase name",
+      ),
+    ).toBe(true);
+    expect(builder!.querySelectorAll(".wf-agents-head .wf-field-label").length).toBe(3);
+    expect(builder!.querySelector(".wf-agent-label-field .wf-field-label")?.textContent).toBe("Name");
+    expect(builder!.querySelector(".wf-agent-mode-field .wf-field-label")?.textContent).toBe("Access");
     // Add phase is a dotted tile in the canvas, not a header text button.
     const addPhaseTile = builder!.querySelector(".wf-phase-add-tile") as HTMLButtonElement | null;
     expect(addPhaseTile).toBeTruthy();
     expect(addPhaseTile?.getAttribute("aria-label")).toBe("Add phase");
+    expect(addPhaseTile?.querySelector(".wf-phase-add-label")?.textContent).toBe("Add phase");
     expect(builder!.querySelector(".wf-builder-canvas-head button")).toBeNull();
     // Name before Goal in DOM; no Constraints field.
     const name = builder!.querySelector("[data-wf-name]") as HTMLInputElement;
@@ -336,6 +351,11 @@ describe("Grokbit Actions — the bundled workflow group", () => {
       (el) => (el as HTMLInputElement).value,
     );
     expect(agentLabels).toEqual(["planner", "implementer"]);
+    // Visible phase badges renumber after craft apply.
+    const badges = [...builder.querySelectorAll(".wf-phase-badge")].map(
+      (el) => el.textContent?.trim(),
+    );
+    expect(badges).toEqual(["Phase 1", "Phase 2"]);
   });
 
   // M3: dialog keyboard — Escape closes without Craft (empty draft = not dirty).

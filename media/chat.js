@@ -1409,15 +1409,39 @@
 
     const phaseRow = document.createElement("div");
     phaseRow.className = "wf-builder-phases";
+    const MODE_LABELS = {
+      "read-only": "Read-only",
+      "read-write": "Read-write",
+      execute: "Execute",
+      all: "All",
+    };
     phases.forEach((phase, pi) => {
       const card = document.createElement("div");
       card.className = "wf-phase-card";
+
+      // Visible chrome so phase cards read as "Phase N · name", not bare inputs.
+      const phaseHead = document.createElement("div");
+      phaseHead.className = "wf-phase-head";
+      const phaseBadge = document.createElement("span");
+      phaseBadge.className = "wf-phase-badge";
+      phaseBadge.textContent = "Phase " + (pi + 1);
+      phaseHead.appendChild(phaseBadge);
+      card.appendChild(phaseHead);
+
+      const titleLab = document.createElement("label");
+      titleLab.className = "wf-phase-title-field";
+      const titleLbl = document.createElement("span");
+      titleLbl.className = "wf-field-label";
+      titleLbl.textContent = "Phase name";
+      titleLab.appendChild(titleLbl);
       const titleIn = document.createElement("input");
       titleIn.className = "wf-phase-title";
       titleIn.value = phase.title || "";
-      titleIn.setAttribute("aria-label", "Phase title");
+      titleIn.placeholder = "e.g. Plan";
+      titleIn.setAttribute("aria-label", "Phase " + (pi + 1) + " name");
       titleIn.oninput = () => { phase.title = titleIn.value; };
-      card.appendChild(titleIn);
+      titleLab.appendChild(titleIn);
+      card.appendChild(titleLab);
 
       const tools = document.createElement("div");
       tools.className = "wf-phase-toolbar";
@@ -1425,6 +1449,7 @@
       up.type = "button";
       up.textContent = "↑";
       up.title = "Move phase earlier";
+      up.setAttribute("aria-label", "Move phase " + (pi + 1) + " earlier");
       up.disabled = pi === 0;
       up.onclick = () => {
         if (pi === 0) return;
@@ -1437,6 +1462,7 @@
       down.type = "button";
       down.textContent = "↓";
       down.title = "Move phase later";
+      down.setAttribute("aria-label", "Move phase " + (pi + 1) + " later");
       down.disabled = pi === phases.length - 1;
       down.onclick = () => {
         if (pi >= phases.length - 1) return;
@@ -1448,6 +1474,8 @@
       const rm = document.createElement("button");
       rm.type = "button";
       rm.textContent = "Remove";
+      rm.title = "Remove phase";
+      rm.setAttribute("aria-label", "Remove phase " + (pi + 1));
       rm.onclick = () => {
         phases.splice(pi, 1);
         d.phases = phases;
@@ -1456,6 +1484,8 @@
       const addAg = document.createElement("button");
       addAg.type = "button";
       addAg.textContent = "+ agent";
+      addAg.title = "Add agent to this phase";
+      addAg.setAttribute("aria-label", "Add agent to phase " + (pi + 1));
       const agents = Array.isArray(phase.agents) ? phase.agents : (phase.agents = []);
       addAg.disabled = agents.length >= maxA;
       addAg.onclick = () => {
@@ -1469,36 +1499,60 @@
       tools.appendChild(rm);
       card.appendChild(tools);
 
+      const agentsHead = document.createElement("div");
+      agentsHead.className = "wf-agents-head";
+      const agentsLbl = document.createElement("span");
+      agentsLbl.className = "wf-field-label";
+      agentsLbl.textContent = agents.length === 1 ? "Agent" : "Agents";
+      agentsHead.appendChild(agentsLbl);
+      card.appendChild(agentsHead);
+
       const list = document.createElement("div");
       list.className = "wf-agent-list";
       agents.forEach((agent, ai) => {
         const row = document.createElement("div");
         row.className = "wf-agent-row";
+        const labField = document.createElement("label");
+        labField.className = "wf-agent-label-field";
+        const labHint = document.createElement("span");
+        labHint.className = "wf-field-label";
+        labHint.textContent = "Name";
+        labField.appendChild(labHint);
         const lab = document.createElement("input");
         lab.type = "text";
         lab.value = agent.label || "";
-        lab.setAttribute("aria-label", "Agent label");
+        lab.placeholder = "e.g. planner";
+        lab.setAttribute("aria-label", "Phase " + (pi + 1) + " agent " + (ai + 1) + " name");
         lab.oninput = () => { agent.label = lab.value; };
+        labField.appendChild(lab);
+        const modeField = document.createElement("label");
+        modeField.className = "wf-agent-mode-field";
+        const modeHint = document.createElement("span");
+        modeHint.className = "wf-field-label";
+        modeHint.textContent = "Access";
+        modeField.appendChild(modeHint);
         const mode = document.createElement("select");
-        mode.setAttribute("aria-label", "Capability mode");
+        mode.setAttribute("aria-label", "Phase " + (pi + 1) + " agent " + (ai + 1) + " access");
         ["read-only", "read-write", "execute", "all"].forEach((m) => {
           const o = document.createElement("option");
           o.value = m;
-          o.textContent = m;
+          o.textContent = MODE_LABELS[m] || m;
           if ((agent.capabilityMode || "read-only") === m) o.selected = true;
           mode.appendChild(o);
         });
         mode.onchange = () => { agent.capabilityMode = mode.value; };
+        modeField.appendChild(mode);
         const delA = document.createElement("button");
         delA.type = "button";
         delA.textContent = "×";
         delA.title = "Remove agent";
+        delA.setAttribute("aria-label", "Remove agent " + (ai + 1) + " from phase " + (pi + 1));
         delA.onclick = () => {
           agents.splice(ai, 1);
           renderWorkflowBuilder();
         };
-        row.appendChild(lab);
-        row.appendChild(mode);
+        row.appendChild(labField);
+        row.appendChild(modeField);
         row.appendChild(delA);
         list.appendChild(row);
       });
@@ -1513,7 +1567,8 @@
       addPhase.title = "Add phase";
       addPhase.setAttribute("aria-label", "Add phase");
       addPhase.innerHTML =
-        '<svg class="wf-phase-add-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+        '<svg class="wf-phase-add-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>' +
+        '<span class="wf-phase-add-label">Add phase</span>';
       addPhase.onclick = () => {
         if (phases.length >= maxP) return;
         phases.push({ title: "Phase " + (phases.length + 1), agents: [{ label: "agent", capabilityMode: "read-only" }] });
