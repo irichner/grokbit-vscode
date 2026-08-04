@@ -42,7 +42,7 @@ Declared files: `src/workflow-inspect.ts`, `test/workflow-inspect.test.ts`,
 Deletions: none — matches `removes: none`.
 Files touched outside the declared set: none.
 
-**Duplication check (the reviewer's standing question).** `findMetaBlock` repeats
+**T2 duplication check (the reviewer's standing question).** `findMetaBlock` repeats
 the *brace-locating* few lines of the two meta parsers. Considered and accepted
 rather than passed over: the alternative is exporting a third helper from
 `capabilities.ts`, which the design's changed-surfaces inventory deliberately
@@ -51,5 +51,30 @@ to finding the braces — every extracted *field* still has one implementation,
 since `parseWorkflowDetail` calls the existing parsers for name and description
 rather than re-extracting them. Recorded here so it is a decision, not an
 accident.
+
+**Verdict: no OUT_OF_SCOPE hunks. Commit approved.**
+
+## T3 — `resolveWorkflowDetailPath` + `rootEnabled` export
+
+Declared files: `src/workflow-inspect.ts`, `src/capabilities.ts` (one-line
+export), `test/workflow-inspect.test.ts`. Declared `removes: none`.
+
+| Hunk | Classification | Note |
+|---|---|---|
+| `resolveWorkflowDetailPath`, `formatForPath`, `WorkflowPathError`/`ResolvedWorkflowPath` types | IN_SCOPE | The task's stated intent |
+| `src/capabilities.ts` — `rootEnabled` gains `export` + a doc comment | IN_SCOPE | The declared one-line export; comment states why, per repo convention |
+| Import of `isPathContained` into `workflow-inspect.ts` | IN_SCOPE | Reuse of the scan's own containment predicate, exactly as the design specified |
+| 13 added test cases incl. symlink escape, empty-root fail-closed, ENOENT mapping | IN_SCOPE | The verify target |
+
+Deletions: none. Files touched outside the declared set: none.
+
+**One deliberate hardening beyond the letter of the design.** The design says
+"extension check as in the scan", and the scan checks the *directory entry name*.
+This resolver checks the extension on the **resolved** path and derives `format`
+from it, so a `.rhai` symlink aimed at a `.js` file (both inside an allowed root,
+so containment alone would pass) cannot get the wrong parser pointed at it. The
+requested path's extension is still checked first, before any I/O, so a junk
+request costs nothing. Classified IN_SCOPE — it is the same check, applied where
+it is load-bearing — and recorded because it is stricter than what was written.
 
 **Verdict: no OUT_OF_SCOPE hunks. Commit approved.**

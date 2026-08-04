@@ -693,7 +693,11 @@ export interface ScanCapabilityRootsResult {
   truncated: boolean;
 }
 
-function rootEnabled(root: CapabilityRootSpec, env: Record<string, string | undefined>): boolean {
+/** Whether this root is switched on for the current environment. Exported so
+ *  the on-demand workflow-detail read can honor exactly the same `disabledByEnv`
+ *  switches the scan honors — a root discovery won't list must not stay readable
+ *  through a different door. */
+export function rootEnabled(root: CapabilityRootSpec, env: Record<string, string | undefined>): boolean {
   if (!root.disabledByEnv) return true;
   return frontmatterBool(env[root.disabledByEnv], true);
 }

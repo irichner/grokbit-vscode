@@ -27,6 +27,7 @@
 import {
   WorkflowScriptFormat,
   extractMetaStringField,
+  isPathContained,
   parseClaudeWorkflowMeta,
   parseRhaiWorkflowMeta,
 } from "./capabilities";
@@ -555,6 +556,81 @@ export function parseWorkflowDetail(
     overflowAgentCalls: Math.max(0, sites.length - WORKFLOW_AGENT_CAP),
     truncated: !!opts?.truncated,
   };
+}
+
+/** Why a requested workflow path was refused. */
+export type WorkflowPathError = "not-a-workflow-path" | "read-failed";
+
+export type ResolvedWorkflowPath =
+  | { ok: true; path: string; format: WorkflowScriptFormat }
+  | { ok: false; error: WorkflowPathError };
+
+export interface ResolveWorkflowDetailPathInput {
+  /** The path the webview asked for — untrusted, echoed from a rendered row. */
+  requestedPath: string;
+  /**
+   * Already-realpath'd workflow roots this session may read. The caller builds
+   * these (filtering by backend and `rootEnabled`, and applying the scan's own
+   * base-contains-root check); an empty list refuses everything.
+   */
+  allowedRoots: readonly string[];
+  /** Injected symlink resolver — `null` or a throw means unresolvable. */
+  realpath: (p: string) => string | null;
+}
+
+/** Extension → format, or `undefined` when it is not a workflow script. */
+function formatForPath(p: string): WorkflowScriptFormat | undefined {
+  const lower = p.toLowerCase();
+  if (lower.endsWith(".rhai")) return "rhai";
+  if (lower.endsWith(".js")) return "claude-js";
+  return undefined;
+}
+
+/**
+ * Decide whether a client-supplied path may be read as a workflow script.
+ *
+ * Modelled on the scan's containment check (`isPathContained` over realpaths on
+ * both sides, `capabilities.ts`), with the divergences stated:
+ *
+ * - **Both sides are realpath'd.** The caller resolves the roots; this resolves
+ *   the request. A symlink inside a real root pointing anywhere outside it is
+ *   refused, which is the whole reason the comparison happens on resolved paths
+ *   rather than on the strings the client sent.
+ * - **Extension is checked on the resolved path, not the requested one**, and it
+ *   is what decides `format` — so a `.rhai` symlink aimed at a `.js` file cannot
+ *   get the wrong parser pointed at it.
+ * - **A path that will not resolve is `read-failed`, not `not-a-workflow-path`.**
+ *   A workflow deleted between the scan and the click is a read problem; calling
+ *   it "not a workflow path" would be a lie about a path the scan itself
+ *   produced, and would send the user hunting for a permissions bug that is not
+ *   there.
+ *
+ * The echoed path is a lookup hint, never authorization: nothing here trusts it
+ * beyond using it as the candidate for these checks.
+ */
+export function resolveWorkflowDetailPath(
+  input: ResolveWorkflowDetailPathInput,
+): ResolvedWorkflowPath {
+  const requested = String(input?.requestedPath ?? "").trim();
+  if (!requested) return { ok: false, error: "not-a-workflow-path" };
+  if (!formatForPath(requested)) return { ok: false, error: "not-a-workflow-path" };
+
+  let real: string | null;
+  try {
+    real = input.realpath(requested);
+  } catch {
+    real = null;
+  }
+  if (!real) return { ok: false, error: "read-failed" };
+
+  const format = formatForPath(real);
+  if (!format) return { ok: false, error: "not-a-workflow-path" };
+
+  const roots = input.allowedRoots ?? [];
+  const contained = roots.some((root) => !!root && isPathContained(root, real as string));
+  if (!contained) return { ok: false, error: "not-a-workflow-path" };
+
+  return { ok: true, path: real, format };
 }
 
 /** The literal title of a `phase("…")` statement, when it has one. */

@@ -8,7 +8,10 @@
 // that anything it cannot read is COUNTED, never guessed at.
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { CAPABILITY_ROOTS, rootEnabled } from "../src/capabilities";
 
 import {
   AGENT_PROMPT_MAX_CHARS,
@@ -17,6 +20,7 @@ import {
   findCallSites,
   parseAgentArgs,
   parseWorkflowDetail,
+  resolveWorkflowDetailPath,
 } from "../src/workflow-inspect";
 
 const fixture = (name: string) =>
@@ -378,6 +382,123 @@ describe("parseWorkflowDetail — degraded and edge shapes", () => {
   it("never throws on junk input", () => {
     for (const junk of ["", "   ", "}{)(", "let meta = #{", 'agent("unclosed']) {
       expect(() => parseWorkflowDetail(junk, "rhai")).not.toThrow();
+    }
+  });
+});
+
+describe("resolveWorkflowDetailPath", () => {
+  const WS = path.join(path.sep === "\\" ? "C:\\ws" : "/ws");
+  const GROK_ROOT = path.join(WS, ".grok", "workflows");
+  const CLAUDE_ROOT = path.join(WS, ".claude", "workflows");
+  const ROOTS = [GROK_ROOT, CLAUDE_ROOT];
+  /** Default resolver: the path resolves to itself (no symlinks in play). */
+  const identity = (p: string) => p;
+
+  const resolve = (requestedPath: string, opts: Partial<{ allowedRoots: string[]; realpath: (p: string) => string | null }> = {}) =>
+    resolveWorkflowDetailPath({
+      requestedPath,
+      allowedRoots: opts.allowedRoots ?? ROOTS,
+      realpath: opts.realpath ?? identity,
+    });
+
+  it("accepts a .rhai file inside an allowed root", () => {
+    const p = path.join(GROK_ROOT, "review-changes.rhai");
+    expect(resolve(p)).toEqual({ ok: true, path: p, format: "rhai" });
+  });
+
+  it("accepts a .js file inside an allowed root and reports the Claude format", () => {
+    const p = path.join(CLAUDE_ROOT, "spot-review-fanout.js");
+    expect(resolve(p)).toEqual({ ok: true, path: p, format: "claude-js" });
+  });
+
+  it("accepts a nested file inside a root", () => {
+    const p = path.join(GROK_ROOT, "sub", "nested.rhai");
+    expect(resolve(p).ok).toBe(true);
+  });
+
+  it("refuses a path outside every allowed root", () => {
+    const p = path.join(WS, "src", "evil.rhai");
+    expect(resolve(p)).toEqual({ ok: false, error: "not-a-workflow-path" });
+  });
+
+  it("refuses a symlink that escapes the root, judging the RESOLVED path", () => {
+    const requested = path.join(GROK_ROOT, "innocent.rhai");
+    const escaped = path.join(path.sep === "\\" ? "C:\\Users\\me" : "/home/me", ".ssh", "id_rsa.rhai");
+    expect(resolve(requested, { realpath: () => escaped })).toEqual({
+      ok: false,
+      error: "not-a-workflow-path",
+    });
+  });
+
+  it("refuses a workflow in a root this session was not given", () => {
+    const p = path.join(CLAUDE_ROOT, "other.js");
+    expect(resolve(p, { allowedRoots: [GROK_ROOT] })).toEqual({
+      ok: false,
+      error: "not-a-workflow-path",
+    });
+  });
+
+  it("refuses everything when the allowed-root list is empty — fail closed", () => {
+    expect(resolve(path.join(GROK_ROOT, "x.rhai"), { allowedRoots: [] })).toEqual({
+      ok: false,
+      error: "not-a-workflow-path",
+    });
+  });
+
+  it("refuses a non-workflow extension", () => {
+    for (const name of ["notes.md", "secrets.env", "script.ts", "noextension"]) {
+      expect(resolve(path.join(GROK_ROOT, name))).toEqual({
+        ok: false,
+        error: "not-a-workflow-path",
+      });
+    }
+  });
+
+  it("accepts an uppercase extension", () => {
+    const p = path.join(GROK_ROOT, "SHOUTY.RHAI");
+    expect(resolve(p)).toMatchObject({ ok: true, format: "rhai" });
+  });
+
+  it("refuses when the resolved path is not a workflow even though the request looked like one", () => {
+    const requested = path.join(GROK_ROOT, "looks-fine.rhai");
+    const real = path.join(GROK_ROOT, "actually.txt");
+    expect(resolve(requested, { realpath: () => real })).toEqual({
+      ok: false,
+      error: "not-a-workflow-path",
+    });
+  });
+
+  it("reports read-failed when the path will not resolve — deleted between scan and click", () => {
+    const p = path.join(GROK_ROOT, "gone.rhai");
+    expect(resolve(p, { realpath: () => null })).toEqual({ ok: false, error: "read-failed" });
+    expect(
+      resolve(p, {
+        realpath: () => {
+          throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        },
+      }),
+    ).toEqual({ ok: false, error: "read-failed" });
+  });
+
+  it("refuses an empty or whitespace request without touching the filesystem", () => {
+    let called = 0;
+    const spy = (p: string) => {
+      called++;
+      return p;
+    };
+    expect(resolve("", { realpath: spy })).toEqual({ ok: false, error: "not-a-workflow-path" });
+    expect(resolve("   ", { realpath: spy })).toEqual({ ok: false, error: "not-a-workflow-path" });
+    expect(called).toBe(0);
+  });
+});
+
+describe("rootEnabled (exported for the detail read)", () => {
+  it("honors the same disabledByEnv switch the scan honors", () => {
+    const workflowRoot = CAPABILITY_ROOTS.grok.find((r) => r.kind === "workflow");
+    expect(workflowRoot).toBeDefined();
+    expect(rootEnabled(workflowRoot!, {})).toBe(true);
+    if (workflowRoot!.disabledByEnv) {
+      expect(rootEnabled(workflowRoot!, { [workflowRoot!.disabledByEnv]: "false" })).toBe(false);
     }
   });
 });
