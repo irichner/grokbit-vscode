@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain JS module, no types
-import { looksLikeFileRef, isSafeHref, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, clampScrollTop, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, formatLauncherMetaTooltip, activityPeek, activityPosText, backendBadgeLabel, inferPermissionKind, permissionDiffFromRawInput, sessionSetupModel, sessionSetupChipLabel, capabilityGroupsView, sessionToggleGroup, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK, CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups, userWorkflowsPanelState, withCreateWorkflowTile, CAPABILITY_ROW_DESCRIPTION_MAX, capabilityDisplayLabel, capabilityInvokeLabel, defaultWorkflowGraphFromGoal, validateWorkflowBuilderDraft, buildWorkflowCraftBrief, workflowDetailToBuilderDraft, workflowDetailView, USER_PROMPT_COLLAPSE_MIN_CHARS, userPromptShouldCollapse } from "../media/webview-helpers.js";
+import { looksLikeFileRef, isSafeHref, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, buildQuestionAnswers, isSubagentToolCall, subagentLabel, shouldStickToBottom, clampScrollTop, splitMath, stripUnsupportedTex, parseAttachmentContext, formatTokenCount, formatLauncherMeta, formatLauncherMetaTooltip, activityPeek, activityPosText, backendBadgeLabel, inferPermissionKind, permissionDiffFromRawInput, sessionSetupModel, sessionSetupChipLabel, capabilityGroupsView, sessionToggleGroup, CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK, SHOW_USER_WORKFLOWS, CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups, userWorkflowsPanelState, withCreateWorkflowTile, CAPABILITY_ROW_DESCRIPTION_MAX, capabilityDisplayLabel, capabilityInvokeLabel, defaultWorkflowGraphFromGoal, validateWorkflowBuilderDraft, buildWorkflowCraftBrief, workflowDetailToBuilderDraft, workflowDetailView, USER_PROMPT_COLLAPSE_MIN_CHARS, userPromptShouldCollapse } from "../media/webview-helpers.js";
 import { buildPrompt } from "../src/prompt-builder";
 import { makeExplicitChip, makeImplicitChip } from "../src/chips";
 
@@ -955,7 +955,7 @@ describe("sessionToggleGroup", () => {
 });
 
 describe("visibleCapabilityGroups", () => {
-  it("keeps grokbit + workflow groups and drops skill/agent/command", () => {
+  it("keeps allowlisted kinds and drops skill/agent/command", () => {
     const input = [
       { kind: "grokbit", title: "Grokbit workflow", total: 1, items: [{ kind: "grokbit", name: "grokbit-plan" }] },
       { kind: "workflow", title: "User Workflows", total: 1, items: [{ kind: "workflow", name: "review-changes" }] },
@@ -964,7 +964,9 @@ describe("visibleCapabilityGroups", () => {
       { kind: "command", title: "Commands", total: 1, items: [{ kind: "command", name: "new" }] },
     ];
     const out = visibleCapabilityGroups(input);
-    expect(out.map((g: { kind: string }) => g.kind)).toEqual(["grokbit", "workflow"]);
+    expect(out.map((g: { kind: string }) => g.kind)).toEqual(
+      SHOW_USER_WORKFLOWS ? ["grokbit", "workflow"] : ["grokbit"],
+    );
   });
 
   it("drops a group with an unknown kind", () => {
@@ -973,7 +975,9 @@ describe("visibleCapabilityGroups", () => {
       { kind: "grokbit", title: "Grokbit workflow", total: 1, items: [{ kind: "grokbit", name: "grokbit-plan" }] },
       { kind: "workflow", title: "User Workflows", total: 1, items: [{ kind: "workflow", name: "x" }] },
     ]);
-    expect(out.map((g: { kind: string }) => g.kind)).toEqual(["grokbit", "workflow"]);
+    expect(out.map((g: { kind: string }) => g.kind)).toEqual(
+      SHOW_USER_WORKFLOWS ? ["grokbit", "workflow"] : ["grokbit"],
+    );
   });
 
   it("returns [] for undefined or non-array input", () => {
@@ -991,26 +995,40 @@ describe("visibleCapabilityGroups", () => {
     expect(out).toEqual(input);
   });
 
-  it("exposes CAPABILITY_VISIBLE_KINDS as the allowlist (suite + user workflows)", () => {
-    expect(CAPABILITY_VISIBLE_KINDS).toEqual(["grokbit", "workflow"]);
+  it("exposes CAPABILITY_VISIBLE_KINDS as the allowlist (suite; + user workflows when enabled)", () => {
+    expect(CAPABILITY_VISIBLE_KINDS).toEqual(
+      SHOW_USER_WORKFLOWS ? ["grokbit", "workflow"] : ["grokbit"],
+    );
   });
 
   it("scope all keeps non-workflow groups", () => {
     const input = [
       { kind: "grokbit", items: [{ name: "a" }] },
       { kind: "skill", items: [{ name: "b" }] },
+      { kind: "workflow", items: [{ name: "c" }] },
     ];
     const out = visibleCapabilityGroups(input, { scope: "all" });
-    expect(out.map((g: { kind: string }) => g.kind)).toEqual(["grokbit", "skill"]);
+    expect(out.map((g: { kind: string }) => g.kind)).toEqual(
+      SHOW_USER_WORKFLOWS ? ["grokbit", "skill", "workflow"] : ["grokbit", "skill"],
+    );
   });
 });
 
 describe("userWorkflowsPanelState", () => {
+  it("returns null when User Workflows UI is hidden (SHOW_USER_WORKFLOWS false)", () => {
+    if (SHOW_USER_WORKFLOWS) return;
+    expect(userWorkflowsPanelState({ backend: "grok", hasWorkflowItems: false })).toBeNull();
+    expect(userWorkflowsPanelState({ backend: "claude", hasWorkflowItems: false })).toBeNull();
+    expect(userWorkflowsPanelState({ backend: "grok", hasWorkflowItems: true })).toBeNull();
+  });
+
   it("returns null when workflow tiles are present", () => {
+    if (!SHOW_USER_WORKFLOWS) return;
     expect(userWorkflowsPanelState({ backend: "grok", hasWorkflowItems: true })).toBeNull();
   });
 
   it("Grok empty copy points at rhai / create-workflow", () => {
+    if (!SHOW_USER_WORKFLOWS) return;
     const s = userWorkflowsPanelState({ backend: "grok", hasWorkflowItems: false });
     expect(s?.showEmpty).toBe(true);
     expect(s?.title).toBe("User Workflows");
@@ -1019,6 +1037,7 @@ describe("userWorkflowsPanelState", () => {
   });
 
   it("Claude empty copy points at .claude/workflows, not Grok-only dead-end", () => {
+    if (!SHOW_USER_WORKFLOWS) return;
     const s = userWorkflowsPanelState({ backend: "claude", hasWorkflowItems: false });
     expect(s?.showEmpty).toBe(true);
     expect(s?.message).toMatch(/\.claude\/workflows/i);
@@ -1085,7 +1104,16 @@ describe("workflow builder pure helpers", () => {
 });
 
 describe("withCreateWorkflowTile", () => {
+  it("is a no-op while User Workflows UI is hidden", () => {
+    if (SHOW_USER_WORKFLOWS) return;
+    const input = [{ kind: "grokbit", title: "", total: 1, items: [{ kind: "grokbit", name: "grokbit-plan" }] }];
+    const out = withCreateWorkflowTile(input, { backend: "grok" });
+    expect(out).toEqual(input);
+    expect(out.find((g: { kind: string }) => g.kind === "workflow")).toBeUndefined();
+  });
+
   it("Grok with no workflow group gets a User Workflows group with create-workflow first", () => {
+    if (!SHOW_USER_WORKFLOWS) return;
     const out = withCreateWorkflowTile(
       [{ kind: "grokbit", title: "", total: 1, items: [{ kind: "grokbit", name: "grokbit-plan" }] }],
       { backend: "grok" },
@@ -1101,6 +1129,7 @@ describe("withCreateWorkflowTile", () => {
   });
 
   it("prepends create-workflow ahead of saved workflow tiles without duplicating", () => {
+    if (!SHOW_USER_WORKFLOWS) return;
     const input = [{
       kind: "workflow",
       title: "User Workflows",
@@ -1135,6 +1164,7 @@ describe("withCreateWorkflowTile", () => {
   });
 
   it("capabilityGroupsView labels Create Workflow and marks builder action", () => {
+    if (!SHOW_USER_WORKFLOWS) return;
     const groups = withCreateWorkflowTile([], { backend: "grok" });
     const v = capabilityGroupsView({ groups });
     const item = v[0].items[0];

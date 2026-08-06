@@ -761,9 +761,14 @@
     // without burying them behind "Show all" (a featured-only create pin would).
   };
 
-  // Default allowlist for Grokbit Actions: bundled suite + backend-native User
-  // Workflows. When the host posts actionsScope "all", every kind shows.
-  const CAPABILITY_VISIBLE_KINDS = ["grokbit", "workflow"];
+  // Default allowlist for Grokbit Actions: bundled suite (+ User Workflows when
+  // SHOW_USER_WORKFLOWS is true). When the host posts actionsScope "all", every
+  // kind shows — except User Workflows stay hidden while that flag is false.
+  // Flip SHOW_USER_WORKFLOWS to true when the User Workflows UI is ready again.
+  const SHOW_USER_WORKFLOWS = false;
+  const CAPABILITY_VISIBLE_KINDS = SHOW_USER_WORKFLOWS
+    ? ["grokbit", "workflow"]
+    : ["grokbit"];
   /** Suite skill basenames that may appear as workspace forks (local overrides). */
   const SUITE_SKILL_NAMES_LC = [
     "grokbit-explore", "grokbit-plan", "grokbit-implement", "grokbit-test", "grokbit-document", "grokbit-ship",
@@ -774,13 +779,15 @@
    * @param {unknown} groups
    * @param {{ scope?: "workflow" | "all" }} [opts]
    *   scope "workflow" (default) → CAPABILITY_VISIBLE_KINDS only
-   *   scope "all" → every group with items (skills/agents/commands too)
+   *   scope "all" → every group with items (skills/agents/commands too),
+   *     still excluding `workflow` while SHOW_USER_WORKFLOWS is false
    */
   function visibleCapabilityGroups(groups, opts) {
     if (!Array.isArray(groups)) return [];
     const scope = opts && opts.scope === "all" ? "all" : "workflow";
     if (scope === "all") {
-      return groups.filter((g) => g).slice();
+      if (SHOW_USER_WORKFLOWS) return groups.filter((g) => g).slice();
+      return groups.filter((g) => g && g.kind !== "workflow");
     }
     const allow = new Set(CAPABILITY_VISIBLE_KINDS);
     return groups.filter((g) => g && allow.has(g.kind));
@@ -791,11 +798,12 @@
    * tiles (or none are visible). Backend-specific copy — never "Claude can't".
    * On Grok, `withCreateWorkflowTile` always injects a Create workflow row, so
    * this empty path is mainly Claude (and a defensive fallback if the inject
-   * helper is absent).
+   * helper is absent). Returns null while SHOW_USER_WORKFLOWS is false.
    * @param {{ backend?: string, hasWorkflowItems?: boolean }} opts
    * @returns {{ showEmpty: boolean, title: string, message: string } | null}
    */
   function userWorkflowsPanelState(opts) {
+    if (!SHOW_USER_WORKFLOWS) return null;
     opts = opts || {};
     if (opts.hasWorkflowItems) return null;
     const backend = opts.backend === "claude" ? "claude" : "grok";
@@ -820,12 +828,15 @@
    * Synthetic Create-workflow tile for the User Workflows section (Grok only).
    * `/create-workflow` is a Grok Build skill; Claude has no equivalent, so its
    * empty copy still points at saving a script under `.claude/workflows/`.
-   * Pure — never mutates `groups`.
+   * Pure — never mutates `groups`. No-op while SHOW_USER_WORKFLOWS is false.
    * @param {unknown} groups
    * @param {{ backend?: string }} [opts]
    * @returns {unknown[]}
    */
   function withCreateWorkflowTile(groups, opts) {
+    if (!SHOW_USER_WORKFLOWS) {
+      return Array.isArray(groups) ? groups.slice() : [];
+    }
     opts = opts || {};
     const list = Array.isArray(groups) ? groups.map((g) => {
       if (!g || typeof g !== "object") return g;
@@ -1746,6 +1757,7 @@
     sessionSetupModel, sessionSetupChipLabel,
     CAPABILITY_KIND_LABELS, capabilityGroupsView, sessionToggleGroup,
     CAPABILITY_FEATURED, CAPABILITY_FEATURED_FALLBACK,
+    SHOW_USER_WORKFLOWS,
     CAPABILITY_VISIBLE_KINDS, visibleCapabilityGroups, markLocalSuiteOverrides,
     userWorkflowsPanelState, withCreateWorkflowTile,
     capabilityDisplayLabel, capabilityInvokeLabel,

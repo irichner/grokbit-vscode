@@ -7,6 +7,11 @@
 // propagation boundary, reading a detail silently seeds a command.
 import { describe, expect, it } from "vitest";
 import { bootWebview, dispatch, click } from "./webview-harness";
+// @ts-expect-error — plain JS module, no types
+import { SHOW_USER_WORKFLOWS } from "../media/webview-helpers.js";
+
+/** User Workflows UI is temporarily hidden — re-enable with SHOW_USER_WORKFLOWS. */
+const itUW = SHOW_USER_WORKFLOWS ? it : it.skip;
 
 const panelOf = (doc: Document) => doc.getElementById("capabilities-panel") as HTMLElement;
 const popoverOf = (doc: Document) => doc.getElementById("capabilities-popover") as HTMLElement;
@@ -101,7 +106,7 @@ function openDetails(groups: unknown[], label: string) {
 }
 
 describe("detail area — propagation boundary (regression guard)", () => {
-  it("a click on the opened body does not seed the composer", () => {
+  itUW("a click on the opened body does not seed the composer", () => {
     const { window, doc, body } = openDetails(WORKFLOW_GROUP, "Review Changes");
     dispatch(window, {
       type: "capabilityDetail",
@@ -120,13 +125,13 @@ describe("detail area — propagation boundary (regression guard)", () => {
     expect(inputOf(doc).value).toBe("");
   });
 
-  it("a click on the wrap padding does not seed the composer either", () => {
+  itUW("a click on the wrap padding does not seed the composer either", () => {
     const { window, doc, wrap } = openDetails(WORKFLOW_GROUP, "Review Changes");
     click(window, wrap);
     expect(inputOf(doc).value).toBe("");
   });
 
-  it("in the Actions popover, a body click leaves the popover open", () => {
+  itUW("in the Actions popover, a body click leaves the popover open", () => {
     const { window, doc } = bootWebview();
     sendCapabilities(window, WORKFLOW_GROUP);
     click(window, doc.getElementById("capabilities-btn") as HTMLElement);
@@ -152,14 +157,14 @@ describe("detail area — propagation boundary (regression guard)", () => {
     expect(inputOf(doc).value).toBe("");
   });
 
-  it("the row head still seeds the invoke — the boundary did not disarm the row", () => {
+  itUW("the row head still seeds the invoke — the boundary did not disarm the row", () => {
     const { window, doc, row } = openDetails(WORKFLOW_GROUP, "Review Changes");
     const head = row.querySelector(".capability-row-head") as HTMLElement;
     click(window, head);
     expect(inputOf(doc).value).toBe("/workflow review-changes ");
   });
 
-  it("the description still seeds the invoke", () => {
+  itUW("the description still seeds the invoke", () => {
     const h = bootWebview();
     sendCapabilities(h.window, WORKFLOW_GROUP);
     const row = rowByLabel(panelOf(h.doc), "Review Changes");
@@ -169,7 +174,7 @@ describe("detail area — propagation boundary (regression guard)", () => {
 });
 
 describe("detail request echo", () => {
-  it("a workflow row sends its detailKind and path", () => {
+  itUW("a workflow row sends its detailKind and path", () => {
     const h = bootWebview();
     sendCapabilities(h.window, WORKFLOW_GROUP);
     h.posted.length = 0;
@@ -268,7 +273,7 @@ function openWorkflowDetail(workflow: Record<string, unknown>) {
 }
 
 describe("workflow detail render", () => {
-  it("shows the description, one chip per phase, and one collapsed block per agent", () => {
+  itUW("shows the description, one chip per phase, and one collapsed block per agent", () => {
     const { body } = openWorkflowDetail(DETAIL);
     expect(body.classList.contains("workflow-detail")).toBe(true);
     expect(body.querySelector(".workflow-detail-desc")?.textContent).toBe(
@@ -286,7 +291,7 @@ describe("workflow detail render", () => {
     }
   });
 
-  it("summarises each agent on one line", () => {
+  itUW("summarises each agent on one line", () => {
     const { body } = openWorkflowDetail(DETAIL);
     const summaries = Array.from(body.querySelectorAll(".workflow-agent-summary-text")).map(
       (s) => s.textContent,
@@ -296,7 +301,7 @@ describe("workflow detail render", () => {
     expect(summaries[1]).toBe("agent 2 · Verify");
   });
 
-  it("expands and collapses an agent, revealing its prompt and settings", () => {
+  itUW("expands and collapses an agent, revealing its prompt and settings", () => {
     const { window, body } = openWorkflowDetail(DETAIL);
     const block = body.querySelector(".workflow-agent") as HTMLElement;
     const summary = block.querySelector(".workflow-agent-summary") as HTMLElement;
@@ -320,7 +325,7 @@ describe("workflow detail render", () => {
     expect(summary.getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("labels a computed prompt as built at run time", () => {
+  itUW("labels a computed prompt as built at run time", () => {
     const { window, body } = openWorkflowDetail(DETAIL);
     const second = body.querySelectorAll(".workflow-agent")[1] as HTMLElement;
     click(window, second.querySelector(".workflow-agent-summary") as HTMLElement);
@@ -330,7 +335,7 @@ describe("workflow detail render", () => {
     expect(second.querySelector(".workflow-agent-prompt")?.classList.contains("dynamic")).toBe(true);
   });
 
-  it("renders a prompt containing markup as inert text, never as markup", () => {
+  itUW("renders a prompt containing markup as inert text, never as markup", () => {
     const nasty = '<script>alert(1)</script><img src=x onerror=alert(2)>';
     const { window, body } = openWorkflowDetail({
       ...DETAIL,
@@ -343,7 +348,7 @@ describe("workflow detail render", () => {
     expect(body.querySelector(".workflow-agent-prompt")?.textContent).toBe(nasty);
   });
 
-  it("says a workflow builds its steps at run time when there are genuinely no agent calls", () => {
+  itUW("says a workflow builds its steps at run time when there are genuinely no agent calls", () => {
     const { body } = openWorkflowDetail({
       ...DETAIL,
       agents: [],
@@ -354,7 +359,7 @@ describe("workflow detail render", () => {
     );
   });
 
-  it("says it could not read them when calls were found but none parsed", () => {
+  itUW("says it could not read them when calls were found but none parsed", () => {
     const { body } = openWorkflowDetail({
       ...DETAIL,
       agents: [],
@@ -367,7 +372,7 @@ describe("workflow detail render", () => {
     expect(notes).toHaveLength(1);
   });
 
-  it("distinguishes unreadable calls from calls past the cap, and flags a truncated read", () => {
+  itUW("distinguishes unreadable calls from calls past the cap, and flags a truncated read", () => {
     const { body } = openWorkflowDetail({
       ...DETAIL,
       opaqueAgentCalls: 1,
@@ -382,7 +387,7 @@ describe("workflow detail render", () => {
     ]);
   });
 
-  it("renders a host error as one muted line in workflow wording", () => {
+  itUW("renders a host error as one muted line in workflow wording", () => {
     const h = openDetails(WORKFLOW_GROUP, "Review Changes");
     dispatch(h.window, {
       type: "capabilityDetail",
@@ -412,7 +417,7 @@ describe("workflow detail render", () => {
 });
 
 describe("detail control labelling", () => {
-  it("a workflow row describes what it will show", () => {
+  itUW("a workflow row describes what it will show", () => {
     const { btn, row } = openDetails(WORKFLOW_GROUP, "Review Changes");
     expect(btn.getAttribute("title")).toBe("What this workflow runs (agents, phases, prompts)");
     const openEd = row.querySelector(".capability-row-details.secondary") as HTMLElement;
@@ -426,7 +431,7 @@ describe("detail control labelling", () => {
     expect(openEd.getAttribute("title")).toBe("Open the full how-it-works guide as a file");
   });
 
-  it("Open in editor still posts openFile with the row's detail path", () => {
+  itUW("Open in editor still posts openFile with the row's detail path", () => {
     const h = bootWebview();
     sendCapabilities(h.window, WORKFLOW_GROUP);
     h.posted.length = 0;
