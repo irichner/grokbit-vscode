@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 2026.8.36 — 2026-08-10
+
+### Added
+
+- **Workflow tiles state their agents and review count.** Each Grokbit Actions tile now shows an `Agents` line naming the roles that phase runs and a `Reviews` line stating how much review it performs — facts that previously required opening **Details**. Ship, which has no roster of its own, says so. Rendered from a committed manifest (zero I/O on the render path) that a new parity test holds in sync with each skill's `references/how-it-works.md`. ([src/skill-suite.ts](src/skill-suite.ts), [media/chat.js](media/chat.js), [media/webview-helpers.js](media/webview-helpers.js))
+
 ## 2026.8.33 — 2026-08-04
 
 ### Added

@@ -219,6 +219,126 @@ export function attachSuiteHowItWorks(
   });
 }
 
+/** The agents a suite phase runs and how much review it performs. */
+export interface SuiteTileMeta {
+  /** Role names, verbatim from the guide's `## Roles` table. */
+  agents: readonly string[];
+  /** Stands in for {@link agents} when a phase has no roster of its own. */
+  agentsNote?: string;
+  /** Short honest phrase; every numeral in it must appear in the guide. */
+  reviews: string;
+}
+
+/**
+ * Per-skill agents + reviews, rendered on the tile face so a user scanning the
+ * welcome canvas can tell the six phases apart without opening Details.
+ *
+ * **Committed data, not a runtime parse.** These facts live authoritatively in
+ * each skill's `references/how-it-works.md` (`## Roles` / `## Loops and caps`),
+ * but re-reading and markdown-table-parsing six files on every panel render —
+ * every reveal of a torn-down hidden panel, every Refresh click — to produce a
+ * string that only changes when a new vsix ships is the wrong trade. The cost
+ * of duplicating them here is drift, and `test/suite-tile-meta-parity.test.ts`
+ * is what pays it: it reads the guides and fails the build when the two
+ * disagree, the same idiom `test/hook-parity.test.ts` uses for the vendored
+ * Python hooks. **Remove that test and this manifest is stale data waiting to
+ * happen.**
+ *
+ * `reviews` is a phrase rather than an integer on purpose. The caps genuinely
+ * differ in kind — Plan runs 3 adversarial rounds *plus* 1–2 plan-level passes,
+ * Test runs 7 bounded loops one of which has no escape — so collapsing them to
+ * one number would mean inventing a comparison the guides never make.
+ */
+export const SUITE_TILE_META: Readonly<Record<string, SuiteTileMeta>> = {
+  "grokbit-explore": {
+    agents: ["Scope Setter", "Cartographer", "Citation Checker"],
+    reviews: "2 cite-check rounds",
+  },
+  "grokbit-plan": {
+    agents: ["Business Analyst", "Systems Analyst", "Solutions Architect", "Plan Reviewer"],
+    reviews: "3 adversarial rounds + 1–2 plan passes",
+  },
+  "grokbit-implement": {
+    agents: [
+      "Build Engineer",
+      "Software Engineer",
+      "Supply Chain Security Analyst",
+      "Code Reviewer",
+      "Orchestrator",
+    ],
+    reviews: "2 scope-audit rounds; 3 attempts per task",
+  },
+  "grokbit-test": {
+    agents: [
+      "QA Automation Engineer",
+      "Frontend QA",
+      "Application Security",
+      "Maintenance Engineer",
+      "Release Engineer",
+    ],
+    reviews: "7 bounded loops; security has no escape",
+  },
+  "grokbit-document": {
+    agents: ["Information Architect", "Documentation Engineer", "Technical Writer", "Docs QA"],
+    reviews: "3 verify passes + 2 fresh-reader rounds",
+  },
+  "grokbit-ship": {
+    /** Ship genuinely has no roster — its guide says so verbatim. A blank line
+     *  here, or a roster synthesized from the phases it delegates to, would
+     *  both be wrong; {@link SuiteTileMeta.agentsNote} is the honest third
+     *  option, and it lives here rather than as a renderer-side fallback so the
+     *  copy stays testable and visible to whoever next edits this manifest. */
+    agents: [],
+    agentsNote: "Runs each phase's own roster",
+    reviews: "inherits every phase's reviews; ~5 delegated phases",
+  },
+};
+
+/** Separator between role names on a tile's Agents line. */
+const AGENT_SEPARATOR = " · ";
+
+export interface AttachSuiteTileMetaOptions {
+  names?: readonly string[];
+  /** Manifest override — defaults to {@link SUITE_TILE_META}. */
+  meta?: Readonly<Record<string, SuiteTileMeta>>;
+}
+
+/**
+ * Stamp `meta` (the Agents / Reviews lines) onto re-keyed suite items.
+ *
+ * Guarded on `kind === "grokbit"` plus canonical name membership — the same
+ * two-condition shape {@link applySuiteKind} uses — so a deliberate workspace
+ * fork of `grokbit-plan` (which stays `kind: "skill"` by design) never inherits
+ * Grokbit's roster claims about code it may no longer resemble.
+ *
+ * Returns a new array; items are copied, never mutated in place.
+ */
+export function attachSuiteTileMeta(
+  items: readonly CapabilityItem[],
+  opts: AttachSuiteTileMetaOptions = {},
+): CapabilityItem[] {
+  const names = opts.names ?? SUITE_SKILL_NAMES;
+  const table = opts.meta ?? SUITE_TILE_META;
+  return items.map((item) => {
+    if (item.kind !== "grokbit") return item;
+    const canonical = canonicalSuiteSkillName(item.name, names);
+    if (!canonical) return item;
+    const entry = table[canonical];
+    if (!entry) return item;
+    const agents = entry.agents.length
+      ? entry.agents.join(AGENT_SEPARATOR)
+      : (entry.agentsNote ?? "").trim();
+    const meta: { label: string; value: string }[] = [];
+    // An empty value is dropped rather than rendered as a labelled blank —
+    // a bare "Agents" with nothing after it reads as a load failure.
+    if (agents) meta.push({ label: "Agents", value: agents });
+    const reviews = (entry.reviews ?? "").trim();
+    if (reviews) meta.push({ label: "Reviews", value: reviews });
+    if (!meta.length) return item;
+    return { ...item, meta };
+  });
+}
+
 /**
  * Resolve a safe absolute path for reading a suite how-it-works guide.
  * Rejects names outside {@link SUITE_SKILL_NAMES} so the host never opens

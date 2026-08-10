@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 import { CapabilityItem, dedupeByPriority } from "../src/capabilities";
 import {
   SUITE_SKILL_NAMES,
+  SUITE_TILE_META,
   applySuiteKind,
   attachSuiteHowItWorks,
+  attachSuiteTileMeta,
   isSuiteSkillName,
   resolveSuiteHowItWorksPath,
   shouldProvision,
@@ -225,5 +227,67 @@ describe("suite how-it-works paths", () => {
     expect(out[0].detailPath).toBe(planGuide);
     expect(out[1].hasDetail).toBeUndefined();
     expect(out[2].hasDetail).toBeUndefined();
+  });
+});
+
+describe("attachSuiteTileMeta", () => {
+  const suiteItem = (name: string): CapabilityItem => ({
+    kind: "grokbit",
+    name,
+    description: "",
+    source: "Grokbit",
+    origin: "disk",
+    invoke: `/${name} `,
+    path: suitePath(name),
+  });
+
+  it("stamps Agents + Reviews on every suite member", () => {
+    const out = attachSuiteTileMeta(SUITE_SKILL_NAMES.map((n) => suiteItem(n)));
+    expect(out).toHaveLength(SUITE_SKILL_NAMES.length);
+    for (const item of out) {
+      expect(item.meta?.map((m) => m.label)).toEqual(["Agents", "Reviews"]);
+      for (const m of item.meta ?? []) expect(m.value.trim()).not.toBe("");
+    }
+  });
+
+  it("joins the roster with a middot", () => {
+    const [plan] = attachSuiteTileMeta([suiteItem("grokbit-plan")]);
+    expect(plan.meta?.[0].value).toBe(
+      "Business Analyst · Systems Analyst · Solutions Architect · Plan Reviewer",
+    );
+  });
+
+  it("uses agentsNote for a phase with no roster of its own", () => {
+    const [ship] = attachSuiteTileMeta([suiteItem("grokbit-ship")]);
+    expect(SUITE_TILE_META["grokbit-ship"].agents).toEqual([]);
+    expect(ship.meta?.[0]).toEqual({ label: "Agents", value: "Runs each phase's own roster" });
+  });
+
+  it("[R] leaves a workspace fork alone — it stays kind:skill and claims no roster", () => {
+    const fork: CapabilityItem = {
+      kind: "skill",
+      name: "grokbit-plan",
+      description: "",
+      source: "Project (.grok)",
+      origin: "disk",
+      path: suitePath("grokbit-plan", path.join("C:", "repo", ".grok", "skills")),
+    };
+    expect(attachSuiteTileMeta([fork])[0].meta).toBeUndefined();
+  });
+
+  it("ignores a grokbit item with no manifest entry, and never mutates in place", () => {
+    const stranger = { ...suiteItem("grokbit-plan"), name: "grokbit-unknown" };
+    const items = [stranger, suiteItem("grokbit-test")];
+    const out = attachSuiteTileMeta(items);
+    expect(out[0].meta).toBeUndefined();
+    expect(items[1].meta).toBeUndefined();
+    expect(out[1].meta).toBeDefined();
+  });
+
+  it("drops a labelled blank rather than rendering an empty line", () => {
+    const out = attachSuiteTileMeta([suiteItem("grokbit-plan")], {
+      meta: { "grokbit-plan": { agents: [], reviews: "2 rounds" } },
+    });
+    expect(out[0].meta).toEqual([{ label: "Reviews", value: "2 rounds" }]);
   });
 });

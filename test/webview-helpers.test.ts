@@ -1205,6 +1205,61 @@ describe("capabilityGroupsView", () => {
     expect(v.map((g) => g.kind)).toEqual(["agent"]);
   });
 
+  // [R] The returned object is an explicit whitelist, not a spread, so a host
+  // field that nobody adds here is dropped between host and renderer with no
+  // error anywhere. That is the failure mode this case exists to catch.
+  it("[R] carries tile meta through to the renderer", () => {
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "grokbit",
+        title: "",
+        total: 1,
+        items: [{
+          kind: "grokbit",
+          name: "grokbit-plan",
+          invoke: "/grokbit-plan ",
+          meta: [
+            { label: "Agents", value: "Business Analyst · Plan Reviewer" },
+            { label: "Reviews", value: "3 adversarial rounds" },
+          ],
+        }],
+      }],
+    });
+    expect(v[0].items[0].meta).toEqual([
+      { label: "Agents", value: "Business Analyst · Plan Reviewer" },
+      { label: "Reviews", value: "3 adversarial rounds" },
+    ]);
+  });
+
+  it("normalizes tile meta — drops blanks, undefined when nothing survives", () => {
+    const view = (meta: unknown) => capabilityGroupsView({
+      groups: [{ kind: "grokbit", title: "", total: 1, items: [{ kind: "grokbit", name: "x", invoke: "/x ", meta }] }],
+    })[0].items[0].meta;
+    expect(view([{ label: "Agents", value: "  " }, { label: "", value: "v" }, null, "nope"])).toBeUndefined();
+    expect(view([])).toBeUndefined();
+    expect(view(undefined)).toBeUndefined();
+    expect(view("Agents: x")).toBeUndefined();
+    expect(view([{ label: " Agents ", value: " a · b " }])).toEqual([{ label: "Agents", value: "a · b" }]);
+  });
+
+  it("caps a long meta value with the same trim as every other tile string", () => {
+    const long = "Role. ".repeat(120);
+    const v = capabilityGroupsView({
+      groups: [{
+        kind: "grokbit", title: "", total: 1,
+        items: [{ kind: "grokbit", name: "x", invoke: "/x ", meta: [{ label: "Agents", value: long }] }],
+      }],
+    });
+    expect(v[0].items[0].meta![0].value.length).toBeLessThanOrEqual(CAPABILITY_ROW_DESCRIPTION_MAX);
+  });
+
+  it("leaves a non-suite row without a meta block", () => {
+    const v = capabilityGroupsView({
+      groups: [{ kind: "skill", title: "Skills", total: 1, items: [{ kind: "skill", name: "a", invoke: "/a " }] }],
+    });
+    expect(v[0].items[0].meta).toBeUndefined();
+  });
+
   it("truncates a long description", () => {
     const v = capabilityGroupsView({
       groups: [{

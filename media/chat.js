@@ -854,6 +854,30 @@
       hint.textContent = item.hint;
       row.appendChild(hint);
     }
+    // Agents / Reviews on the tile face. Guarded on the SHAPE of item.meta,
+    // never on item.kind — same rule as the hasDetail block below. Rendered
+    // outside .capability-row-detail-wrap on purpose: these lines are part of
+    // the tile's face, so clicking them seeds the command exactly like clicking
+    // the description does, rather than being swallowed by the detail area's
+    // propagation boundary.
+    if (Array.isArray(item.meta) && item.meta.length) {
+      const meta = document.createElement("div");
+      meta.className = "capability-row-meta";
+      for (const entry of item.meta) {
+        const line = document.createElement("div");
+        line.className = "capability-row-meta-line";
+        const label = document.createElement("span");
+        label.className = "capability-row-meta-label";
+        label.textContent = entry.label;
+        const value = document.createElement("span");
+        value.className = "capability-row-meta-value";
+        value.textContent = entry.value;
+        line.appendChild(label);
+        line.appendChild(value);
+        meta.appendChild(line);
+      }
+      row.appendChild(meta);
+    }
     // Data-driven detail (hasDetail) — not a kind-string branch. Host stamps
     // suite how-it-works guides; renderer only cares about the flag.
     let detailBody = null;

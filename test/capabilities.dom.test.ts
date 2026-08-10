@@ -1455,3 +1455,121 @@ describe("capability browser — featured partition + expand", () => {
     expect(body.scrollTop).toBe(42);
   });
 });
+
+// Agents / Reviews on the tile face (.grokbit/plans/workflow-tile-agents-and-reviews).
+// The facts already shipped behind the Details button; these cases assert they
+// now reach the canvas without a click, and that nothing else grew a meta row.
+describe("capability browser — Agents / Reviews on the tile face", () => {
+  const withMeta = (name: string, meta?: { label: string; value: string }[]) => ({
+    kind: "grokbit",
+    name,
+    description: "d",
+    invoke: `/${name} `,
+    path: `/home/u/.grok/skills/${name}/SKILL.md`,
+    source: "Grokbit",
+    origin: "disk",
+    ...(meta ? { meta } : {}),
+  });
+  const PLAN_META = [
+    { label: "Agents", value: "Business Analyst · Systems Analyst · Solutions Architect · Plan Reviewer" },
+    { label: "Reviews", value: "3 adversarial rounds + 1–2 plan passes" },
+  ];
+  const SHIP_META = [
+    { label: "Agents", value: "Runs each phase's own roster" },
+    { label: "Reviews", value: "inherits every phase's reviews; ~5 delegated phases" },
+  ];
+  // grokbit-explore deliberately carries NO meta: it is a real suite name (so
+  // partitionFeatured keeps it rendered rather than hiding it behind the expand
+  // link) that still exercises the absent-meta path.
+  const GROUP = {
+    kind: "grokbit",
+    title: "Grokbit workflow",
+    total: 3,
+    featuredCount: 3,
+    items: [
+      withMeta("grokbit-plan", PLAN_META),
+      withMeta("grokbit-ship", SHIP_META),
+      withMeta("grokbit-explore"),
+    ],
+  };
+
+  function metaOf(row: Element) {
+    return [...row.querySelectorAll(".capability-row-meta-line")].map((l) => [
+      l.querySelector(".capability-row-meta-label")?.textContent,
+      l.querySelector(".capability-row-meta-value")?.textContent,
+    ]);
+  }
+  const rowsOf = (el: HTMLElement) =>
+    [...el.querySelectorAll(".capability-row:not(.capability-row-toggle)")] as HTMLElement[];
+  // By label, never by index — partitionFeatured reorders into pipeline order.
+  function rowNamed(el: HTMLElement, label: string) {
+    const row = rowsOf(el).find((r) => r.querySelector(".capability-row-name")?.textContent === label);
+    expect(row, `no tile labelled ${label}`).toBeDefined();
+    return row!;
+  }
+
+  it("renders both labelled lines on the tile, in the host's order", () => {
+    const { window, doc } = bootWebview();
+    sendCapabilities(window, [GROUP]);
+    expect(metaOf(rowNamed(panelOf(doc), "Plan"))).toEqual([
+      ["Agents", PLAN_META[0].value],
+      ["Reviews", PLAN_META[1].value],
+    ]);
+  });
+
+  // [R] Ship genuinely has no roster of its own; the honest note must reach the
+  // tile rather than a blank line or a roster copied from the phases it runs.
+  it("[R] shows Ship's agentsNote in the Agents slot", () => {
+    const { window, doc } = bootWebview();
+    sendCapabilities(window, [GROUP]);
+    expect(metaOf(rowNamed(panelOf(doc), "Ship"))[0]).toEqual(["Agents", "Runs each phase's own roster"]);
+  });
+
+  // [R] The guard is on the SHAPE of item.meta, not on kind — a row without it
+  // must render byte-identically to before this feature existed.
+  it("[R] a row with no meta grows no meta block", () => {
+    const { window, doc } = bootWebview();
+    sendCapabilities(window, [GROUP, ...NON_GROKBIT_GROUPS]);
+    expect(rowNamed(panelOf(doc), "Explore").querySelector(".capability-row-meta")).toBeNull();
+    for (const row of rowsOf(panelOf(doc))) {
+      if (["Plan", "Ship"].includes(row.querySelector(".capability-row-name")?.textContent ?? "")) continue;
+      expect(row.querySelector(".capability-row-meta")).toBeNull();
+    }
+  });
+
+  it("renders in the top-bar popover too, not just the welcome canvas", () => {
+    const { window, doc } = bootWebview();
+    sendCapabilities(window, [GROUP]);
+    click(window, doc.getElementById("capabilities-btn") as HTMLElement);
+    expect(metaOf(rowNamed(popoverOf(doc), "Plan"))).toEqual([
+      ["Agents", PLAN_META[0].value],
+      ["Reviews", PLAN_META[1].value],
+    ]);
+  });
+
+  // [R] The meta lines sit OUTSIDE .capability-row-detail-wrap, so they are part
+  // of the tile's click target. Inside it, the wrap's stopPropagation boundary
+  // would swallow the click and the tile would feel dead where the text is.
+  it("[R] clicking a meta line still seeds the command", () => {
+    const { window, doc, posted } = bootWebview();
+    sendCapabilities(window, [GROUP]);
+    const value = rowNamed(panelOf(doc), "Plan").querySelector(".capability-row-meta-value") as HTMLElement;
+    expect(value.closest(".capability-row-detail-wrap")).toBeNull();
+    posted.length = 0;
+    click(window, value);
+    expect((doc.getElementById("input") as HTMLTextAreaElement).value).toBe("/grokbit-plan ");
+    expect(posted.some((m) => m.type === "send")).toBe(false);
+  });
+
+  // Long rosters must wrap, not ellipsize — a truncated list of unknown length
+  // is worse than a wrapped one. Enforced in CSS, so this is a source check.
+  it("[R] the meta value wraps and is never clamped to one line", () => {
+    const css = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
+    const block = css.slice(css.indexOf(".capability-row-meta-value {"));
+    const rule = block.slice(0, block.indexOf("}"));
+    expect(rule).toContain("white-space: normal");
+    expect(rule).not.toContain("nowrap");
+    expect(rule).not.toContain("text-overflow");
+    expect(rule).not.toContain("line-clamp");
+  });
+});

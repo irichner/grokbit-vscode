@@ -146,6 +146,7 @@ import {
 import {
   applySuiteKind,
   attachSuiteHowItWorks,
+  attachSuiteTileMeta,
   HOW_IT_WORKS_MAX_BYTES,
   resolveSuiteHowItWorksPath,
   suiteTargets,
@@ -3479,7 +3480,11 @@ See design doc for the full state machine diagram.`;
           }
         },
       });
-      const groups = buildCapabilityGroups(suiteWithDetail, session.client?.availableCommands ?? []);
+      // Agents + Reviews on the tile face — committed data, no file reads, so
+      // it costs nothing on this render path (unlike the guide behind Details,
+      // which stays lazy for exactly that reason).
+      const suiteWithMeta = attachSuiteTileMeta(suiteWithDetail);
+      const groups = buildCapabilityGroups(suiteWithMeta, session.client?.availableCommands ?? []);
       // Phase E: honest MCP count from grok-style TOML (no full browser).
       const homeDirForMcp = process.env.HOME || process.env.USERPROFILE || os.homedir();
       const mcp = countMcpServersFromFiles(

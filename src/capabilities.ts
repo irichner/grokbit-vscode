@@ -69,6 +69,13 @@ export interface CapabilityItem {
   hasDetail?: boolean;
   /** Absolute path to `references/how-it-works.md` when {@link hasDetail}. */
   detailPath?: string;
+  /**
+   * Labelled facts rendered on the tile face (Grokbit suite tiles: `Agents` /
+   * `Reviews`). Set by `attachSuiteTileMeta` in `skill-suite.ts`; absent for
+   * every other kind, which is what keeps the renderer's guard a data-shape
+   * check rather than a `kind === "grokbit"` branch.
+   */
+  meta?: { label: string; value: string }[];
 }
 
 export interface CapabilityGroup {

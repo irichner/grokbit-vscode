@@ -22,6 +22,7 @@
         "46d440a4-ebc6-491e-84b2-3365e39805aa": 11689430,
         "4b1c81f6-ec48-48a3-b069-bd4ee34b0732": 83825595,
         "4d07d7b5-b62e-42a2-a2aa-540a002ddacb": 4858530,
+        "4f9a799f-26c0-43df-8ed8-e08578e40a4e": 10936219,
         "531cdc0f-f5c2-400b-b93f-d4aff04ce86c": 424549192,
         "540eb31f-331e-4b76-9a88-da1b12b32edb": 13911954,
         "5c46b6d6-bb69-4e20-b994-c9d9a02aa1ac": 192341,
@@ -58,8 +59,8 @@
         "fac74e40-f392-4755-a9f6-58ce7ff8b1d7": 4298592,
         "fd7e1337-5e8e-440b-be74-c176864be8aa": 12731133
       },
-      "sessions": 54,
-      "total_tokens": 1388117558
+      "sessions": 55,
+      "total_tokens": 1399053777
     },
     "grok_sessions": {
       "accounting": "context-proxy",
@@ -220,14 +221,16 @@
         "019fcb19-c235-72a0-ab7c-cc706a2b609d": 43538,
         "019fcb23-002b-7cd1-b296-caf58d824baa": 102156,
         "019fce17-02d1-78e2-8c54-09d52923f237": 45223,
-        "019fce18-b4b0-7b33-9f1d-85a191a85457": 117234,
-        "019fd51f-9f04-74a3-b915-abe98d7b2913": 56322
+        "019fce18-b4b0-7b33-9f1d-85a191a85457": 120427,
+        "019fd51f-9f04-74a3-b915-abe98d7b2913": 56322,
+        "019fd868-205f-7a42-82dd-637b37cc8578": 60469,
+        "019fd8a6-7812-7a62-bbe5-38c3a50fcc07": 45209
       },
-      "sessions": 158,
-      "total_tokens": 14652775
+      "sessions": 160,
+      "total_tokens": 14761646
     }
   },
-  "generated_at": "2026-08-06T18:05:47Z",
+  "generated_at": "2026-08-10T15:03:28Z",
   "schema": 1,
-  "total_tokens": 1402770333
+  "total_tokens": 1413815423
 }

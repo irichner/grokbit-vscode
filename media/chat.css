@@ -2509,6 +2509,47 @@ textarea#input {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Agents / Reviews on the tile face (data-driven item.meta — the Grokbit suite
+   tiles today). WRAPS like .capability-row-desc rather than ellipsizing like
+   .capability-row-hint above: a four- or five-name roster cannot fit one line
+   in a narrow tile, and "Business Analyst · Systems Ana…" reads as a truncated
+   list of unknown length — the worst of both options.
+
+   The label column is sized in `ch`, not px. A pixel floor here would need a
+   min(100%, …) clamp to survive a ~250px split-editor tab, and it would stop
+   tracking the text at non-default grok.chatFontScale values; `ch` resolves in
+   the zoomed box and stays correct at every scale. No viewport breakpoints
+   either — body carries zoom, so one would evaluate the unzoomed viewport. */
+.capability-row-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 2px;
+}
+.capability-row-meta-line {
+  display: flex;
+  gap: 6px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--vscode-descriptionForeground);
+}
+.capability-row-meta-label {
+  flex: 0 0 auto;
+  min-width: 7ch;
+  font-size: 9.5px;
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+.capability-row-meta-value {
+  flex: 1 1 auto;
+  /* min-width:0 lets the value shrink below its content width instead of
+     forcing the row wider than the tile. */
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 /* Workspace-tier provenance — same small-chip idiom as .history-row-backend
    (VS Code badge tokens), shown only for a "Project (…)" item since
    dedupeByPriority is workspace-first and a repo-authored skill can silently

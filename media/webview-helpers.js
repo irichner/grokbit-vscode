@@ -706,6 +706,30 @@
     return s.slice(0, max - 1).trimEnd() + "…";
   }
 
+  /**
+   * Labelled tile facts (`Agents` / `Reviews` on the Grokbit suite tiles) into
+   * a render-ready `[{label, value}]`, or `undefined` when nothing survives.
+   *
+   * `undefined` rather than `[]` matches the `hint`/`sourceBadge` convention
+   * above and keeps the renderer's guard a simple truthiness+length check.
+   * Values run through the same `truncateCapabilityDescription` as every other
+   * tile string so meta inherits the existing cap instead of inventing a
+   * second one that would drift from it.
+   */
+  function normalizeCapabilityMeta(raw) {
+    if (!Array.isArray(raw)) return undefined;
+    const out = [];
+    for (const entry of raw) {
+      if (!entry || typeof entry !== "object") continue;
+      const label = typeof entry.label === "string" ? entry.label.trim() : "";
+      const value = typeof entry.value === "string" ? entry.value.trim() : "";
+      // A labelled blank reads as a load failure; drop the row instead.
+      if (!label || !value) continue;
+      out.push({ label, value: truncateCapabilityDescription(value) });
+    }
+    return out.length ? out : undefined;
+  }
+
   // Featured subset per CapabilityKind, shown by default with the rest behind
   // an expand link (docs/plans/actions-panel-featured-capabilities.md). Data,
   // not logic — a later kind needs one map entry here, not a renderer change,
@@ -1256,6 +1280,9 @@
           hasDetail,
           detailPath: hasDetail ? detailPath : undefined,
           detailKind: hasDetail ? detailKind : undefined,
+          // NOTE: this object literal is an explicit whitelist, not a spread —
+          // a host field missing from here never reaches the renderer.
+          meta: normalizeCapabilityMeta(raw.meta),
         };
       });
       const total = typeof g.total === "number" && g.total >= items.length ? g.total : items.length;
@@ -1765,7 +1792,7 @@
     defaultWorkflowGraphFromGoal, validateWorkflowBuilderDraft, buildWorkflowCraftBrief,
     workflowDetailToBuilderDraft,
     workflowDetailView,
-    CAPABILITY_ROW_DESCRIPTION_MAX, truncateCapabilityDescription,
+    CAPABILITY_ROW_DESCRIPTION_MAX, truncateCapabilityDescription, normalizeCapabilityMeta,
     PASTE_IMAGE_MAX_BYTES, PASTE_IMAGE_MAX_COUNT, PASTE_IMAGE_MIME,
     canAcceptPasteImageBytes, isAllowedPasteImageMime,
     USER_PROMPT_COLLAPSE_MIN_CHARS, userPromptShouldCollapse,
