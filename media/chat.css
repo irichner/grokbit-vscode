@@ -812,6 +812,7 @@ body.thinking-hidden .msg.thinking { display: none; }
 @keyframes grokking-orbit { to { transform: rotate(-360deg); } }
 @media (prefers-reduced-motion: reduce) {
   .grokking-icon svg { animation: none; }
+  .thinking-bar { animation: none; }
 }
 
 /* Three blinking dots — the tool rows' in-progress animation, reused by every
@@ -3091,6 +3092,27 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
 }
 .card.plan { border-left-color: var(--neon-cyan-ink); }
 
+/* Live-turn thinking strip — same slot as #plan-banner (full width under the
+   top bar). CSS-only motion; visibility is JS (unlocked busy, not replaying /
+   panelReplaying, no live unresolved permission/question/plan card). */
+.thinking-bar {
+  height: 4px;
+  flex-shrink: 0;
+  background: linear-gradient(
+    90deg,
+    var(--neon-cyan-ink),
+    var(--neon-magenta-ink),
+    var(--neon-green-ink),
+    var(--neon-cyan-ink)
+  );
+  background-size: 300% 100%;
+  animation: thinking-bar-shift 0.6s linear infinite;
+}
+.thinking-bar[hidden] { display: none; }
+@keyframes thinking-bar-shift {
+  to { background-position: 200% 0; }
+}
+
 /* Full-width plan-mode banner — pinned above the scrolling chat while plan mode
    is active. The tinted mode button is easy to miss; this makes the write/command
    gate unmissable. Sits between the top bar and the messages scroll area, so it
@@ -3310,7 +3332,7 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
 
 .plan-notice {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
@@ -3319,6 +3341,7 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   border-left: 2px solid var(--neon-cyan-ink);
   background: var(--vscode-textBlockQuote-background, rgba(86, 156, 214, 0.08));
 }
+.plan-notice span { min-width: 0; overflow-wrap: anywhere; }
 .plan-notice svg { flex-shrink: 0; opacity: 0.8; }
 
 .card .preview-link {

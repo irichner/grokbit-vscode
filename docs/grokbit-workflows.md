@@ -17,6 +17,8 @@ This repo ships **two coexisting** change pipelines. Pick one deliberately; do n
 
 **Chat-only plans are invalid under both.** A plan that lives only in the conversation is not a review artifact. For Grokbit suite, tick approval on `.grokbit/plans/<slug>/plan.md`. For the agentic template, use durable `docs/plans/<name>.md` and `/plan` Approve (or residual waiver) before `/implement`.
 
+**Live cross-CLI peer (optional).** With both agents connected, enable `grok.peerAgent.enabled` and use **Grokbit: Run on other agent…** (or the injected MCP tool `run_peer_agent`) to nest a one-shot turn on the *other* CLI. That is extension-orchestrated live delegation (ADR 0005) — separate from this suite’s disk handoff, and separate from User Workflow scripts (which stay single-backend). Details: `research/peer-agent-mcp.md`.
+
 The rest of this document is the Grokbit suite only. For the agentic template loop (explore → plan → implement → verify → review → commit), use **[WORKFLOW.md](./WORKFLOW.md)**.
 
 ## Pipeline overview

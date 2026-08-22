@@ -72,12 +72,13 @@ Key exported pieces:
 
 - `isInsideWorkspace(target, root)` — the containment check that understands Windows `\\?\` long paths, case-insensitivity on drive letters, POSIX case-sensitivity, and safe `..` traversal rejection.
 - `isReadOnlyCommand(command)` — the conservative classifier:
-  - Rejects anything containing `>`, `;`, `` ` ``, `&&`, `||`, `$(`, `<(`, `&` at start/end, `{`/`}` (script blocks).
-  - For `|` pipelines: *every* stage must itself be a known read-only head.
+  - Rejects anything containing `>`, `` ` ``, `&&`, `||`, `$(`, `<(`, `&`, `{`/`}` (script blocks).
+  - For `|` and `;` sequences: *every* stage must itself be a known read-only head (`Write-Output x; Test-Path` passes; `Test-Path a; Remove-Item b` does not). Quoted `;` is fail-closed.
   - Special cases for `git <subcommand>`, `npm/pnpm/yarn/bun <subcommand>`, and interpreters (`node --version` etc. only).
-  - The big `READONLY_HEADS` set (ls, cat, grep, rg, Get-ChildItem, Select-Object, etc.) plus PowerShell read-only cmdlets.
+  - The big `READONLY_HEADS` set (ls, cat, grep, rg, Get-ChildItem, Select-Object, Write-Output, etc.) plus PowerShell read-only cmdlets.
 - `shouldBlockWrite(path, ctx)`, `shouldBlockTerminal(command, ctx)`, `shouldRejectPermission(kind, ctx)`
 - `isPlanFileWrite(path)` — the carve-out regex that recognizes `/.grok/sessions/.../plan.md` so the extension can allow + snoop it.
+- `isWorkspacePlanArtifactWrite(path, root)` — markdown under `.grokbit/plans/**` and `docs/plans/**` (workspace plan artifacts; not snooped).
 - `PLAN_BLOCKED_CODE = -32010` and the two user-facing messages.
 
 When the gate is active, a blocked mutation still lets the agent continue (it receives the JSON-RPC error with the friendly message). The extension also emits `mutationBlocked` so the webview can show a small notice instead of a scary failure.

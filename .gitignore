@@ -49,3 +49,12 @@ nul
 # Scratch space for temp copies of tracked files (a `.tmp-workflow/ci.yml`
 # stash of the real CI workflow was committed and then went stale).
 .tmp-workflow/
+
+# Coverage dumps from `npm run test:coverage` — never commit, never ship.
+coverage/
+
+# Ad-hoc debug screenshots / OCR scratch (not product assets).
+.tmp-debug/
+
+# SessionEnd hook pending stamp — consumed at the next commit, never committed.
+docs/metrics/pending-commit.env

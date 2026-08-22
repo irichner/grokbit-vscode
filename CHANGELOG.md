@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 2026.8.37 — 2026-08-22
+
+### Added
+
+- **Cross-CLI peer agent (opt-in).** With both Grok and Claude available, a live turn can call the other agent and wait for a result via a loopback HTTP MCP tool (`run_peer_agent`), or the command **Grokbit: Run on other agent…**. Off by default (`grok.peerAgent.enabled`); nesting depth is 1. ([src/peer-agent.ts](src/peer-agent.ts), [src/peer-agent-mcp-server.ts](src/peer-agent-mcp-server.ts), [src/peer-agent-host.ts](src/peer-agent-host.ts), [docs/adr/0005-cross-cli-peer-agent-mcp.md](docs/adr/0005-cross-cli-peer-agent-mcp.md))
+- **Thinking color bar.** A full-width animated strip under the top bar shows while a tab is mid-turn (hidden during priming, history replay, panel rebuild, and while a permission/question/plan card needs you). ([media/chat.js](media/chat.js), [media/chat.css](media/chat.css))
+
+### Fixed
+
+- **Plan first no longer looks frozen on a blocked inspection command.** Harmless PowerShell stages (`Write-Output` / `Test-Path` chained with `;`) are treated as read-only, grokbit-plan markdown under `.grokbit/plans/**` and `docs/plans/**` can be written, and a blocked command keeps the live “working” affordance instead of wiping it. ([src/plan-gate.ts](src/plan-gate.ts), [media/chat.js](media/chat.js))
+
 ## 2026.8.36 — 2026-08-10
 
 ### Added

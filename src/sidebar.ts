@@ -131,6 +131,9 @@ import {
   shouldBlockBackendFlip,
   shouldDiscardAfterBackendFlip,
 } from "./agent-handoff";
+import { peerTargetBackend, peerUserCommandConfirmMessage, mcpServersForSession } from "./peer-agent";
+import { startPeerMcpServer, type PeerMcpServerHandle } from "./peer-agent-mcp-server";
+import { PeerRunner } from "./peer-agent-host";
 import {
   CAPABILITY_ROOTS,
   CapabilityDirEntry,
@@ -351,6 +354,11 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
   // still fails; it is NOT a permanent latch — it's reset after each retry, so a
   // later manual re-upgrade that breaks again gets downgraded again.
   private reactiveDowngradeInFlight = false;
+
+  /** Loopback HTTP MCP for nested peer agents (ADR 0005). Lazily started. */
+  private peerMcp?: PeerMcpServerHandle;
+  private peerRunner?: PeerRunner;
+  private peerMcpStarting?: Promise<void>;
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -1915,9 +1923,229 @@ See design doc for the full state machine diagram.`;
     this.voiceRecorder.cancel();
     this.voiceStreamer?.cancel();
     try { if (this.voiceTempPath) fs.unlinkSync(this.voiceTempPath); } catch { /* best effort */ }
+    const mcp = this.peerMcp;
+    this.peerMcp = undefined;
+    this.peerRunner = undefined;
+    void mcp?.close().catch(() => undefined);
+  }
+
+  /** Palette: Grokbit: Run on other agent… */
+  async runPeerAgentCommand(): Promise<void> {
+    const session = this.active;
+    if (!session) {
+      void vscode.window.showWarningMessage("Open a Grokbit session tab first.");
+      return;
+    }
+    const target = peerTargetBackend(session.backend);
+    const confirm = await vscode.window.showWarningMessage(
+      peerUserCommandConfirmMessage(target),
+      { modal: true },
+      "Run",
+    );
+    if (confirm !== "Run") return;
+    const prompt = await vscode.window.showInputBox({
+      title: `Run on ${backendSpec(target).label}`,
+      prompt: "What should the peer agent do?",
+      placeHolder: "e.g. Review the latest plan and list risks",
+      ignoreFocusOut: true,
+    });
+    if (!prompt?.trim()) return;
+
+    await this.ensurePeerInfrastructure();
+    if (!this.peerRunner) {
+      void vscode.window.showErrorMessage("Peer agent infrastructure failed to start.");
+      return;
+    }
+    this.emit(session, {
+      type: "sessionContext",
+      text: `Running peer ${backendSpec(target).label}…`,
+    });
+    const result = await this.peerRunner.run({
+      prompt: prompt.trim(),
+      parentBackend: session.backend,
+    });
+    const body = result.ok
+      ? result.text
+      : `Peer failed: ${result.error || "unknown error"}`;
+    this.emit(session, {
+      type: "sessionContext",
+      text: result.ok
+        ? `Peer ${backendSpec(result.target).label} finished.`
+        : `Peer ${backendSpec(result.target).label} failed.`,
+    });
+    // Surface result as an agent-visible user message the user can continue from.
+    this.emit(session, {
+      type: "userMessage",
+      text: `[Peer ${backendSpec(result.target).label} result]\n\n${body}`,
+    });
   }
 
   // ---------- internals ----------
+
+  private peerAgentEnabled(): boolean {
+    return vscode.workspace.getConfiguration("grok").get<boolean>("peerAgent.enabled", false) === true;
+  }
+
+  private async ensurePeerInfrastructure(): Promise<void> {
+    if (this.peerMcp && this.peerRunner) return;
+    if (this.peerMcpStarting) {
+      await this.peerMcpStarting;
+      return;
+    }
+    this.peerMcpStarting = (async () => {
+      this.peerRunner = new PeerRunner({
+        enabled: () => this.peerAgentEnabled(),
+        isBackendAvailable: (id) => this.isPeerBackendAvailable(id),
+        liveSessionCount: () => this.pool.size,
+        maxLiveSessions: GrokSidebar.MAX_LIVE_SESSIONS,
+        runPeerSession: (args) => this.runHeadlessPeerSession(args),
+        log: (msg) => this.output.appendLine(`[peer] ${msg}`),
+      });
+      this.peerMcp = await startPeerMcpServer({
+        runPeer: (req) => this.peerRunner!.run(req),
+        defaultParentBackend: "grok",
+        log: (msg) => this.output.appendLine(`[peer-mcp] ${msg}`),
+      });
+    })();
+    try {
+      await this.peerMcpStarting;
+    } finally {
+      this.peerMcpStarting = undefined;
+    }
+  }
+
+  private isPeerBackendAvailable(id: BackendId): boolean {
+    const cfg = vscode.workspace.getConfiguration("grok");
+    if (id === "claude") {
+      const adapterPath = locateClaudeAdapter(cfg.get<string>("claude.adapterPath", ""), {
+        managedInstallRoot: this.claudeAdapterInstallRoot(),
+        ...defaultClaudeAdapterSearchRoots(),
+      });
+      return !!adapterPath;
+    }
+    return !!locateGrokCli(cfg.get<string>("cliPath", ""));
+  }
+
+  /**
+   * One-shot headless ACP session for the peer target. Omits peer MCP (depth 1).
+   * Auto-allows permissions so the parent MCP tool is not deadlocked waiting on UI
+   * (v1; T6 may route permissions to the parent tab instead).
+   */
+  private async runHeadlessPeerSession(args: {
+    target: BackendId;
+    prompt: string;
+    timeoutMs: number;
+    signal: AbortSignal;
+  }): Promise<{ text: string }> {
+    const cfg = vscode.workspace.getConfiguration("grok");
+    const cwd =
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+    const spec = backendSpec(args.target);
+
+    let command: string;
+    let spawnArgs: string[];
+    let env: NodeJS.ProcessEnv;
+
+    if (args.target === "claude") {
+      const adapterPath = locateClaudeAdapter(cfg.get<string>("claude.adapterPath", ""), {
+        managedInstallRoot: this.claudeAdapterInstallRoot(),
+        ...defaultClaudeAdapterSearchRoots(),
+      });
+      if (!adapterPath) throw new Error("Claude adapter not available");
+      command = process.execPath;
+      spawnArgs = buildClaudeAdapterArgv(adapterPath);
+      env = buildClaudeAdapterEnv({
+        baseEnv: this.buildEnv(cwd),
+        claudeExecutablePath: cfg.get<string>("claude.executablePath", "") || undefined,
+        allowInheritedApiKey: cfg.get<boolean>("claude.allowInheritedApiKey", false),
+      });
+    } else {
+      const cliPath = locateGrokCli(cfg.get<string>("cliPath", ""));
+      if (!cliPath) throw new Error("Grok CLI not available");
+      command = cliPath;
+      spawnArgs = buildGrokAgentArgs("medium");
+      env = this.buildEnv(cwd);
+    }
+
+    const client = new AcpClient({
+      command,
+      args: spawnArgs,
+      cwd,
+      env,
+      quirks: spec.quirks,
+      mcpServers: [], // depth 1 — never inject peer MCP on the child
+      log: (msg) => this.output.appendLine(`[peer-session] ${msg}`),
+    });
+
+    client.fsRead = async (p: string) => {
+      try {
+        return fs.readFileSync(p, "utf8");
+      } catch {
+        return "";
+      }
+    };
+    client.fsWrite = async (p: string, content: string) => {
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, content, "utf8");
+    };
+    client.terminal = this.terminalManager;
+
+    // Auto-allow so nested MCP wait is not stuck on a permission card (v1).
+    client.on("permissionRequest", (req: any) => {
+      try {
+        const opts = req?.options || [];
+        const allow =
+          opts.find((o: any) => o.kind === "allow_once" || o.kind === "allow_always") || opts[0];
+        client.respondPermission?.(req.id, allow?.optionId || "allow");
+      } catch (e) {
+        this.output.appendLine(`[peer] permission auto-allow failed: ${(e as Error).message}`);
+      }
+    });
+
+    const chunks: string[] = [];
+    const onChunk = (t: string) => {
+      if (t) chunks.push(t);
+    };
+    client.on("messageChunk", onChunk);
+
+    const abort = () => {
+      try {
+        client.dispose();
+      } catch { /* ignore */ }
+    };
+    if (args.signal.aborted) {
+      abort();
+      throw Object.assign(new Error("aborted"), { name: "AbortError" });
+    }
+    args.signal.addEventListener("abort", abort, { once: true });
+
+    try {
+      await client.start();
+      await client.newSession();
+      // Skip grok primer on peer — pass empty quirks path by not calling ensurePrimed
+      await client.prompt(args.prompt);
+      return { text: chunks.join("").trim() || "(peer produced no text)" };
+    } finally {
+      args.signal.removeEventListener("abort", abort);
+      client.off("messageChunk", onChunk);
+      try {
+        await client.dispose();
+      } catch { /* ignore */ }
+    }
+  }
+
+  private async peerMcpServersForParentSession(): Promise<ReturnType<typeof mcpServersForSession>> {
+    if (!this.peerAgentEnabled()) return [];
+    await this.ensurePeerInfrastructure();
+    if (!this.peerMcp) return [];
+    // Only inject when the *other* backend looks available — otherwise the tool
+    // exists but always errors.
+    return mcpServersForSession({
+      injectPeer: true,
+      url: this.peerMcp.url,
+      token: this.peerMcp.token,
+    });
+  }
 
   private async ensureClient(session: Session): Promise<AcpClient | undefined> {
     if (session.client) return session.client;
@@ -2388,12 +2616,17 @@ See design doc for the full state machine diagram.`;
       env = this.buildEnv(cwd);
     }
 
+    // Peer MCP only on parent tabs when enabled — never on headless peer children.
+    const peerServers = await this.peerMcpServersForParentSession();
+    if (gen !== session.gen) return undefined;
+
     const client = new AcpClient({
       command,
       args,
       cwd,
       env,
       quirks: spec.quirks,
+      mcpServers: peerServers,
       log: (msg) => this.output.appendLine(msg),
     });
     session.client = client;
@@ -5498,6 +5731,7 @@ See design doc for the full state machine diagram.`;
     <div id="capabilities-popover" class="toolbar-popover history-popover studio-popover" hidden></div>
   </header>
 
+  <div id="thinking-bar" class="thinking-bar" hidden aria-hidden="true"></div>
   <div id="plan-banner" class="plan-banner" hidden>
     <span class="plan-banner-dot"></span>
     <span class="plan-banner-text">Plan first — Grok drafts a plan; files and commands stay blocked until you approve.</span>

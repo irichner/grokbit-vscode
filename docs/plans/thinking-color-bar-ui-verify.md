@@ -1,0 +1,26 @@
+# UI Verification Report
+
+- Surfaces (paths): `#thinking-bar` (`media/chat.css`, `media/chat.js`, `src/sidebar.ts` getHtml); freeze-fix `.plan-notice` wrap
+- Standards read: `.grok/docs/ui-design-standards.md` (yes)
+- State inventory checked (empty/loading/error/disabled/focus):
+  - empty/idle: hidden (DOM)
+  - priming locked: hidden (DOM)
+  - thinking unlocked busy: visible (DOM)
+  - needs-you live card: hidden (DOM)
+  - plan-history: not needs-you (DOM)
+  - panel replay: hidden until endPanelReplay (DOM)
+  - error/agentEnd: hidden (DOM)
+  - disabled/focus: N/A (not a control)
+  - overflow: 4px × 100% flex child
+  - reduced motion: CSS fold into grokking `@media`; count stays 2
+- Blockers (list each: pass|fail + evidence):
+  - Hardcoded color where token exists: **pass** (ink tokens)
+  - Missing focus-visible / keyboard trap: **pass** (not interactive; `aria-hidden`)
+  - Missing loading/empty/error: **pass** (DOM cases)
+  - Contrast AA: **pass** (decorative 4px bar; ink tokens mixed with foreground)
+  - Layout overflow: **pass** (flex column, 4px, `[hidden] { display: none }`)
+  - Unlabeled control: **pass** (`aria-hidden`; Grokking keeps `aria-label="Grok is working"`)
+  - Divergence from plan: **pass** (slot under top-bar, above plan-banner)
+- NO UI TOOLING: **yes** — happy-dom cannot assert a running keyframe. Machine checks = `hidden` + CSS source-text. Manual remaining: two tabs; hide/reveal with no strobe; OS reduced-motion static fill.
+- Result: **PASS** (machine checks). Manual hide/reveal still recommended in a live window.
+- Risk if overridden: rapid motion on photosensitivity — mitigated by `prefers-reduced-motion`.

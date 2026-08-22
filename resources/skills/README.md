@@ -173,6 +173,8 @@ One exception: a missing headless browser means visual checks did not happen, an
 
 You can plan in Grok, implement in Claude, and test in either. Both hosts read the same folders and write the same artifacts.
 
+For **live** mid-turn nesting (one CLI blocking on the other), that is a separate Grokbit extension feature (`grok.peerAgent.enabled` + MCP `run_peer_agent` / **Run on other agent…**) — not something User Workflow `.rhai`/`.js` scripts can do across formats. See ADR 0005 and `research/peer-agent-mcp.md`.
+
 ## Verify before shipping
 
 Both CLIs move fast and Grok Build is in early beta. Worth confirming:

@@ -36,6 +36,7 @@ import {
 import { resolveGrokHome } from "./sessions";
 import { BackendQuirks, buildGrokAgentArgs, EffortLevel } from "./backends";
 import type { AcpContentBlock } from "./pending-images";
+import type { PeerMcpHttpConfig } from "./peer-agent";
 
 // Re-exported for existing call sites/tests that import these from "./acp"
 // (`session.ts`, `sidebar.ts`, `test/acp.test.ts`) — see src/backends.ts,
@@ -84,6 +85,12 @@ export interface AcpClientOptions {
    * remain grok-only.
    */
   quirks: Pick<BackendQuirks, "clientPlanGate" | "mediaGen" | "xaiRequests">;
+  /**
+   * Optional ACP `mcpServers` for `session/new` / `session/load`.
+   * Empty/omitted keeps prior behaviour. Peer sessions must pass `[]` so
+   * nested `run_peer_agent` cannot recurse (ADR 0005).
+   */
+  mcpServers?: PeerMcpHttpConfig[];
 }
 
 export interface ModelInfo {
@@ -289,10 +296,14 @@ export class AcpClient extends EventEmitter {
     this.emit("initialized", init);
   }
 
+  private mcpServersPayload(): PeerMcpHttpConfig[] {
+    return this.opts.mcpServers ?? [];
+  }
+
   async newSession(modelId?: string): Promise<{ sessionId: string }> {
     const res = await this.request("session/new", {
       cwd: this.opts.cwd,
-      mcpServers: [],
+      mcpServers: this.mcpServersPayload(),
     });
     this.sessionId = res.sessionId;
     this.availableModels = (res.models?.availableModels ?? []).map((m: any) => ({
@@ -314,7 +325,7 @@ export class AcpClient extends EventEmitter {
     const res = await this.request("session/load", {
       sessionId,
       cwd: this.opts.cwd,
-      mcpServers: [],
+      mcpServers: this.mcpServersPayload(),
     });
     this.sessionId = sessionId;
     if (res?.models?.availableModels) {

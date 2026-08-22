@@ -4,6 +4,7 @@ import {
   isMutatingKind,
   isReadOnlyCommand,
   isPlanFileWrite,
+  isWorkspacePlanArtifactWrite,
   pickRejectOption,
   shouldBlockWrite,
   shouldBlockTerminal,
@@ -23,6 +24,11 @@ const off = (root: string): PlanGateContext => ({ active: false, workspaceRoot: 
 describe("isInsideWorkspace", () => {
   it("treats a write inside the workspace as inside — even with the \\\\?\\ long-path prefix", () => {
     expect(isInsideWorkspace(WIN_WORKSPACE_WRITE, WIN_ROOT)).toBe(true);
+  });
+
+  it("treats a write inside the workspace as inside with the \\\\.\\ device prefix", () => {
+    expect(isInsideWorkspace("\\\\.\\C:\\proj\\src\\a.ts", "C:\\proj")).toBe(true);
+    expect(isInsideWorkspace("//./C:/proj/src/a.ts", "C:\\proj")).toBe(true);
   });
 
   it("treats grok's own ~/.grok/.../plan.md as OUTSIDE the workspace (the key case)", () => {
@@ -103,6 +109,89 @@ describe("shouldBlockWrite", () => {
 
   it("blocks a relative workspace write while planning", () => {
     expect(shouldBlockWrite("src/file.ts", active("/home/u/proj"))).toBe(true);
+  });
+
+  it("blocks a workspace write addressed with the \\\\.\\ device prefix", () => {
+    expect(shouldBlockWrite("\\\\.\\C:\\proj\\src\\acp.ts", active("C:\\proj"))).toBe(true);
+    expect(shouldBlockWrite("//./C:/proj/src/acp.ts", active("C:\\proj"))).toBe(true);
+    expect(shouldBlockWrite("\\\\.\\C:\\proj\\.grokbit\\plans\\foo\\01-intent.md", active("C:\\proj"))).toBe(false);
+  });
+});
+
+describe("workspace plan-artifact write carve-out", () => {
+  const posix = "/home/u/proj";
+  const win = "C:\\proj";
+  const allowed: Array<{ path: string; root: string }> = [
+    { path: `${posix}/.grokbit/plans/foo/01-intent.md`, root: posix },
+    { path: `${posix}/docs/plans/nested/x.md`, root: posix },
+    { path: ".grokbit/plans/foo/01-intent.md", root: posix },
+    { path: "docs/plans/nested/x.md", root: posix },
+    { path: "docs/plans/foo.md", root: posix },
+    { path: ".grokbit/plans/foo/01-intent.md", root: win },
+    { path: "docs/plans/nested/x.md", root: win },
+    { path: "\\\\?\\C:\\proj\\.grokbit\\plans\\foo\\01-intent.md", root: win },
+    { path: "\\\\?\\C:\\proj\\docs\\plans\\nested\\x.md", root: win },
+    { path: "C:\\proj\\.grokbit\\plans\\foo\\01-intent.md", root: win },
+    { path: "C:/proj/docs/plans/nested/x.md", root: win },
+  ];
+
+  it("allows markdown under .grokbit/plans/** and docs/plans/** while planning", () => {
+    for (const { path, root } of allowed) {
+      expect(shouldBlockWrite(path, active(root)), path).toBe(false);
+      expect(isWorkspacePlanArtifactWrite(path, root), path).toBe(true);
+      expect(isPlanFileWrite(path), path).toBe(false);
+    }
+  });
+
+  it("does not treat allowed workspace artifacts as grok's snoopable plan.md", () => {
+    expect(isPlanFileWrite("/home/u/proj/.grokbit/plans/foo/01-intent.md")).toBe(false);
+    expect(isPlanFileWrite("/home/u/proj/docs/plans/nested/x.md")).toBe(false);
+    expect(isPlanFileWrite("\\\\?\\C:\\proj\\.grokbit\\plans\\foo\\01-intent.md")).toBe(false);
+  });
+
+  it("still blocks non-artifact workspace writes while planning", () => {
+    const blocked = [
+      { path: `${posix}/src/acp.ts`, root: posix },
+      { path: "src/acp.ts", root: posix },
+      { path: `${posix}/.grokbit/handoff.md`, root: posix },
+      { path: ".grokbit/handoff.md", root: posix },
+      { path: `${posix}/.grokbit/hooks/settings.json`, root: posix },
+      { path: ".grokbit/hooks/settings.json", root: posix },
+      { path: `${posix}/docs/plans/foo.ps1`, root: posix },
+      { path: "docs/plans/foo.ps1", root: posix },
+      { path: `${posix}/.grokbit/plans/foo/../../src/x.ts`, root: posix },
+      { path: ".grokbit/plans/foo/../../src/x.ts", root: posix },
+      { path: `${posix}/docs/plans/foo.markdown`, root: posix },
+      { path: `${posix}/.grokbit/plans-extra/foo.md`, root: posix },
+      { path: "C:\\proj\\src\\acp.ts", root: win },
+      { path: "\\\\?\\C:\\proj\\src\\acp.ts", root: win },
+      { path: "\\\\?\\C:\\proj\\.grokbit\\handoff.md", root: win },
+      { path: "C:\\proj\\.grokbit\\plans\\foo\\..\\..\\src\\x.ts", root: win },
+    ];
+    for (const { path, root } of blocked) {
+      expect(shouldBlockWrite(path, active(root)), path).toBe(true);
+      expect(isWorkspacePlanArtifactWrite(path, root), path).toBe(false);
+    }
+  });
+
+  it("never blocks when the gate is off, including non-artifact paths", () => {
+    expect(shouldBlockWrite(`${posix}/src/acp.ts`, off(posix))).toBe(false);
+    expect(shouldBlockWrite(`${posix}/.grokbit/plans/foo/01-intent.md`, off(posix))).toBe(false);
+    expect(shouldBlockWrite("\\\\?\\C:\\proj\\src\\acp.ts", off(win))).toBe(false);
+  });
+
+  it("is case-insensitive for Windows artifact paths and case-sensitive on POSIX", () => {
+    expect(isWorkspacePlanArtifactWrite("C:\\Proj\\.Grokbit\\Plans\\Foo\\01-Intent.MD", win)).toBe(true);
+    expect(shouldBlockWrite("C:\\Proj\\.Grokbit\\Plans\\Foo\\01-Intent.MD", active(win))).toBe(false);
+    expect(isWorkspacePlanArtifactWrite("/home/u/proj/.Grokbit/plans/foo/01-intent.md", posix)).toBe(false);
+    expect(shouldBlockWrite("/home/u/proj/.Grokbit/plans/foo/01-intent.md", active(posix))).toBe(true);
+  });
+
+  it("allows artifacts when the workspace root is POSIX / and still blocks src/", () => {
+    expect(isWorkspacePlanArtifactWrite("/.grokbit/plans/foo.md", "/")).toBe(true);
+    expect(shouldBlockWrite("/.grokbit/plans/foo.md", active("/"))).toBe(false);
+    expect(isPlanFileWrite("/.grokbit/plans/foo.md")).toBe(false);
+    expect(shouldBlockWrite("/src/acp.ts", active("/"))).toBe(true);
   });
 });
 
@@ -209,6 +298,29 @@ describe("isReadOnlyCommand", () => {
     expect(isReadOnlyCommand("")).toBe(false);
     expect(isReadOnlyCommand("   ")).toBe(false);
   });
+
+  it("allows a semicolon-separated sequence when every stage is read-only", () => {
+    expect(isReadOnlyCommand('Write-output "plan path check"; Test-path')).toBe(true);
+    expect(isReadOnlyCommand("Write-Host hello; Get-Content package.json")).toBe(true);
+    expect(isReadOnlyCommand("Test-Path app.js; Get-ChildItem | Select-Object Name")).toBe(true);
+  });
+
+  it("blocks a semicolon sequence when any stage mutates, and keeps script-blocks unsafe", () => {
+    expect(isReadOnlyCommand("Test-Path a; Remove-Item b")).toBe(false);
+    expect(isReadOnlyCommand('if (Test-Path x) { Get-Content x }')).toBe(false);
+    expect(isReadOnlyCommand("Write-Output x | Out-File y")).toBe(false);
+    expect(isReadOnlyCommand("Write-Output x > y")).toBe(false);
+    expect(isReadOnlyCommand("echo foo && rm -rf x")).toBe(false);
+  });
+
+  it("treats a semicolon-only or empty-stage command as not read-only", () => {
+    expect(isReadOnlyCommand(";;;")).toBe(false);
+    expect(isReadOnlyCommand("; ; |")).toBe(false);
+  });
+
+  it("fails closed when a quoted semicolon splits a stage", () => {
+    expect(isReadOnlyCommand('echo "a;b"')).toBe(false);
+  });
 });
 
 describe("shouldBlockTerminal", () => {
@@ -217,6 +329,12 @@ describe("shouldBlockTerminal", () => {
   });
   it("allows a read-only command while planning", () => {
     expect(shouldBlockTerminal("git diff", active("/p"))).toBe(false);
+  });
+  it("allows a read-only PowerShell semicolon sequence while planning", () => {
+    expect(shouldBlockTerminal('Write-output "plan path check"; Test-path', active("/p"))).toBe(false);
+  });
+  it("blocks a mutating second semicolon stage while planning", () => {
+    expect(shouldBlockTerminal("Test-Path a; Remove-Item b", active("/p"))).toBe(true);
   });
   it("never blocks when the gate is off", () => {
     expect(shouldBlockTerminal("rm -rf /", off("/p"))).toBe(false);

@@ -29,6 +29,7 @@ export const BODY = `
     <div id="docs-popover" hidden></div>
     <div id="capabilities-popover" hidden></div>
   </header>
+  <div id="thinking-bar" class="thinking-bar" hidden aria-hidden="true"></div>
   <div id="plan-banner" class="plan-banner" hidden><span class="plan-banner-dot"></span><span class="plan-banner-text"></span></div>
   <main id="messages" class="messages">
     <div class="welcome" id="welcome">

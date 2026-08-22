@@ -13,8 +13,9 @@
  * (`fs/read_text_file` + internal search tools) and writes its plan to
  * `~/.grok/sessions/<cwd>/<id>/plan.md` — i.e. *outside* the workspace. So the
  * gate is not "block all writes"; it is "block writes that land inside the
- * workspace", which protects the user's project while letting grok persist its
- * own plan file.
+ * workspace" (except grokbit-plan markdown under `.grokbit/plans/**` and
+ * `docs/plans/**`), which protects the user's project while letting grok persist
+ * its own plan file and grokbit-plan write its artifacts.
  *
  * These functions are pure so the policy can be unit-tested without spawning a
  * CLI; `acp.ts` / `sidebar.ts` call them with the live path/command strings.
@@ -29,16 +30,19 @@ export const PLAN_BLOCKED_WRITE_MSG =
 export const PLAN_BLOCKED_TERMINAL_MSG =
   "Blocked by Plan first: approve the plan before running commands that may change the workspace.";
 
+/** Windows `\\?\` / `\\.\` (and `//?/` / `//./`) device prefixes. */
+const WIN_DEVICE_PREFIX = /^[\\/]{2}[.?][\\/]/;
+
 /**
- * Strip the Windows extended-length prefix (`\\?\` or `//?/`), normalize all
- * separators to `/`, collapse `.`/`..` segments, and drop a trailing slash.
+ * Strip the Windows device prefix (`\\?\`, `\\.\`, `//?/`, `//./`), normalize
+ * all separators to `/`, collapse `.`/`..` segments, and drop a trailing slash.
  * Drive-letter / backslash paths are treated as Windows and lower-cased for a
  * case-insensitive compare; POSIX paths stay case-sensitive.
  */
 function canonical(p: string): { norm: string; windows: boolean } {
   let s = String(p || "").trim();
-  const windows = /^[\\/]{2}\?[\\/]/.test(s) || /^[a-zA-Z]:[\\/]/.test(s) || s.includes("\\");
-  s = s.replace(/^[\\/]{2}\?[\\/]/, ""); // \\?\C:\... → C:\...
+  const windows = WIN_DEVICE_PREFIX.test(s) || /^[a-zA-Z]:[\\/]/.test(s) || s.includes("\\");
+  s = s.replace(WIN_DEVICE_PREFIX, ""); // \\?\C:\... or \\.\C:\... → C:\...
   s = s.replace(/\\/g, "/");
   s = nodePath.posix.normalize(s);
   s = s.replace(/\/+$/, ""); // drop trailing slash (but keep "/" root)
@@ -48,7 +52,7 @@ function canonical(p: string): { norm: string; windows: boolean } {
 
 function isAbsolutePath(p: string): boolean {
   const s = String(p || "").trim();
-  return /^[\\/]{2}\?[\\/]/.test(s) || /^[a-zA-Z]:[\\/]/.test(s) ||
+  return WIN_DEVICE_PREFIX.test(s) || /^[a-zA-Z]:[\\/]/.test(s) ||
     s.startsWith("/") || s.startsWith("\\");
 }
 
@@ -84,11 +88,12 @@ export function isMutatingKind(kind: string | undefined): boolean {
 
 // Shell metacharacters that can chain, redirect, background, or smuggle code —
 // any of these means we can't trust a head-token allowlist, so we block. Note a
-// single `|` is NOT here: pipes are handled specially (see isReadOnlyCommand),
-// allowed only when every pipeline stage is itself read-only. Script-block
-// braces `{ }` are blocked because an otherwise-safe cmdlet can host arbitrary
-// code in one (e.g. `Select-Object @{e={ Remove-Item x }}`).
-const UNSAFE_SHELL = /[>&;`{}\r\n]|\$\(|\|\||<\(/;
+// single `|` or `;` is NOT here: those split the command into stages (see
+// isReadOnlyCommand), allowed only when every stage is itself read-only.
+// `&&` is still blocked because `&` is in the class. Script-block braces `{ }`
+// are blocked because an otherwise-safe cmdlet can host arbitrary code in one
+// (e.g. `Select-Object @{e={ Remove-Item x }}`).
+const UNSAFE_SHELL = /[>&`{}\r\n]|\$\(|\|\||<\(/;
 
 const READONLY_HEADS = new Set([
   // POSIX
@@ -105,6 +110,7 @@ const READONLY_HEADS = new Set([
   "select-object", "select", "format-table", "ft", "format-list", "fl", "format-wide", "fw",
   "sort-object", "measure-object", "measure", "select-string", "sls", "out-string",
   "get-command", "gcm", "get-help", "get-member", "gm", "compare-object",
+  "write-output", "write-host",
 ]);
 
 const GIT_READONLY = new Set([
@@ -219,17 +225,20 @@ function isReadOnlyStage(stage: string): boolean {
 /**
  * Conservative classifier: a command is "read-only" (safe to run while
  * planning) only if it has no chaining/redirection/script-block metacharacters
- * AND every `|`-separated stage is itself a known read-only program (with a
- * read-only subcommand for git/npm/pnpm/yarn). A pipe is allowed only when both
- * sides are read-only, so `Get-ChildItem | Select-Object` passes but
- * `Get-ChildItem | Out-File x` or `cat x | iex` do not. Everything else is
- * blocked. Errs toward blocking.
+ * AND every `|`- or `;`-separated stage is itself a known read-only program
+ * (with a read-only subcommand for git/npm/pnpm/yarn). A pipe/sequence is
+ * allowed only when every stage is read-only, so `Get-ChildItem | Select-Object`
+ * and `Write-Output x; Test-Path` pass but `Get-ChildItem | Out-File x`,
+ * `Test-Path a; Remove-Item b`, or `cat x | iex` do not. Quoted `;` inside a
+ * single stage is fail-closed (the split is naive). Everything else is blocked.
  */
 export function isReadOnlyCommand(command: string): boolean {
   const cmd = String(command || "").trim();
   if (!cmd) return false;
-  if (UNSAFE_SHELL.test(cmd)) return false; // `||` and all non-pipe metachars
-  return cmd.split("|").every(isReadOnlyStage);
+  if (UNSAFE_SHELL.test(cmd)) return false; // `||` and all non-stage metachars
+  const stages = cmd.split(/[|;]/).map((s) => s.trim()).filter((s) => s.length > 0);
+  if (stages.length === 0) return false;
+  return stages.every(isReadOnlyStage);
 }
 
 export interface PlanGateContext {
@@ -240,9 +249,12 @@ export interface PlanGateContext {
 
 /** Should `fs/write_text_file` to `path` be refused right now? */
 export function shouldBlockWrite(path: string, ctx: PlanGateContext): boolean {
+  if (!ctx.active) return false;
   const isOwnPlanFile = isPlanFileWrite(path) &&
     (!ctx.grokHome || isInsideWorkspace(path, ctx.grokHome));
-  return ctx.active && !isOwnPlanFile && isInsideWorkspace(path, ctx.workspaceRoot);
+  if (isOwnPlanFile) return false;
+  if (isWorkspacePlanArtifactWrite(path, ctx.workspaceRoot)) return false;
+  return isInsideWorkspace(path, ctx.workspaceRoot);
 }
 
 /** Should `terminal/create` of `command` be refused right now? */
@@ -281,4 +293,34 @@ export function pickRejectOption(options: PermissionOptionLike[]): string | unde
  */
 export function isPlanFileWrite(path: string): boolean {
   return /[\\/]\.grok[\\/]sessions[\\/].*[\\/]plan\.md$/i.test(String(path || ""));
+}
+
+const WORKSPACE_PLAN_ARTIFACT_DIRS = [".grokbit/plans/", "docs/plans/"];
+
+/**
+ * Workspace-relative path of `target` after canonicalize, or undefined when it
+ * does not resolve inside `root`. Empty string means the root itself.
+ */
+function workspaceRelativeNorm(target: string, root: string): string | undefined {
+  if (!isInsideWorkspace(target, root)) return undefined;
+  const t = canonicalTarget(target, root).norm;
+  const r = canonical(root).norm;
+  if (t === r) return "";
+  if (r === "/") return t.startsWith("/") ? t.slice(1) : t;
+  if (t.startsWith(r + "/")) return t.slice(r.length + 1);
+  return undefined;
+}
+
+/**
+ * True if `path` canonicalizes inside `workspaceRoot` as markdown under
+ * `.grokbit/plans/**` or `docs/plans/**`. `shouldBlockWrite` carve-out only —
+ * do not use this to snoop into the plan-review card (see `isPlanFileWrite`).
+ * `..` is collapsed by `canonical` before the prefix match, so an escape cannot
+ * satisfy the glob.
+ */
+export function isWorkspacePlanArtifactWrite(path: string, workspaceRoot: string): boolean {
+  const rel = workspaceRelativeNorm(path, workspaceRoot);
+  if (!rel) return false;
+  return WORKSPACE_PLAN_ARTIFACT_DIRS.some((dir) =>
+    rel.startsWith(dir) && rel.endsWith(".md") && rel.length > dir.length);
 }

@@ -1,0 +1,8 @@
+- **Date:** 2026-08-21
+- **Author:** Israel (session implement after user “Make this”)
+- **Scope:** `docs/plans/thinking-color-bar.md` → webview thinking bar
+- **Gate waived:** plan-quality (pass-2 residual; no automatic pass 3)
+- **Reason:** Pass 2 Overall was Request Changes on one item: `hasUnresolvedCard()` must not treat `.plan-history` as needs-you. That required change is **applied in the durable plan** (AC 8 + formula + test row) before implement. User already asked to implement the bar. Cap is 2 plan-review passes.
+- **Residual risk:** No third gf-plan-reviewer pass on the patched selector. Mitigated by an explicit DOM test (`planHistory` + unlocked busy → bar visible) and a selector that excludes `.plan-history`.
+- **Follow-up:** none unless that test fails.
+- **Expiry:** when `test/thinking-bar.dom.test.ts` includes the plan-history negative and is green on `npm test`.

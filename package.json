@@ -2,7 +2,7 @@
   "name": "grokbit",
   "displayName": "Grokbit",
   "description": "VS Code UI for Grok Build and Claude Code. Native chat tabs, Plan first + inline-diff approvals, Grokbit Actions (explore→plan→implement→test→document) and User Workflows, file chips, resumable history, activity carousel, status-bar HUD, /imagine media, voice, math & Mermaid. Needs the Grok CLI + SuperGrok, X Premium+, or an xAI API key. MIT. Based on grok-build-vscode by Paweł Huryn. Not affiliated with xAI.",
-  "version": "2026.8.36",
+  "version": "2026.8.37",
   "publisher": "Grokbit",
   "author": {
     "name": "Israel Richner",
@@ -123,6 +123,11 @@
         "command": "grok.openReleaseReadiness",
         "title": "Grokbit: Open release-readiness.md"
       },
+      {
+        "command": "grok.runPeerAgent",
+        "title": "Grokbit: Run on other agent…"
+      },
+
       {
         "command": "grok._debugDummyPlan",
         "title": "Grokbit: Debug — Show dummy plan card (for testing Approve/Reject/Cancel)"
@@ -293,6 +298,12 @@
           "default": true,
           "markdownDescription": "Send anonymous, privacy-first usage telemetry. A single `session_start` event per session carries only an anonymous install id (a random GUID, no account/identity) plus the chosen mode/model/effort — **never** any message content, code, or file paths. Also requires VS Code's global `telemetry.telemetryLevel` to be enabled; turning either off stops all sending."
         },
+        "grok.peerAgent.enabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Allow nested **peer agent** runs across Grok ↔ Claude via a loopback HTTP MCP tool (`run_peer_agent`) injected into ACP sessions, and the command **Grokbit: Run on other agent…**. Off by default (costs a second model turn; see ADR 0005 and `research/peer-agent-mcp.md`). Requires both backends to be available. Peer nesting depth is capped at 1."
+        },
+
         "grok.chatFontScale": {
           "type": "number",
           "default": 100,

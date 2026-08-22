@@ -107,13 +107,13 @@ through stub `{postMessage}` ports:
 - the shared `opening` set dedupes concurrent open attempts per session id
   (launcher click racing a serializer restore)
 
-### `test/plan-gate.test.ts` — plan-mode policy (38 tests)
+### `test/plan-gate.test.ts` — plan-mode policy (50 tests)
 
 The pure heart of client-side plan enforcement. No spawn, no fs — just the classification logic the two choke points call.
 
-- **Workspace-write containment** — a write path that resolves *inside* the workspace cwd is blocked; grok's own `~/.grok/sessions/<…>/plan.md` (outside the workspace) is allowed; relative paths, `..` traversal, and sym_link-style escapes are normalized before the containment check
-- **Read-only command allowlist** — `isReadOnlyCommand` passes only when *every* `|`-separated stage is on the read-only head list (`cat`, `ls`, `grep`, `head`, PowerShell `get-childitem`/`gci`/`get-content`/`select-object`/`test-path`/…); a single mutating stage fails the whole pipeline
-- **Shell-metachar rejection** — redirection (`>`), chaining (`;`, `&&`, `||`), background (`&`), command substitution (`$(…)`, backticks), process substitution (`<(…)`), and script-block braces (`{}`) are rejected outright, so a read-only head can't smuggle a side effect
+- **Workspace-write containment** — a write path that resolves *inside* the workspace cwd is blocked; grok's own `~/.grok/sessions/<…>/plan.md` (outside the workspace) is allowed; relative paths, `..` traversal, and symlink-style escapes are normalized before the containment check. Markdown under `.grokbit/plans/**` and `docs/plans/**` is a workspace carve-out (not snooped as grok's plan.md)
+- **Read-only command allowlist** — `isReadOnlyCommand` passes only when *every* `|`- or `;`-separated stage is on the read-only head list (`cat`, `ls`, `grep`, `head`, PowerShell `get-childitem`/`gci`/`get-content`/`select-object`/`test-path`/`write-output`/`write-host`/…); a single mutating stage fails the whole pipeline
+- **Shell-metachar rejection** — redirection (`>`), chaining (`&&`, `||`), background (`&`), command substitution (`$(…)`, backticks), process substitution (`<(…)`), and script-block braces (`{}`) are rejected outright. `;` is a stage separator (like `|`), not an outright reject
 - **Permission / plan-file classification** — recognizes grok's plan-file write so it can be allowed-and-snooped rather than blocked
 
 ### `test/webview-helpers.test.ts` — pure webview helpers (49 tests)

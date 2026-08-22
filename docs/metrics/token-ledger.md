@@ -1,7 +1,7 @@
 # Token & model usage ledger
 
-**Template version:** 0.1.56  
-**Last updated:** 2026-08-10  
+**Template version:** 0.1.57  
+**Last updated:** 2026-08-22  
 **Policy:** update **VERSION** + this ledger on **every git commit** (`scripts/prepare_commit_metrics.py` / pre-commit hook).  
 **Source of figures:** session stats (`/context`, `/session-info`, host UI) — never invent.
 
@@ -9,18 +9,18 @@
 
 | Metric | Value |
 |--------|------:|
-| Total input tokens (measured) | 0 |
-| Total output tokens (measured) | 0 |
-| Total tokens (measured) | 0 |
-| Measured entries | 0 |
+| Total input tokens (measured) | 824246 |
+| Total output tokens (measured) | 18039 |
+| Total tokens (measured) | 842285 |
+| Measured entries | 1 |
 | Unmeasured commit stamps | 57 |
-| All ledger entries | 57 |
+| All ledger entries | 58 |
 
 ## By model (measured only)
 
 | Model | Input | Output | Total | Entries |
 |-------|------:|-------:|------:|--------:|
-| *(none yet)* | 0 | 0 | 0 | 0 |
+| grok-4.6-build | 824246 | 18039 | 842285 | 1 |
 
 ## Entries
 
@@ -83,6 +83,7 @@
 | 2026-08-04 | commit-2026-08-04 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.54: auto unmeasured (no metrics in env/pending file) [unmeasured] |
 | 2026-08-06 | commit-2026-08-06 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.55: auto unmeasured (no metrics in env/pending file) [unmeasured] |
 | 2026-08-10 | commit-2026-08-10 | unmeasured | 0 | 0 | 0 | commit metrics v0.1.56: auto unmeasured (no metrics in env/pending file) [unmeasured] |
+| 2026-08-22 | commit-2026-08-22 | grok-4.6-build | 824246 | 18039 | 842285 | commit metrics v0.1.57: grok session 01a02786-b2cd-75a2-8e39-591f80d95686 (auto-captured by record_session_tokens.py) |
 
 <!-- LEDGER_END -->
 

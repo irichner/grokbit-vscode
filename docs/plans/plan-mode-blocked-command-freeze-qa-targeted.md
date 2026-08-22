@@ -1,0 +1,17 @@
+# QA Test Report
+- Mode: targeted
+- Cycle: 1 of 3
+- Scope: `src/plan-gate.ts`, `media/chat.js`, `media/chat.css`, `test/plan-gate.test.ts`, `test/plan-card.dom.test.ts`, `test/chat-layout.dom.test.ts`
+- Commands:
+  - `npx vitest run test/plan-gate.test.ts test/plan-card.dom.test.ts test/chat-layout.dom.test.ts` → exit 0 (85/85)
+  - `npx tsc -p . --noEmit` → exit 0
+  - `npx vitest run test/plan-gate.test.ts --coverage` → exit 0 (50/50)
+- Lint: `npx tsc -p . --noEmit` exit 0
+- Coverage: v8; changed-line on `src/plan-gate.ts` 26/26 (100%); changed-file 99.47% lines; `media/*` UNMEASURED (not in `coverage.include`); gate met yes
+- Self-applied fixes: none
+- Test accuracy findings: real SUT; negatives present; would fail if freeze/allowlist bugs returned
+- Gaps: none blocking
+- Flakes: none
+- Cycles used / remaining: 1 / 2
+- Recommendation: GO
+- Escalate? no

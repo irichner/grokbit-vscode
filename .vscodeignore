@@ -12,6 +12,8 @@
 # Marketplace user, most of the download.
 .grokbit/**
 .tmp-workflow/**
+coverage/**
+.tmp-debug/**
 mcps/**
 research/**
 test/**

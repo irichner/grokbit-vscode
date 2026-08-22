@@ -222,3 +222,97 @@ describe("plan card (real chat.js in a DOM)", () => {
     expect(notices[2]).toContain("Plan first blocked a write to src/app.ts");
   });
 });
+
+describe("plan-notice live progress + coalesce (real chat.js in a DOM)", () => {
+  it("busy + planBlocked keeps Grokking alongside the notice", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "userMessage", text: "inspect the workspace", chips: [] });
+    dispatch(window, { type: "setBusy", value: true });
+    dispatch(window, { type: "planBlocked", kind: "terminal", target: "npm install" });
+
+    expect(doc.querySelector(".plan-notice")).not.toBeNull();
+    expect(doc.querySelector(".plan-notice")!.textContent).toContain("Plan first blocked a command: npm install");
+    const grokking = doc.querySelector(".grokking");
+    expect(grokking).not.toBeNull();
+    expect(grokking!.getAttribute("aria-label")).toBe("Grok is working");
+  });
+
+  it("busy + planBlocked still restores Grokking when a plan-history card is present", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "planHistory",
+      text: "# Restored plan\n- step",
+      verdict: "approved",
+    });
+    expect(doc.querySelector(".card.plan.plan-history")).not.toBeNull();
+    dispatch(window, { type: "userMessage", text: "continue planning", chips: [] });
+    dispatch(window, { type: "setBusy", value: true });
+    dispatch(window, { type: "planBlocked", kind: "terminal", target: "npm install" });
+
+    expect(doc.querySelector(".plan-notice")).not.toBeNull();
+    const grokking = doc.querySelector(".grokking");
+    expect(grokking).not.toBeNull();
+    expect(grokking!.getAttribute("aria-label")).toBe("Grok is working");
+  });
+
+  it("idle + planBlocked shows the notice without Grokking", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "planBlocked", kind: "terminal", target: "npm install" });
+
+    expect(doc.querySelector(".plan-notice")).not.toBeNull();
+    expect(doc.querySelector(".grokking")).toBeNull();
+  });
+
+  it("two identical planBlocked events in one turn render one notice", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "userMessage", text: "plan this", chips: [] });
+    dispatch(window, { type: "setBusy", value: true });
+    dispatch(window, { type: "planBlocked", kind: "terminal", target: "npm install" });
+    dispatch(window, { type: "planBlocked", kind: "terminal", target: "npm install" });
+
+    expect(doc.querySelectorAll(".plan-notice")).toHaveLength(1);
+  });
+
+  it("a duplicate planBlocked does not finalize a live tool/carousel row", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "userMessage", text: "plan this", chips: [] });
+    dispatch(window, { type: "setBusy", value: true });
+    dispatch(window, { type: "planBlocked", kind: "terminal", target: "npm install" });
+    dispatch(window, {
+      type: "toolCall",
+      call: { toolCallId: "r1", kind: "read", title: "Read src/foo.ts", rawInput: { path: "src/foo.ts" } },
+    });
+    expect(doc.querySelector(".activity-carousel, .tool-group")).not.toBeNull();
+
+    dispatch(window, { type: "planBlocked", kind: "terminal", target: "npm install" });
+
+    expect(doc.querySelectorAll(".plan-notice")).toHaveLength(1);
+    expect(doc.querySelector(".activity-carousel, .tool-group")).not.toBeNull();
+  });
+
+  it("different blocked targets in one turn render two notices", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "userMessage", text: "plan this", chips: [] });
+    dispatch(window, { type: "planBlocked", kind: "terminal", target: "npm install" });
+    dispatch(window, { type: "planBlocked", kind: "write", target: "src/app.ts" });
+
+    const notices = [...doc.querySelectorAll(".plan-notice")].map((n) => n.textContent);
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toContain("Plan first blocked a command: npm install");
+    expect(notices[1]).toContain("Plan first blocked a write to src/app.ts");
+  });
+
+  it("the same blocked command in a later turn gets a second notice", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "userMessage", text: "first ask", chips: [] });
+    dispatch(window, { type: "planBlocked", kind: "terminal", target: "npm install" });
+    dispatch(window, { type: "userMessage", text: "second ask", chips: [] });
+    dispatch(window, { type: "planBlocked", kind: "terminal", target: "npm install" });
+
+    const turns = [...doc.querySelectorAll("#messages > .turn")];
+    expect(turns).toHaveLength(2);
+    expect(turns[0].querySelectorAll(".plan-notice")).toHaveLength(1);
+    expect(turns[1].querySelectorAll(".plan-notice")).toHaveLength(1);
+    expect(doc.querySelectorAll(".plan-notice")).toHaveLength(2);
+  });
+});

@@ -154,3 +154,47 @@ describe("full-canvas layout — welcome-grid parentage (real booted DOM)", () =
     expect(grid?.classList.contains("welcome-grid")).toBe(true);
   });
 });
+
+describe("plan-notice wrap (source check)", () => {
+  const css = read("../media/chat.css");
+
+  it(".plan-notice top-aligns the icon when the command wraps", () => {
+    const rule = ruleBlock(css, ".plan-notice {");
+    expect(rule).toContain("align-items: flex-start");
+    expect(rule).not.toContain("align-items: center");
+  });
+
+  it(".plan-notice span can wrap (min-width: 0 is required on a flex child)", () => {
+    const rule = ruleBlock(css, ".plan-notice span {");
+    expect(rule).toContain("min-width: 0");
+    expect(rule).toContain("overflow-wrap: anywhere");
+  });
+
+  it(".plan-notice svg still does not shrink", () => {
+    const rule = ruleBlock(css, ".plan-notice svg {");
+    expect(rule).toContain("flex-shrink: 0");
+  });
+});
+
+describe("thinking-bar motion (source check)", () => {
+  const css = read("../media/chat.css");
+
+  it("slides an ink-token gradient in 0.6s and hides via [hidden]", () => {
+    const rule = ruleBlock(css, ".thinking-bar {");
+    expect(rule).toContain("animation:");
+    expect(rule).toContain("0.6s");
+    expect(rule).toContain("--neon-cyan-ink");
+    expect(rule).toContain("--neon-magenta-ink");
+    expect(rule).toContain("--neon-green-ink");
+    expect(rule).not.toMatch(/hue-rotate/);
+    expect(ruleBlock(css, ".thinking-bar[hidden] {")).toContain("display: none");
+    expect(css).toMatch(/@keyframes thinking-bar-shift[\s\S]*background-position/);
+  });
+
+  it("folds reduced-motion into the existing grokking @media (count stays 2)", () => {
+    expect((css.match(/@media/g) ?? []).length).toBe(2);
+    const grokking = css.indexOf(".grokking-icon svg { animation: none; }");
+    expect(grokking).toBeGreaterThan(-1);
+    expect(css.slice(grokking, grokking + 160)).toContain(".thinking-bar { animation: none; }");
+  });
+});

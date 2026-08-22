@@ -33,6 +33,7 @@
   const scrollBottomBtn = $("scroll-bottom-btn");
   const changedFilesEl = $("changed-files");
   const planBanner = $("plan-banner");
+  const thinkingBar = $("thinking-bar");
 
   // grok's accepted reasoning-effort values, lowest → highest (matches the CLI;
   // `max` is not a real grok level and is intentionally excluded — see #3/#4).
@@ -415,6 +416,25 @@
         label.textContent = "Plan first — Grok drafts a plan; files and commands stay blocked until you approve.";
       }
     }
+  }
+
+  /** Live interactive cards that mean the model is waiting on the user, not thinking. */
+  function hasUnresolvedInteractiveCard() {
+    return !!(messagesEl && messagesEl.querySelector(
+      ".card.permission:not(.resolved), .card.question:not(.resolved), .card.plan:not(.plan-history):not(.resolved)",
+    ));
+  }
+
+  function updateThinkingBar() {
+    if (!thinkingBar) return;
+    const show = !!(
+      state.busy &&
+      !state.busyLocked &&
+      !state.replaying &&
+      !state.panelReplaying &&
+      !hasUnresolvedInteractiveCard()
+    );
+    thinkingBar.hidden = !show;
   }
 
   // Compact model + effort chip in the composer toolbar. Both settings live two
@@ -3659,6 +3679,7 @@
     hidePlanProcessing();
     hideGrokking();
     hideThinkingIndicator();
+    updateThinkingBar();
   }
 
   function showOnboarding(mode, info) {
@@ -4879,13 +4900,25 @@
   }
 
   function addPlanNotice(text) {
+    // Coalesce identical text in the same turn *before* finalize/hide — a
+    // duplicate block must not tear down a live carousel / Grokking row.
+    const scope = state.activeTurnEl || messagesEl;
+    const notices = scope.querySelectorAll(".plan-notice");
+    const last = notices.length ? notices[notices.length - 1] : null;
+    if (last && last.getAttribute("data-plan-notice") === text) {
+      ensureActivityIndicator();
+      return;
+    }
     finalizeActivity(); // the notice must land below the work it interrupts
-    clearWelcome();
     hideGrokking();
+    clearWelcome();
     const el = document.createElement("div");
     el.className = "plan-notice";
+    el.setAttribute("data-plan-notice", text);
     el.innerHTML = `${ICON.listTree}<span>${escapeHtml(text)}</span>`;
     appendOnTurnSurface(el);
+    // planBlocked is not in TURN_PROGRESS_MSGS — restore Grokking here when busy.
+    ensureActivityIndicator();
     scrollToBottom();
   }
 
@@ -5271,7 +5304,7 @@
       state.activeActivityEl || // live carousel strip (dots + current action)
       (state.activeAgentEl && (state.activeAgentRaw || "").trim()) ||
       (state.showThinking && state.activeThoughtEl) ||
-      messagesEl.querySelector(".card:not(.resolved)")
+      hasUnresolvedInteractiveCard()
     );
   }
 
@@ -5377,6 +5410,7 @@
     state.panelReplaying = true;
     state.pendingRestore = restore === undefined ? null : restore;
     state.scrollStateSuppress = true;
+    updateThinkingBar();
   }
 
   function endPanelReplay() {
@@ -5404,6 +5438,7 @@
       // One authoritative host update after apply; then allow live posts again.
       state.scrollStateSuppress = false;
       postScrollState(true);
+      updateThinkingBar();
     }
   }
 
@@ -5438,6 +5473,7 @@
     what.textContent = title || "";
     line.appendChild(what);
     el.appendChild(line);
+    updateThinkingBar();
   }
 
   const inferPermissionKind = (window.GrokWebviewHelpers && window.GrokWebviewHelpers.inferPermissionKind)
@@ -5533,6 +5569,7 @@
     el.appendChild(actions);
     appendOnTurnSurface(el);
     forceScrollToBottom(); // a pending permission must be visible (#16)
+    updateThinkingBar();
   }
 
   // ---------- question card (ask_user_question) ----------
@@ -5591,6 +5628,7 @@
         if (opts) opts.remove();
         block.appendChild(answerLineEl(skipped ? "" : (selections[qi] || []).join(", ")));
       });
+      updateThinkingBar();
     };
     const submit = () => {
       const { answers } = buildQuestionAnswers(questions, selections);
@@ -5669,6 +5707,7 @@
 
     appendOnTurnSurface(el);
     forceScrollToBottom(); // a pending question must be visible (#16)
+    updateThinkingBar();
   }
 
   // Extract the text payload from a tool_call_update's content array
@@ -5883,6 +5922,7 @@
         status.className = "plan-verdict-label plan-verdict-" + verdict;
         status.textContent = VERDICT_LABEL[verdict] ?? "Resolved";
         el.appendChild(status);
+        updateThinkingBar();
       };
       return b;
     };
@@ -5892,6 +5932,7 @@
     el.appendChild(actions);
     appendOnTurnSurface(el);
     scrollToBottom();
+    updateThinkingBar();
   }
 
   // Read-only plan card for resumed sessions. The original exit_plan_mode request
@@ -6219,6 +6260,7 @@
     state.busyLocked = false; // a real send is always stoppable
     updateSendButton();
     updateComposerPlaceholder();
+    updateThinkingBar();
     // Idle send: seal any residual agent UI so the next stream is clean.
     // Mid-turn queue: leave the active stream alone (host does not cancel).
     // Steer will cancel — still leave stream until host tears it down.
@@ -6754,6 +6796,7 @@
         state.busyLocked = false;
         updateSendButton();
         updateComposerPlaceholder();
+        updateThinkingBar();
         renderChips(); // refresh remove disabled state while busy
         forceScrollToBottom(); // jump back to the bottom on the user's own send (#16)
         // If the indicator is showing and a NEW (live-send) user message comes
@@ -6794,6 +6837,7 @@
         state.busy = true;
         state.busyLocked = false;
         updateSendButton();
+        updateThinkingBar();
         showGrokking();
         break;
       case "thoughtChunk":
@@ -6815,10 +6859,12 @@
         if (msg.active) {
           state.replaying = true;
           state.suppressReplayTurn = false; // fresh replay starts unsuppressed
+          updateThinkingBar();
         } else {
           commitAgentTurn(); // finalize the last turn while still flagged as replay
           state.replaying = false;
           state.suppressReplayTurn = false; // replay over → no longer suppressing
+          updateThinkingBar();
           // Anything left in the queue is either legacy (no afterUserMessage)
           // or was resolved after the final user message of the session. Render
           // it now at the bottom so we don't silently drop those plans.
@@ -6998,6 +7044,7 @@
         state.busy = false;
         updateSendButton();
         updateComposerPlaceholder();
+        updateThinkingBar();
         flushVoiceQueue(); // don't strand messages dictated during this turn
         onWorkflowCraftTurnEnd("error");
         break;
@@ -7007,6 +7054,7 @@
         state.busy = false;
         updateSendButton();
         updateComposerPlaceholder();
+        updateThinkingBar();
         flushVoiceQueue(); // send anything dictated while Grok was responding
         onWorkflowCraftTurnEnd("end");
         break;
@@ -7017,6 +7065,7 @@
         state.voiceQueue = []; // session is dead — drop anything queued for it
         updateSendButton();
         updateComposerPlaceholder();
+        updateThinkingBar();
         onWorkflowCraftTurnEnd("error");
         break;
       case "workflowCraftResult":
@@ -7032,6 +7081,7 @@
         state.busyLocked = !!msg.locked;
         updateSendButton();
         updateComposerPlaceholder();
+        updateThinkingBar();
         renderChips(); // attachment remove buttons track busy
         if (!state.busy) {
           // When a non-turn busy window clears (e.g. session-start priming), send

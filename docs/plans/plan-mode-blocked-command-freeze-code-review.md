@@ -1,0 +1,12 @@
+# Review Report
+- Target: code-diff (local / HOST_SKILLS=PARTIAL fallback)
+- Paths: `src/plan-gate.ts`, `media/chat.js`, `media/chat.css`, matching tests
+- Overall: Approve
+- HOST_SKILLS context: PARTIAL
+- Findings: none blocking
+- Gate-mapped gaps: none
+- Security pass needed: yes (completed separately — Pass; residuals are info)
+- Open bugs: 0
+- Open gaps: 0
+- Nits: TESTS.md / research/understanding-plan-mode.md still described `;` as outright-rejected — synced in a follow-up doc edit
+- Next: proceed
