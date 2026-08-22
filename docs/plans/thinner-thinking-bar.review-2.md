@@ -1,0 +1,19 @@
+# Review Report
+- Target: plan
+- Paths: `docs/plans/thinner-thinking-bar.md` (durable; pass 1: `docs/plans/thinner-thinking-bar.review.md`; grokbit tree is supporting only)
+- Pass: 2
+- Overall: Approve
+- Hard gates:
+  - 1 Goal + acceptance criteria: **pass** — ACs 1–9 are source-text or named-px; AC1 pins `height: 2px` / not `4px`; AC2 names a **2px** band at 100% zoom and remaining visibility at 60% (`~1.2px`), not a metaphor
+  - 2 Non-goals: **pass** — JS/visibility/motion/tokens/markup/settings/Playwright/archive-plan rewrite stay out of scope
+  - 3 Risk / blast radius: **pass** — two files; global `4px` replace called out; no data/auth/protocol; rollback is restore `4px` + drop new expects
+  - 4 Ordered steps + per-step verification: **pass** — T1 edits CSS then pins thinking-bar + mic in `test/chat-layout.dom.test.ts`; verify is PowerShell `$LASTEXITCODE` vitest → tsc → `npm test`
+  - 5 Testing strategy: **pass** — AC7 is now a real negative: `ruleBlock(css, ".mic-waves i {")` `height: 4px` plus `@keyframes mic-bar` rest `4px`; scoped thinking-bar `ruleBlock` is explicitly *not* that negative. Coverage correctly `UNMEASURED / no changed executable lines`
+  - 6 Failure modes: **pass** — global replace, dropped `[hidden]`, extra `@media`, JS retouch, 1px-at-60% zoom, rollback
+  - 7 Observable verification: **pass** — machine pins named; `NO UI TOOLING` manual checks name 2px / 60% visibility / 2px static under reduced-motion. No “looks good”
+  - 8 UI/UX design: **pass** — state inventory (incl. N/A hover/focus); named shipped `#thinking-bar` pattern + `--neon-*-ink`; a11y (`aria-hidden`, no second live region); design ACs are source-text + 2px/60% manual. Literal `2px` is not a token blocker (`:root` has no bar-height token)
+- Required Changes: none
+- Test/coverage gaps: none that fail a gate. Implement note (not a gap): `ruleBlock` slices to the first `}`; use it for `.mic-waves i {`, and a regex/source-check for `@keyframes mic-bar` rest `4px` (nested braces — same idiom as existing `thinking-bar-shift`). Live CSS matches the pins (`media/chat.css:1670` `height: 4px`; `:1681` `0%, 100% { height: 4px; }`; `:3098` `.thinking-bar`; `:40` `zoom: var(--chat-zoom, 1)`).
+- Questions: none blocking. Human checkbox still empty — confirm **2px** (not 1px/3px) at approval; the plan already treats that as a one-literal override.
+- Risk if implemented as-is: bounded CSS thickness change. Pass-1 risks are closed: a workspace-wide `4px`→`2px` replace now fails targeted tests; “hairline” is gone from the durable plan (grep: no matches), so 1px is not licensed. Remaining product risk is only shipping 2px without the human tick — that is the existing approval gate, not a plan defect.
+- Next: implement only after user approve

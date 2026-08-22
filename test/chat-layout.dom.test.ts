@@ -181,6 +181,10 @@ describe("thinking-bar motion (source check)", () => {
 
   it("slides an ink-token gradient in 0.6s and hides via [hidden]", () => {
     const rule = ruleBlock(css, ".thinking-bar {");
+    expect(rule).toContain("height: 2px");
+    expect(rule).not.toContain("height: 4px");
+    expect(ruleBlock(css, ".mic-waves i {")).toContain("height: 4px");
+    expect(css).toMatch(/@keyframes mic-bar[\s\S]*0%, 100% \{ height: 4px; \}/);
     expect(rule).toContain("animation:");
     expect(rule).toContain("0.6s");
     expect(rule).toContain("--neon-cyan-ink");

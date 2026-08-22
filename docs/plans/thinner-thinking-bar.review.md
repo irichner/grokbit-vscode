@@ -1,0 +1,30 @@
+# Review Report
+- Target: plan
+- Paths: `docs/plans/thinner-thinking-bar.md` (durable; grokbit supporting tree is context only)
+- Pass: 1
+- Overall: Request Changes
+- Hard gates:
+  - 1 Goal + acceptance criteria: **pass** — ACs are numeric/source-text; 2px is an explicit product pick, not “make better”
+  - 2 Non-goals: **pass** — JS/visibility/motion/tokens/markup/settings/Playwright/archive-plan rewrite are out of scope
+  - 3 Risk / blast radius: **pass** — two files named; global `4px` replace called out; no data/auth/protocol
+  - 4 Ordered steps + per-step verification: **pass** — single T1 with vitest + tsc + `npm test`
+  - 5 Testing strategy: **fail** — AC7 (mic equalizer stays 4px) has no assertion that would go red; the claimed negative does not test that behavior
+  - 6 Failure modes: **pass** — global replace, dropped `[hidden]`, extra `@media`, JS retouch, 1px-at-60% zoom, rollback
+  - 7 Observable verification: **pass** — machine pin is `height: 2px` / not `4px` on `.thinking-bar {`; `NO UI TOOLING` recorded for layout/keyframes
+  - 8 UI/UX design: **pass** — state inventory, named shipped pattern, a11y (`aria-hidden`, no second live region), source-text design ACs; hardcoded-px is not a blocker here (no bar-height token)
+- Required Changes:
+  - **gap** — Pin AC7 in `test/chat-layout.dom.test.ts`. Today T1 only `ruleBlock`s `.thinking-bar {`. A workspace-wide `height: 4px` → `2px` would still pass those expects and shrink `.mic-waves i` / `@keyframes mic-bar` (live `media/chat.css` ~1670–1682; no test currently matches `mic-waves i`). Add `ruleBlock(css, ".mic-waves i {")` contains `height: 4px` (and optionally that `mic-bar` rest keyframes still use `4px`). Do not claim “scoped ruleBlock” as the mic negative — that only prevents a false fail, it does not protect the equalizer.
+  - **gap** — Drop “hairline” / “visually thinner than today’s 4px slab” as a success test. That is not falsifiable and can be read as license to ship 1px. Keep AC1 as the machine check. Manual `NO UI TOOLING` must be checkable: at 100% zoom the strip is a **2px** band (half of shipped 4px); at 60% `--chat-zoom` it remains visible (~1.2px); motion/static-under-reduced-motion unchanged. AC2 should cite that, not a visual metaphor.
+- Test/coverage gaps:
+  - Thickness: `toContain("height: 2px")` / `not.toContain("height: 4px")` on `.thinking-bar {` is the right machine pin (happy-dom has no layout engine; `ruleBlock` at `test/chat-layout.dom.test.ts:18-25` is correctly scoped).
+  - Motion / `[hidden]` / `@media` count 2 / visibility: existing suites are the right reuse; `test/thinking-bar.dom.test.ts` matches the plan’s hide/show table (priming, busy, lock, replay, panel replay, permission, plan-history negative, plan-banner coexistence). No new JS cases needed if JS stays untouched.
+  - **Missing negative:** mic 4px (AC7) — see Required Change 1. `test/voice-ui.dom.test.ts` only checks markup contains `mic-waves`, not CSS height.
+  - Coverage: `UNMEASURED / no changed executable lines` for a CSS+test delta is correct (`npm run test:coverage` is real for JS; `media/` CSS is not). Do not stamp 100%. Waiver not required for a vacuous product-line delta.
+- Questions:
+  - Human gate: confirm **2px** (not 1px / 3px) before implement. The plan already allows a one-literal override; do not treat “thinner” as an open height.
+  - Optional consistency (not blocking): 2px also matches `.plan-banner { border-bottom: 2px }` on the sibling immediately below. Same number as “half of 4px,” better local rhythm — worth a one-liner in the UI reference if you keep 2px.
+- Risk if implemented as-is:
+  - Accidental global `4px` replace ships a thinner mic equalizer with green targeted tests.
+  - “Hairline” language invites a 1px follow-up; at `grok.chatFontScale` 60% (`body` `zoom`) a 1px bar can subpixel-vanish — the plan already rejects that as Option C, then undermines it in design-acceptance copy.
+  - 2px is still an unverified product assumption (user said “thinner,” not a px). Shipping without the approval checkbox can miss the actual desired thickness; that is a product miss, not a code miss, and the plan correctly parks it on the human gate.
+- Next: revise plan

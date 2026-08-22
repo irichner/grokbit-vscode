@@ -1,0 +1,19 @@
+# UI Verification Report
+- Surfaces (paths): `#thinking-bar` / `.thinking-bar` in `media/chat.css`; source-check in `test/chat-layout.dom.test.ts`
+- Standards read: `.grok/docs/ui-design-standards.md` (yes)
+- State inventory checked (empty/loading/error/disabled/focus):
+  - empty/idle, priming, needs-you, replay, error: **N/A thickness** — still `[hidden]` (JS untouched; `test/thinking-bar.dom.test.ts` 11/11)
+  - loading/thinking (unlocked busy): visible **2px** (source-text `height: 2px`)
+  - reduced-motion: **2px** static (`animation: none` still in grokking `@media`)
+  - hover/focus/disabled: **N/A** — not a control (`aria-hidden="true"`)
+- Blockers (list each: pass|fail + evidence):
+  - Hardcoded value where a token exists: **pass** — `:root` has `--pad`/`--gap`/`--radius` only; no bar-height token; gradient still `--neon-*-ink`
+  - Missing focus-visible / keyboard: **pass** — N/A non-interactive
+  - Missing loading/empty/error/disabled: **pass** — N/A decorative strip; hidden vs shown unchanged
+  - Contrast AA: **pass** — decorative non-text; ink tokens unchanged
+  - Layout overflow at supported widths: **pass** — full-width `flex-shrink: 0`; no new `@media` (count still 2)
+  - Unlabeled controls: **pass** — N/A; `aria-hidden` kept
+  - Divergence from plan design reference: **pass** — plan A is literal `2px` on shipped `#thinking-bar`
+- NO UI TOOLING: **yes** — happy-dom has no layout engine; no Playwright. Machine evidence = CSS source-text + 30 targeted tests + 1782 full-suite. Live 100% zoom 2px band and 60% zoom visibility **not** screenshot-captured.
+- Result: **PASS** (design blockers pass on source-text). Residual: live pixel check is a grokbit-test caveat, not a design blocker.
+- Risk if overridden: user might still perceive 2px as too thick/thin until they reload a rebuilt vsix.

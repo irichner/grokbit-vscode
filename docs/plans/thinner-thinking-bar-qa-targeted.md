@@ -1,0 +1,39 @@
+# QA Test Report
+
+- Mode: targeted
+- Cycle: 1 of 3
+- Scope (files / git range):
+  - Working tree vs `HEAD` (uncommitted). `git diff --stat`: `media/chat.css` 2 ±1 (`.thinking-bar` `height: 4px` → `2px`); `test/chat-layout.dom.test.ts` +4 (height pin + mic equalizer pins).
+  - Mapped, **unchanged:** `test/thinking-bar.dom.test.ts` (visibility / markup; JS untouched).
+  - Not in product delta: `media/chat.js`, `src/**`. Untracked plan/review files out of this loop.
+  - Plan: `docs/plans/thinner-thinking-bar.md` (human approved 2026-08-22).
+- Commands (exact):
+  - `npx vitest run test/chat-layout.dom.test.ts test/thinking-bar.dom.test.ts` → **exit 0**
+  - `npx tsc -p . --noEmit` → **exit 0**
+  - `npm run test:coverage` **not run** — product delta has no JS/TS executable lines (see Coverage).
+- Results (pass/fail counts; critical failures; exit codes):
+  - Vitest: **2 files, 30 tests, 0 failed** (`chat-layout.dom.test.ts` 19; `thinking-bar.dom.test.ts` 11). Duration ~650ms.
+  - Critical failures: none.
+- Lint (command + exit code; or NONE): `npx tsc -p . --noEmit` → **exit 0** (AGENTS.md Lint command is real).
+- Coverage (tool; ladder rung; % or UNMEASURED; gate met?):
+  - Tool: `npm run test:coverage` (`vitest run --coverage`) is real in AGENTS.md.
+  - Ladder rung: **changed-line**, diagnosed empty before instrumenting.
+  - Product diff is one CSS declaration + source-text expects. v8/istanbul does not cover `media/chat.css`; no `src/` or `media/*.js` in `git diff`.
+  - Result: **UNMEASURED / no changed lines** (not 100%).
+  - Gate: vacuous CSS + test delta; **waiver not required** (plan Testing strategy; `.grok/docs/coverage-policy.md` empty-diff rule). Gate met for this delta: yes (UNMEASURED, not a missing-tool failure).
+- Self-applied fixes: none.
+- Test accuracy findings:
+  - Standards read: `.grok/docs/test-accuracy-standards.md`, `.grok/docs/coverage-policy.md`, `.grok/rules/accuracy-coverage.md`. Spawn `capability_mode`: **execute** (shell ran).
+  - Thickness pin is regression-proof: `ruleBlock(css, ".thinking-bar {")` is line-anchored and sliced to the first `}`; `expect(rule).toContain("height: 2px")` + `not.toContain("height: 4px")` would fail if 4px returned (AC1).
+  - Negative (AC7 / blast radius): `ruleBlock(css, ".mic-waves i {")` still `height: 4px`; `/@keyframes mic-bar[\s\S]*0%, 100% \{ height: 4px; \}/` pins rest height. Confirmed live CSS: only remaining `height: 4px` in `media/chat.css` are `.mic-waves i` (L1672) and `mic-bar` 0%/100% (L1681). A workspace-wide `4px`→`2px` replace would go red.
+  - Motion / `[hidden]` / reduced-motion (`@media` count 2) assertions kept in the same describe; they still read the real stylesheet, not a mock.
+  - Visibility suite drives **real** `media/chat.js` via `bootWebview` (priming/locked/historyReplay/panel replay, permission hide, plan-history **does not** hide, bar + `#plan-banner` coexist). File is not in the diff → “JS untouched” regression held (11/11 green).
+  - Not circular / over-mocked: I/O is `readFileSync` of `chat.css` and the webview harness; no SUT mock call-order.
+  - Happy-dom cannot assert computed px / 60% zoom visibility — documented **NO UI TOOLING** in the plan (AC2) and in `test/chat-layout.dom.test.ts` header. That is Lead UI verify, not a missing unit test.
+- Gaps: none blocking this CSS-thickness change.
+  - Non-blocking / pre-existing: `thinking-bar.dom.test.ts` has a live **permission** hide case, not dedicated question/plan-card hide cases. Out of T1 scope (JS not edited).
+- Flakes: none (deterministic source-text + happy-dom; 30/30 in <1s).
+- Cycles used / remaining: 1 used / 2 remaining.
+- Recommendation: **GO**
+- Risk if overridden: N/A (GO). Residual product risk is visual only: computed 2px band at 100% zoom and ~1.2px at 60% `--chat-zoom` is **NO UI TOOLING** / Lead UI verify, not this machine loop.
+- Escalate? **no**

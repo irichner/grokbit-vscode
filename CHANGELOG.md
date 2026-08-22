@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 2026.8.38 — 2026-08-22
+
+### Changed
+
+- **Thinking bar is thinner.** The live-turn neon strip under the top bar is 2px instead of 4px. ([media/chat.css](media/chat.css))
+
 ## 2026.8.37 — 2026-08-22
 
 ### Added

@@ -1,0 +1,46 @@
+# QA Test Report
+
+- Mode: regression-quick
+- Cycle: 1 of 3
+- Scope (files / git range):
+  - Working tree vs `HEAD` on `main` (`8a77565` Rebuild v2026.8.37). Uncommitted product+test only:
+    - `media/chat.css` — 2 ±1: `.thinking-bar {` `height: 4px` → `height: 2px`
+    - `test/chat-layout.dom.test.ts` — +4: `height: 2px` / not `4px` on `.thinking-bar {`; `.mic-waves i {` still `height: 4px`; `@keyframes mic-bar` rest `4px`
+  - Mapped, unchanged: `test/thinking-bar.dom.test.ts` (11 visibility/markup cases; JS untouched), `media/chat.js`, `src/**`
+  - Untracked plan/review/targeted-QA files are out of this loop’s product delta
+  - Plan: `docs/plans/thinner-thinking-bar.md` (human approved 2026-08-22). Targeted already GO (`docs/plans/thinner-thinking-bar-qa-targeted.md`, 30/30 + tsc 0)
+  - Why Quick not Extended: CSS height only — no auth, payments, migrations, shared-lib, or public API
+- Commands (exact):
+  - `npm test` (`vitest run`) → **exit 0**
+  - `npx tsc -p . --noEmit` → **exit 0** (second signal; targeted already 0)
+- Results (pass/fail counts; critical failures; exit codes):
+  - Vitest: **85 files passed**; **1782 passed | 17 skipped | 0 failed** (1799 collected). Duration **4.15s**
+  - Includes scoped files: `test/chat-layout.dom.test.ts` (19) and `test/thinking-bar.dom.test.ts` (11)
+  - Critical failures: none
+  - Pre-existing skip cluster: `test/workflow-detail.dom.test.ts` (22 tests | 17 skipped) — unrelated to this CSS height change
+  - Noise (not a failure): `'where' is not recognized as an internal or external command` during `cli-locator` / `claude-locator` runs on this Windows host; those files still passed
+- Lint (command + exit code; or NONE): `npx tsc -p . --noEmit` → **exit 0** (AGENTS.md Lint command is real)
+- Coverage (tool; ladder rung; % or UNMEASURED; gate met?):
+  - Tool: `npm run test:coverage` (`vitest run --coverage`) is real in AGENTS.md
+  - Ladder rung: **changed-line**, diagnosed empty before instrumenting (same as targeted)
+  - Product diff is one CSS declaration. v8/istanbul does not cover `media/chat.css`; no `src/` or `media/*.js` in `git diff`
+  - Result: **UNMEASURED / no changed lines** (not 100%)
+  - Gate: vacuous CSS + test delta; **waiver not required** (plan Testing strategy; `.grok/docs/coverage-policy.md` empty-diff rule). Gate met for this delta: yes
+- Self-applied fixes: none
+- Test accuracy findings:
+  - Standards read before verdict: `.grok/docs/test-accuracy-standards.md`, `.grok/docs/coverage-policy.md`, `.grok/rules/accuracy-coverage.md`
+  - Spawn `capability_mode`: **execute** (full suite ran)
+  - Thickness pin remains regression-proof in the full run: `ruleBlock(css, ".thinking-bar {")` is line-anchored and sliced to the first `}`; `toContain("height: 2px")` + `not.toContain("height: 4px")` would fail if 4px returned (AC1)
+  - Negative / blast radius (AC7): `.mic-waves i {` still `height: 4px`; `mic-bar` 0%/100% rest still `4px`. A workspace-wide `4px`→`2px` replace would fail this file inside `npm test`
+  - Motion / `[hidden]` / reduced-motion (`@media` count 2) source-text checks still pass against live `media/chat.css`
+  - Visibility suite still drives **real** `media/chat.js` via `bootWebview` (priming, locked, historyReplay, panel replay, permission hide, plan-history negative, bar + `#plan-banner` coexist) — 11/11 green with JS not in the diff
+  - Unrelated suites (ACP fake-CLI, terminal-manager, launcher DOM, capabilities, plan-gate, etc.) stayed green — no collateral from the 4px→2px rule
+  - Not circular / over-mocked: stylesheet `readFileSync` + webview harness; no SUT mock call-order
+  - happy-dom still cannot assert computed px / 60% zoom visibility — documented **NO UI TOOLING** (AC2); Lead UI verify, not a missing unit test
+- Gaps: none blocking this CSS-thickness change
+  - Non-blocking / pre-existing: `thinking-bar.dom.test.ts` has a live **permission** hide case, not dedicated question/plan-card hide cases. Out of T1 scope (JS not edited)
+- Flakes: none observed (deterministic source-text + happy-dom + grok-free fake CLI; 1782/1782 in ~4s). 17 skips are named skips, not flakes
+- Cycles used / remaining: 1 used / 2 remaining
+- Recommendation: **GO**
+- Risk if overridden: N/A (GO). Residual product risk is visual only: computed 2px band at 100% zoom and ~1.2px at 60% `--chat-zoom` is **NO UI TOOLING** / Lead UI verify, not this machine loop
+- Escalate? **no**

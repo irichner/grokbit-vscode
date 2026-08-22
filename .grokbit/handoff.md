@@ -2,15 +2,15 @@
 
 | Field | Value |
 |---|---|
-| **Slug** | `create-workflow-screen-ux` |
-| **Phase reached** | verify complete — **SHIP WITH CAVEATS** (human accepted 2026-08-03) |
-| **Date** | 2026-08-03 |
+| **Slug** | `thinner-thinking-bar` |
+| **Phase reached** | grokbit-test verify complete — **SHIP WITH CAVEATS** (2026-08-22) |
+| **Date** | 2026-08-22 |
 
 ## Open items (from assumptions / residual risk)
 
-- Live multi-turn `/create-workflow` against real grok not exercised in `npm test`
-- Rhai→canvas map is lossy (capability modes default read-only)
-- No headless visual screenshots
+- Live webview 2px / 60% zoom not screenshot-verified (`NO UI TOOLING`)
+- vsix not packaged this session
+- Uncommitted (CLAUDE.md)
 
 ## Blocked tasks
 
@@ -18,4 +18,4 @@ none
 
 ## Commits this implement
 
-none (CLAUDE.md: no commit outside rebuild/release)
+none
