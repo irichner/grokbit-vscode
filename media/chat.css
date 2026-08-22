@@ -3096,7 +3096,7 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
    top bar). CSS-only motion; visibility is JS (unlocked busy, not replaying /
    panelReplaying, no live unresolved permission/question/plan card). */
 .thinking-bar {
-  height: 2px;
+  height: 1px;
   flex-shrink: 0;
   background: linear-gradient(
     90deg,
